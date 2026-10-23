@@ -15,7 +15,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,6 +52,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.core.ui.theme.DaymarkDarkCard
 import com.sabihon.todo.core.ui.theme.DaymarkDarkCardFocus
@@ -89,7 +89,7 @@ fun TaskRow(
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null
 ) {
-    val isDark = isSystemInDarkTheme()
+    val isDark = LocalIsDarkTheme.current
 
     // The chevron is a real dropdown: it reveals the sub-task checklist.
     var expanded by remember(title, subTasks.size) { mutableStateOf(false) }
@@ -110,7 +110,7 @@ fun TaskRow(
             isDark && isHighlighted -> DaymarkDarkCardFocus
             isDark -> DaymarkDarkCard
             isHighlighted -> Color(0xFFEDF2FF)
-            else -> MaterialTheme.colorScheme.surfaceContainer
+            else -> MaterialTheme.colorScheme.surface
         },
         animationSpec = tween(260),
         label = "taskCardColor"
@@ -120,7 +120,7 @@ fun TaskRow(
         isHighlighted && !isDark -> AccentBlue.copy(alpha = 0.55f)
         isHighlighted -> AccentBlue.copy(alpha = 0.65f)
         isDark -> DaymarkDarkHairline
-        else -> Color.Transparent
+        else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
     }
 
     val titleColor = when {
@@ -461,7 +461,7 @@ private fun MetaChip(
             .clip(RoundedCornerShape(7.dp))
             .background(
                 if (isDark) Color.White.copy(alpha = 0.07f)
-                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
             )
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically

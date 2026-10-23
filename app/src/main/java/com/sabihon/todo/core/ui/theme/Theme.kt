@@ -5,6 +5,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -74,16 +76,28 @@ private val DarkColorScheme = darkColorScheme(
     onErrorContainer = Color(0xFFFFDAD6)
 )
 
+/**
+ * The *app's* dark-mode flag — not the device's.
+ *
+ * daymark has its own System / Light / Dark switcher, so components must never call
+ * [isSystemInDarkTheme] directly: with the app forced to Light on a dark-mode phone the
+ * Material colour scheme is light while those components would render dark cards and a
+ * black selected pill. Read this local instead.
+ */
+val LocalIsDarkTheme = staticCompositionLocalOf { false }
+
 @Composable
 fun SabihonTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = SabihonTypography,
-        shapes = SabihonShapes,
-        content = content
-    )
+    CompositionLocalProvider(LocalIsDarkTheme provides darkTheme) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = SabihonTypography,
+            shapes = SabihonShapes,
+            content = content
+        )
+    }
 }
