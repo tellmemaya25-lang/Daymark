@@ -8,7 +8,7 @@ import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
 /**
- * Application class for Just Todo-it – entry point for Hilt DI.
+ * Application class for daymark . – entry point for Hilt DI.
  * Implements WorkManager Configuration.Provider for Hilt workers.
  */
 @HiltAndroidApp

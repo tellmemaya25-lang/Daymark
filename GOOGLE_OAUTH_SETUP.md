@@ -1,4 +1,4 @@
-# Google OAuth 2.0 Setup for Just Todo-it
+# Google OAuth 2.0 Setup for daymark .
 
 You asked to enable OAuth 2.0 login – implemented!
 
@@ -57,12 +57,14 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 | Google button does nothing | Check logcat `adb logcat | Select-String Google` |
 | `ApiException 12500` | Update Google Play Services on device/emulator |
 
-## Rebrand to Just Todo-it
+## Brand: daymark .
 Changed:
-- `strings.xml` app_name → `Just Todo-it`
-- Splash screen text → `Just Todo-it`
-- SignUp subtitle → `Join Just Todo-it today`
-- Profile about text → `Just Todo-it v1.0`
+- `strings.xml` app_name → `daymark .`
+- Splash screen → daymark mark + `daymark` wordmark with the blue dot (`DaymarkLockup`)
+- Login subtitle → `Login to daymark .`
+- SignUp subtitle → `Join daymark . today`
+- Settings about → `daymark . v1.0`
+- Launcher icon → lavender `#C4D2FF` tile with navy `#243B71` tick (legacy PNGs + adaptive icon)
 
 Internal class names like `SabihonTheme`, `SabihonApp` kept to avoid risky refactor – they are not user-visible.
 

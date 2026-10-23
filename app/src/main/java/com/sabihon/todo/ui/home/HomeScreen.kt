@@ -196,7 +196,7 @@ fun HomeScreen(
                         when (uiState.selectedFilter) {
                             HomeFilter.ALL -> {
                                 NotelyEmptyState(
-                                    title = "Get started with Notely",
+                                    title = "Get started with daymark .",
                                     subtitle = "Add notes, calendar events, tasks files and more with the action bar"
                                 )
                             }

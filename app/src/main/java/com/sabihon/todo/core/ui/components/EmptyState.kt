@@ -47,7 +47,7 @@ fun EmptyState(
     // For "No tasks yet" use Notely style
     if (title.contains("No tasks", ignoreCase = true) || description.contains("Tap +", ignoreCase = true)) {
         NotelyEmptyState(
-            title = "Get started with Todo",
+            title = "Get started with daymark .",
             subtitle = "Add notes, calendar events, tasks, files and more with the action bar",
             modifier = modifier
         )

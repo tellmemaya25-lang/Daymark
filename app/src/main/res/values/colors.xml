@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- daymark brand palette -->
+    <color name="ic_launcher_background">#C4D2FF</color>
+    <color name="daymark_lavender">#C4D2FF</color>
+    <color name="daymark_navy">#243B71</color>
+</resources>

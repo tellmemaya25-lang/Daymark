@@ -78,7 +78,7 @@ fun SignUpScreen(
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Join Just Todo-it today",
+                text = "Join daymark . today",
                 style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
