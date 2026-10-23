@@ -9,6 +9,7 @@ import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.remote.dto.ActivityDto
 import com.sabihon.todo.data.remote.dto.TaskDto
 import com.sabihon.todo.data.remote.dto.toDomain
+import com.sabihon.todo.domain.model.ActivityAction
 import com.sabihon.todo.domain.model.ActivityLog
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.model.TaskFilter
@@ -36,8 +37,55 @@ class HistoryViewModel @Inject constructor(
     val uiState: StateFlow<HistoryUiState> = _uiState.asStateFlow()
 
     init {
+        val user = auth.currentUser
+        val displayName = user?.displayName ?: user?.email?.substringBefore("@") ?: "User"
+        _uiState.update {
+            it.copy(
+                userInitials = initialsOf(displayName),
+                userPhotoUrl = user?.photoUrl?.toString()
+            )
+        }
         observeCompletedTasks()
         observeActivity()
+    }
+
+    /** "Maya Angelou" -> "MA", "maya" -> "MA". */
+    private fun initialsOf(name: String): String {
+        val parts = name.trim().split(" ").filter { it.isNotBlank() }
+        return when {
+            parts.size >= 2 -> "" + parts.first().first() + parts.last().first()
+            parts.size == 1 -> parts.first().take(2)
+            else -> "DM"
+        }.uppercase()
+    }
+
+    /**
+     * The feed prefers real activity entries; if the activity collection is empty
+     * (offline, or a task completed before logging existed) it falls back to the
+     * completed tasks themselves so the page is never blank.
+     */
+    private fun buildFeed(): List<ActivityFeedItem> {
+        val state = _uiState.value
+        if (state.activityLogs.isNotEmpty()) {
+            return state.activityLogs.map { log ->
+                ActivityFeedItem(
+                    id = log.id,
+                    taskId = log.taskId,
+                    taskTitle = log.taskTitle,
+                    action = log.action,
+                    timestamp = log.timestamp
+                )
+            }.sortedByDescending { it.timestamp }
+        }
+        return state.completedTasks.map { task ->
+            ActivityFeedItem(
+                id = "task-${task.id}",
+                taskId = task.id,
+                taskTitle = task.title,
+                action = ActivityAction.COMPLETED,
+                timestamp = task.completedAt ?: task.updatedAt
+            )
+        }.sortedByDescending { it.timestamp }
     }
 
     private fun observeCompletedTasks() {
@@ -48,7 +96,15 @@ class HistoryViewModel @Inject constructor(
                         val tasks = result.data
                         val grouped = groupByDay(tasks)
                         val stats = calculateStats(tasks)
-                        _uiState.update { it.copy(isLoading = false, completedTasks = tasks, grouped = grouped, stats = stats) }
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                completedTasks = tasks,
+                                grouped = grouped,
+                                stats = stats
+                            )
+                        }
+                        _uiState.update { it.copy(feed = buildFeed()) }
                     }
                     is Result.Loading -> _uiState.update { it.copy(isLoading = true) }
                     is Result.Error -> _uiState.update { it.copy(isLoading = false) }
@@ -78,6 +134,7 @@ class HistoryViewModel @Inject constructor(
                     }
                 }
                 _uiState.update { it.copy(activityLogs = logs) }
+                _uiState.update { it.copy(feed = buildFeed()) }
             } catch (_: Exception) {}
         }
     }
