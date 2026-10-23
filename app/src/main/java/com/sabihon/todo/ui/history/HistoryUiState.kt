@@ -1,13 +1,42 @@
 package com.sabihon.todo.ui.history
 
+import com.sabihon.todo.domain.model.ActivityAction
 import com.sabihon.todo.domain.model.ActivityLog
 import com.sabihon.todo.domain.model.Task
 
+/**
+ * One line in the Activity feed.
+ */
+data class ActivityFeedItem(
+    val id: String,
+    val taskId: String,
+    val taskTitle: String,
+    val action: ActivityAction,
+    val timestamp: Long
+) {
+    /** "Completed", "Created", "Reopened"… */
+    val verb: String
+        get() = when (action) {
+            ActivityAction.CREATED -> "Created"
+            ActivityAction.UPDATED -> "Updated"
+            ActivityAction.COMPLETED -> "Completed"
+            ActivityAction.REOPENED -> "Reopened"
+            ActivityAction.DELETED -> "Deleted"
+        }
+
+    /** Green dot only for wins; everything else is muted. */
+    val isWin: Boolean
+        get() = action == ActivityAction.COMPLETED
+}
+
 data class HistoryUiState(
     val isLoading: Boolean = true,
+    val userInitials: String = "DM",
+    val userPhotoUrl: String? = null,
     val completedTasks: List<Task> = emptyList(),
     val grouped: Map<String, List<Task>> = emptyMap(), // Today, Yesterday, Earlier
     val activityLogs: List<ActivityLog> = emptyList(),
+    val feed: List<ActivityFeedItem> = emptyList(),
     val stats: HistoryStats = HistoryStats()
 )
 

@@ -170,10 +170,8 @@ fun SabihonNavHost(
         composable<Route.History> {
             MainScaffold(navController = navController) { _ ->
                 HistoryScreen(
-                    onBack = { navController.navigate(Route.Home) {
-                        popUpTo(Route.Home) { inclusive = false }
-                    }},
-                    onTaskClick = { taskId -> navController.navigate(Route.TaskDetail(taskId)) }
+                    onTaskClick = { taskId -> navController.navigate(Route.TaskDetail(taskId)) },
+                    onProfileClick = { navController.navigate(Route.Profile) }
                 )
             }
         }

@@ -56,15 +56,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import coil.compose.AsyncImage
-import com.sabihon.todo.core.ui.components.DaymarkMark
-import com.sabihon.todo.core.ui.components.DaymarkWordmark
+import com.sabihon.todo.core.ui.components.BrandHeader
 import com.sabihon.todo.core.ui.components.FilterEmptyState
 import com.sabihon.todo.core.ui.components.LoadingShimmer
 import com.sabihon.todo.core.ui.components.MomentumCard
@@ -554,21 +550,12 @@ private fun HomeHeader(
             .fillMaxWidth()
             .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp)
     ) {
-        // Brand row: mark + wordmark left, avatar right
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            DaymarkMark(size = 26.dp)
-            Spacer(Modifier.width(8.dp))
-            DaymarkWordmark(fontSize = 19, color = MaterialTheme.colorScheme.onBackground)
-            Spacer(Modifier.weight(1f))
-            ProfileAvatar(
-                initials = avatarInitials,
-                photoUrl = avatarUrl,
-                onClick = onAvatarClick
-            )
-        }
+        // Brand row: mark + wordmark left, avatar right (shared component)
+        BrandHeader(
+            avatarInitials = avatarInitials,
+            avatarUrl = avatarUrl,
+            onAvatarClick = onAvatarClick
+        )
 
         Spacer(Modifier.height(20.dp))
 
@@ -619,50 +606,6 @@ private fun HomeHeader(
                     )
                 }
             }
-        }
-    }
-}
-
-/**
- * 40.dp circle showing the Google photo when available, otherwise the user's initials.
- */
-@Composable
-private fun ProfileAvatar(
-    initials: String,
-    photoUrl: String?,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainer)
-            .border(
-                1.dp,
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                CircleShape
-            )
-            .clickable(role = Role.Button, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        if (!photoUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = photoUrl,
-                contentDescription = "Profile",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-            )
-        } else {
-            Text(
-                text = initials,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                ),
-                color = MaterialTheme.colorScheme.onSurface
-            )
         }
     }
 }
