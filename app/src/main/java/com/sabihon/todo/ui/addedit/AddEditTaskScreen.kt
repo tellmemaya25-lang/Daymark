@@ -1,6 +1,5 @@
 package com.sabihon.todo.ui.addedit
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,8 +13,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -81,7 +82,6 @@ fun AddEditTaskScreen(
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
-    val isDark = isSystemInDarkTheme()
 
     LaunchedEffect(taskId) {
         viewModel.loadTask(taskId)
@@ -317,7 +317,7 @@ fun AddEditTaskScreen(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     SubTaskRoundedCheckbox(
                         checked = sub.isDone,
@@ -337,14 +337,30 @@ fun AddEditTaskScreen(
                                 unfocusedContainerColor = MaterialTheme.colorScheme.surface
                             )
                         )
-                        IconButton(onClick = {
-                            viewModel.editSubTask(sub.id, editingSubText)
-                            editingSubId = null
-                        }, modifier = Modifier.size(32.dp)) {
-                            Text("✓", style = MaterialTheme.typography.titleSmall, color = AccentBlue, fontWeight = FontWeight.Bold)
+                        IconButton(
+                            onClick = {
+                                viewModel.editSubTask(sub.id, editingSubText)
+                                editingSubId = null
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = "Save sub-task",
+                                tint = AccentBlue,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
-                        IconButton(onClick = { editingSubId = null }, modifier = Modifier.size(32.dp)) {
-                            Text("×", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        IconButton(
+                            onClick = { editingSubId = null },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Cancel editing",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     } else {
                         Text(
@@ -353,14 +369,30 @@ fun AddEditTaskScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        IconButton(onClick = {
-                            editingSubId = sub.id
-                            editingSubText = sub.title
-                        }, modifier = Modifier.size(28.dp)) {
-                            Text("✎", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        IconButton(
+                            onClick = {
+                                editingSubId = sub.id
+                                editingSubText = sub.title
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Edit,
+                                contentDescription = "Edit sub-task",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
-                        IconButton(onClick = { viewModel.removeSubTask(sub.id) }, modifier = Modifier.size(28.dp)) {
-                            Text("×", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        IconButton(
+                            onClick = { viewModel.removeSubTask(sub.id) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Remove sub-task",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
                 }

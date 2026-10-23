@@ -1,6 +1,5 @@
 package com.sabihon.todo.ui.auth
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -50,7 +49,6 @@ fun SignUpScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val isDark = isSystemInDarkTheme()
 
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let {

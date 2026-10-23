@@ -31,7 +31,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -72,6 +71,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
 import com.sabihon.todo.core.ui.components.SubTaskRoundedCheckbox
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.domain.model.Priority
@@ -155,7 +155,7 @@ fun TaskDetailScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     // Header – use color combo from setting for overall dark mode theme, leave light mode as is per request – image1 bg #e3f5ff light, dark uses Settings dark combo
-                    val isDark = isSystemInDarkTheme()
+                    val isDark = LocalIsDarkTheme.current
                     // Light mode #e3f5ff per image1, dark mode uses Settings dark combo #1E2A44 for overall dark theme
                     val outerCardBg = if (isDark) Color(0xFF1E2A44) else Color(0xFFE3F5FF)
                     val innerWhiteBg = if (isDark) Color(0xFF2A2B33) else Color.White

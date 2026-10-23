@@ -82,7 +82,7 @@ fun SearchScreen(
     val uiState by viewModel.uiState.collectAsState()
     var showFilterSheet by remember { mutableStateOf(false) }
     val filterSheetState = rememberModalBottomSheetState()
-    val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val isDark = com.sabihon.todo.core.ui.theme.LocalIsDarkTheme.current
 
     val hasActiveFilters = uiState.filter.status != TaskStatusFilter.ALL ||
             uiState.filter.priority != null ||

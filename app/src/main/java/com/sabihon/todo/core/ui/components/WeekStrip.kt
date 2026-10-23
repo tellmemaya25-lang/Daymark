@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +29,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
 import com.sabihon.todo.core.ui.theme.DaymarkDarkCardFocus
 import com.sabihon.todo.core.ui.theme.DaymarkNavy
 import com.sabihon.todo.ui.home.WeekDay
@@ -48,7 +48,7 @@ fun WeekStrip(
 ) {
     if (days.isEmpty()) return
 
-    val isDark = isSystemInDarkTheme()
+    val isDark = LocalIsDarkTheme.current
     val selectedSurface = if (isDark) Color(0xFF232B45) else Color(0xFFE8EDFF)
 
     Row(
@@ -97,8 +97,8 @@ private fun DayCell(
         targetValue = when {
             isSelected && isDark -> Color.White
             isSelected -> DaymarkNavy
-            isDark -> Color(0xFFE6E8EF)
-            else -> MaterialTheme.colorScheme.onSurface
+            // Unselected days stay muted in both themes (matches the reference)
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
         },
         animationSpec = tween(200),
         label = "dayNumber"

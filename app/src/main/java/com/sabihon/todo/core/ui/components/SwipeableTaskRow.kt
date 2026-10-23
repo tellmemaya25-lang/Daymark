@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.domain.model.SubTask
 import kotlinx.coroutines.launch
@@ -90,7 +90,7 @@ fun SwipeableTaskRow(
     }
 
     // Bg of task: light #e3f5ff per image1, dark #1E2A44 per Settings dark combo for overall dark mode theme, leave light mode as is
-    val isDark = isSystemInDarkTheme()
+    val isDark = LocalIsDarkTheme.current
     val swipeBg = if (isDark) Color(0xFF23262F) else Color(0xFFE7EDFB)
     Box(
         modifier = modifier
