@@ -11,6 +11,19 @@ plugins {
     id("com.google.gms.google-services")
 }
 
+// --- Firebase config bootstrap -------------------------------------------------
+// `app/google-services.json` is gitignored, so a fresh clone has no config and the
+// build fails with "File google-services.json is missing" - which leaves the old
+// APK installed, so the rebrand never appears. The repo ships the same config as
+// `app/cls`, so copy it into place whenever it is missing.
+// An existing google-services.json is never touched.
+val bundledFirebaseConfig = file("cls")
+val firebaseConfig = file("google-services.json")
+if (!firebaseConfig.exists() && bundledFirebaseConfig.exists()) {
+    bundledFirebaseConfig.copyTo(firebaseConfig)
+    logger.lifecycle("daymark: created app/google-services.json from app/cls")
+}
+
 android {
     namespace = "com.sabihon.todo"
     compileSdk = 35
