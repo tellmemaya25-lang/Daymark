@@ -20,6 +20,7 @@ import com.sabihon.todo.ui.categories.CategoryDetailScreen
 import com.sabihon.todo.ui.history.HistoryScreen
 import com.sabihon.todo.ui.home.HomeScreen
 import com.sabihon.todo.ui.profile.ProfileScreen
+import com.sabihon.todo.ui.projects.ProjectsScreen
 import com.sabihon.todo.ui.search.SearchScreen
 import com.sabihon.todo.ui.settings.SettingsScreen
 import com.sabihon.todo.ui.taskdetail.TaskDetailScreen
@@ -113,6 +114,14 @@ fun SabihonNavHost(
                     onNavigateToProfile = { navController.navigate(Route.Profile) },
                     onNavigateToSettings = { navController.navigate(Route.Settings) },
                     onNavigateToCategory = { catId -> navController.navigate(Route.CategoryDetail(catId)) }
+                )
+            }
+        }
+        composable<Route.Projects> {
+            MainScaffold(navController = navController) { _ ->
+                ProjectsScreen(
+                    onProjectClick = { catId -> navController.navigate(Route.CategoryDetail(catId)) },
+                    onProfileClick = { navController.navigate(Route.Profile) }
                 )
             }
         }
