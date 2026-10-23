@@ -1,0 +1,175 @@
+package com.sabihon.todo.ui.navigation
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.navigation.NavHostController
+import com.sabihon.todo.core.ui.components.RoundedBottomNavBar
+import com.sabihon.todo.ui.history.HistoryScreen
+import com.sabihon.todo.ui.home.HomeScreen
+import com.sabihon.todo.ui.projects.ProjectsScreen
+import com.sabihon.todo.ui.settings.SettingsScreen
+import kotlinx.coroutines.launch
+
+/**
+ * Mailbox for "open this tab" requests coming from screens outside the pager
+ * (Search, a project page, the profile screen …).
+ *
+ * Kept as Compose snapshot state so a request that arrives while the pager is
+ * already on screen still lands, instead of being swallowed on first composition.
+ */
+object MainTabsRequest {
+    var pendingPage by mutableStateOf<Int?>(null)
+        private set
+
+    fun open(page: Int) {
+        pendingPage = page
+    }
+
+    fun consume() {
+        pendingPage = null
+    }
+}
+
+/** The four top-level destinations, in swipe order. */
+private data class MainTab(
+    val key: String,
+    /** Substring the bottom bar matches to decide which tab is selected. */
+    val matchToken: String
+)
+
+private val MAIN_TABS = listOf(
+    MainTab("home", "Home"),
+    MainTab("projects", "Projects"),
+    MainTab("activity", "History"),
+    MainTab("settings", "Settings")
+)
+
+/**
+ * The tab host: a real [HorizontalPager], so swiping **reveals the next page as the
+ * finger moves** rather than sliding a blank screen and loading it afterwards.
+ *
+ * Why this replaced the slide-and-navigate approach: navigation-based tab switching
+ * can only animate a transition *after* the new destination exists, which is exactly
+ * why it flashed white — the incoming screen had not composed or loaded yet. A pager
+ * composes its neighbours up front ([beyondViewportPageCount]) and keeps each page's
+ * scroll state through a [rememberSaveableStateHolder], so the adjacent page is
+ * already drawn before the gesture starts.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun MainTabsScreen(
+    navController: NavHostController,
+    initialPage: Int = 0
+) {
+    val requestedPage = MainTabsRequest.pendingPage
+    val pagerState = rememberPagerState(initialPage = requestedPage ?: initialPage) {
+        MAIN_TABS.size
+    }
+    val scope = rememberCoroutineScope()
+    val saveableStateHolder = rememberSaveableStateHolder()
+
+    // A page request from another screen (or a repeat request while we're mounted).
+    LaunchedEffect(requestedPage) {
+        if (requestedPage != null && requestedPage in MAIN_TABS.indices) {
+            pagerState.animateScrollToPage(requestedPage)
+            MainTabsRequest.consume()
+        }
+    }
+
+    // Which tab the drag is heading towards, for the bar's pre-highlight.
+    val previewTab by remember {
+        derivedStateOf {
+            val page = pagerState.currentPage
+            when {
+                pagerState.currentPageOffsetFraction > 0.12f -> MAIN_TABS.getOrNull(page + 1)?.key
+                pagerState.currentPageOffsetFraction < -0.12f -> MAIN_TABS.getOrNull(page - 1)?.key
+                else -> null
+            }
+        }
+    }
+
+    // Back returns to the first tab before leaving the app.
+    BackHandler(enabled = pagerState.currentPage != 0) {
+        scope.launch { pagerState.animateScrollToPage(0) }
+    }
+
+    fun goToPage(index: Int) {
+        if (index in MAIN_TABS.indices && index != pagerState.currentPage) {
+            scope.launch { pagerState.animateScrollToPage(index) }
+        }
+    }
+
+    Scaffold(
+        bottomBar = {
+            RoundedBottomNavBar(
+                currentRoute = MAIN_TABS[pagerState.currentPage].matchToken,
+                onNavigate = { key ->
+                    when (key) {
+                        "add" -> navController.navigate(Route.AddEditTask())
+                        else -> goToPage(MAIN_TABS.indexOfFirst { it.key == key })
+                    }
+                },
+                previewTab = previewTab
+            )
+        }
+    ) { padding ->
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            // Compose the neighbours ahead of time – this is what removes the white
+            // gap when the gesture starts.
+            beyondViewportPageCount = 1
+        ) { page ->
+            // Restores each page's scroll position without keeping four lists around.
+            saveableStateHolder.SaveableStateProvider(MAIN_TABS[page].key) {
+                when (page) {
+                    0 -> HomeScreen(
+                        onNavigateToAllTasks = { navController.navigate(Route.AllTasks) },
+                        onNavigateToCategories = { navController.navigate(Route.Categories) },
+                        onNavigateToTaskDetail = { navController.navigate(Route.AddEditTask(it)) },
+                        onNavigateToEditTask = { navController.navigate(Route.AddEditTask(it)) },
+                        onNavigateToAddTask = { navController.navigate(Route.AddEditTask()) },
+                        onNavigateToSearch = { navController.navigate(Route.Search) },
+                        onNavigateToHistory = { goToPage(2) },
+                        onNavigateToProfile = { navController.navigate(Route.Profile) },
+                        onNavigateToSettings = { goToPage(3) },
+                        onNavigateToCategory = { navController.navigate(Route.CategoryDetail(it)) }
+                    )
+
+                    1 -> ProjectsScreen(
+                        onProjectClick = { navController.navigate(Route.CategoryDetail(it)) },
+                        onProfileClick = { navController.navigate(Route.Profile) }
+                    )
+
+                    2 -> HistoryScreen(
+                        onTaskClick = { navController.navigate(Route.AddEditTask(it)) },
+                        onProfileClick = { navController.navigate(Route.Profile) }
+                    )
+
+                    3 -> SettingsScreen(
+                        onBack = { goToPage(0) },
+                        onNavigateToHistory = { goToPage(2) },
+                        onNavigateToProfile = { navController.navigate(Route.Profile) }
+                    )
+                }
+            }
+        }
+    }
+}
