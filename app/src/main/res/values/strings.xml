@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Just Todo-it</string>
+    <string name="app_name">daymark .</string>
     <string name="hello_greeting">Hello, %1$s,</string>
     <string name="subtitle_work_today">You have work today</string>
     <string name="today">Today</string>

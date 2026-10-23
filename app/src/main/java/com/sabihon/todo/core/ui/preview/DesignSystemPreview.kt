@@ -102,7 +102,7 @@ fun DesignSystemContent() {
         }
         item {
             TaskRow(
-                title = "Complete UI design for Just Todo-it",
+                title = "Complete UI design for daymark .",
                 isCompleted = true,
                 timeLabel = "Yesterday • 2:30 PM"
             )

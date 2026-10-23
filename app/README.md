@@ -1,8 +1,8 @@
-# Sabihon — To‑Do & Task Management App
+# daymark . — To‑Do & Task Management App
 
-**Sabihon** is a production-quality Android To-Do & Task Management app built with **Kotlin + Jetpack Compose (Material 3)** and **Firebase** backend. Clean, airy, iOS-like pastel design, offline-first Firestore, reminders, and full task lifecycle.
+**daymark .** is a production-quality Android To-Do & Task Management app built with **Kotlin + Jetpack Compose (Material 3)** and **Firebase** backend. Clean, airy, iOS-like pastel design, offline-first Firestore, reminders, and full task lifecycle.
 
-![Sabihon Banner](https://via.placeholder.com/1200x400/D6E4FF/101114?text=Sabihon+%E2%80%94+Pastel+To-Do+App)
+![daymark Banner](https://via.placeholder.com/1200x400/C4D2FF/243B71?text=daymark+.+%E2%80%94+Pastel+To-Do+App)
 
 ---
 

@@ -273,7 +273,7 @@ fun SettingsScreen(
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Just Todo-it v1.0", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Text("daymark . v1.0", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
                         Text(
                             "A clean, pastel, production-quality To-Do app built with Kotlin + Jetpack Compose + Firebase. Full light & dark mode support with Material 3 theming.",
                             style = MaterialTheme.typography.bodyMedium,
