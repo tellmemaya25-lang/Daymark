@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -316,8 +317,12 @@ fun AddEditTaskScreen(
             uiState.subTasks.forEach { sub ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .padding(vertical = 4.dp),
+                    // The checkbox and the title were touching; the row needs a real gap.
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     SubTaskRoundedCheckbox(
                         checked = sub.isDone,
@@ -365,7 +370,7 @@ fun AddEditTaskScreen(
                     } else {
                         Text(
                             text = sub.title,
-                            modifier = Modifier.weight(1f).padding(vertical = 2.dp),
+                            modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
