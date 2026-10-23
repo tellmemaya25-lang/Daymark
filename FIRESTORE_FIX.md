@@ -1,5 +1,30 @@
 # Firestore – Task Not Creating / Not Inserting Fix
 
+## Symptom: the Save button spins forever and no task appears
+
+Cause: `DocumentReference.set(...)` returns a Task that only completes when the
+**backend acknowledges** the write. Offline, on a flaky connection, or when the write
+is stuck behind a proxy, that ack never arrives — `await()` suspends forever, so
+`isSaving` is never cleared and the button shows a spinner indefinitely. The old code
+also awaited the activity-log write *before* returning success, which doubled the
+chance of hanging.
+
+Fixed in `TaskRepositoryImpl` / `AddEditViewModel`:
+
+- every write now waits at most `WRITE_ACK_TIMEOUT_MS` (8 s); no ack means the write is
+  treated as *queued* (Firestore offline persistence is enabled) and the save returns
+  success, so the SDK can flush it later
+- the activity log is bounded to 3 s and can never block a save
+- `saveTask` runs inside `withTimeoutOrNull(20 s)` and clears `isSaving` in a `finally`
+  block, so the spinner always stops — with a readable message when it times out
+- toggling complete / delete / restore use the same bounded write
+
+If the save still fails, the snackbar now names the real reason (permission denied,
+unreachable backend, signed out) instead of spinning.
+
+---
+
+
 Your symptom: Add Task → Save → no crash but task doesn't appear, not in database.
 
 ## Root Causes (most common)
