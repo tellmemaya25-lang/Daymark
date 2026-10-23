@@ -36,7 +36,8 @@ fun BrandHeader(
     avatarInitials: String? = null,
     avatarUrl: String? = null,
     onAvatarClick: (() -> Unit)? = null,
-    trailing: (@Composable () -> Unit)? = null
+    trailing: (@Composable () -> Unit)? = null,
+    actions: (@Composable () -> Unit)? = null
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -46,6 +47,11 @@ fun BrandHeader(
         Spacer(Modifier.width(8.dp))
         DaymarkWordmark(fontSize = fontSize, color = MaterialTheme.colorScheme.onBackground)
         Spacer(Modifier.weight(1f))
+
+        if (actions != null) {
+            actions()
+            Spacer(Modifier.width(6.dp))
+        }
 
         when {
             onAvatarClick != null || avatarInitials != null -> ProfileAvatar(

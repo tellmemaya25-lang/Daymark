@@ -23,8 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -50,7 +50,7 @@ import com.sabihon.todo.core.ui.theme.AccentBlue
 
 /**
  * Bottom nav – edge-to-edge flush, top 24.dp rounded, 5.dp subtle outer shadow
- * Tabs: Home | Search | + (center 48dp blue) | Activity | Settings
+ * Tabs: Home | Projects | + (center 48dp blue) | Activity | Settings
  * With micro-interactions: ripple, scale spring, color animation, haptic
  */
 data class BottomNavTab(
@@ -67,7 +67,7 @@ fun RoundedBottomNavBar(
 ) {
     val tabs = listOf(
         BottomNavTab("Home", Icons.Filled.Home, "home"),
-        BottomNavTab("Search", Icons.Filled.Search, "search"),
+        BottomNavTab("Projects", Icons.Filled.GridView, "projects"),
         BottomNavTab("Add", Icons.Filled.Add, "add"),
         BottomNavTab("Activity", Icons.Filled.BarChart, "activity"),
         BottomNavTab("Settings", Icons.Filled.Settings, "settings")
@@ -106,7 +106,7 @@ fun RoundedBottomNavBar(
             tabs.forEach { tab ->
                 val isSelected = when (tab.route) {
                     "home" -> currentRoute.contains("Home") || currentRoute.contains("AllTasks") || currentRoute.contains("Categories")
-                    "search" -> currentRoute.contains("Search")
+                    "projects" -> currentRoute.contains("Projects") || currentRoute.contains("Categories")
                     "activity" -> currentRoute.contains("History") || currentRoute.contains("Activity")
                     "settings" -> currentRoute.contains("Settings") || currentRoute.contains("Profile")
                     "add" -> false

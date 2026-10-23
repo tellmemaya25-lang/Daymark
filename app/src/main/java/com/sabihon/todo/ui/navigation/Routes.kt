@@ -50,6 +50,9 @@ sealed interface Route {
     data object Categories : Route
 
     @Serializable
+    data object Projects : Route
+
+    @Serializable
     data object Settings : Route
 }
 
@@ -69,5 +72,6 @@ object LegacyRoutes {
     const val HISTORY = "history"
     const val PROFILE = "profile"
     const val CATEGORIES = "categories"
+    const val PROJECTS = "projects"
     const val SETTINGS = "settings"
 }
