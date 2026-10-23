@@ -27,6 +27,20 @@ data class ActivityFeedItem(
     /** Green dot only for wins; everything else is muted. */
     val isWin: Boolean
         get() = action == ActivityAction.COMPLETED
+
+    /** Short status word for the chip beside the row. */
+    val statusLabel: String
+        get() = when (action) {
+            ActivityAction.CREATED -> "Created"
+            ActivityAction.UPDATED -> "Updated"
+            ActivityAction.COMPLETED -> "Completed"
+            ActivityAction.REOPENED -> "Reopened"
+            ActivityAction.DELETED -> "Deleted"
+        }
+
+    /** Deleted rows have no task to open any more. */
+    val isDeleted: Boolean
+        get() = action == ActivityAction.DELETED
 }
 
 data class HistoryUiState(
