@@ -1,10 +1,15 @@
 package com.sabihon.todo.core.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,9 +38,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
@@ -81,6 +90,15 @@ fun TaskRow(
     onLongClick: (() -> Unit)? = null
 ) {
     val isDark = isSystemInDarkTheme()
+
+    // The chevron is a real dropdown: it reveals the sub-task checklist.
+    var expanded by remember(title, subTasks.size) { mutableStateOf(false) }
+    val canExpand = subTasks.isNotEmpty()
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(220),
+        label = "chevronRotation"
+    )
 
     val totalSubs = subTasks.size
     val doneSubs = subTasks.count { it.isDone }
@@ -248,20 +266,132 @@ fun TaskRow(
                 }
                 Icon(
                     Icons.Filled.ExpandMore,
-                    contentDescription = if (onMoreClick != null) "Task options" else null,
+                    contentDescription = when {
+                        canExpand && expanded -> "Hide sub-tasks"
+                        canExpand -> "Show sub-tasks"
+                        onMoreClick != null -> "Task options"
+                        else -> null
+                    },
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     modifier = Modifier
-                        .size(20.dp)
+                        .size(28.dp)
+                        .rotate(chevronRotation)
                         .then(
-                            if (onMoreClick != null) {
-                                Modifier.clickable { onMoreClick() }
-                            } else {
-                                Modifier
+                            when {
+                                canExpand -> Modifier.clickable(
+                                    role = Role.Button,
+                                    onClick = { expanded = !expanded }
+                                )
+                                onMoreClick != null -> Modifier.clickable(
+                                    role = Role.Button,
+                                    onClick = { onMoreClick() }
+                                )
+                                else -> Modifier
                             }
                         )
+                        .padding(4.dp)
                 )
             }
         }
+
+        // Dropdown: the sub-task checklist
+        AnimatedVisibility(
+            visible = expanded && canExpand,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            Column(modifier = Modifier.padding(start = 38.dp, top = 10.dp)) {
+                subTasks.forEachIndexed { index, subTask ->
+                    if (index > 0) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp)
+                                .height(0.5.dp)
+                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        )
+                    }
+                    SubTaskRow(
+                        title = subTask.title,
+                        isDone = subTask.isDone,
+                        enabled = onSubTaskChecked != null,
+                        onToggle = {
+                            onSubTaskChecked?.invoke(subTask.id, !subTask.isDone)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One line of the expanded checklist – small checkbox + title.
+ */
+@Composable
+private fun SubTaskRow(
+    title: String,
+    isDone: Boolean,
+    enabled: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .then(
+                if (enabled) {
+                    Modifier.clickable(role = Role.Checkbox, onClick = onToggle)
+                } else {
+                    Modifier
+                }
+            )
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val fill by animateColorAsState(
+            targetValue = if (isDone) AccentBlue else Color.Transparent,
+            animationSpec = tween(180),
+            label = "subFill"
+        )
+        val ring by animateColorAsState(
+            targetValue = if (isDone) AccentBlue else MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
+            animationSpec = tween(180),
+            label = "subRing"
+        )
+
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(fill)
+                .border(1.5.dp, ring, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isDone) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(12.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 18.sp),
+            color = if (isDone) {
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+            textDecoration = if (isDone) TextDecoration.LineThrough else null,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

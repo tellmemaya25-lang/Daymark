@@ -18,7 +18,7 @@ fun MainScaffold(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route ?: ""
 
-    // Show bottom bar on main tabs – Home | Search | + | History | Profile
+    // Show bottom bar on main tabs – Home | Search | + | Activity | Settings
     val showBottomBar = currentRoute.contains("Home") || 
                         currentRoute.contains("Search") || 
                         currentRoute.contains("History") || 
@@ -42,11 +42,11 @@ fun MainScaffold(
                                 popUpTo(Route.Home) { inclusive = false }
                                 launchSingleTop = true
                             }
-                            "history" -> navController.navigate(Route.History) {
+                            "activity" -> navController.navigate(Route.History) {
                                 popUpTo(Route.Home) { inclusive = false }
                                 launchSingleTop = true
                             }
-                            "profile" -> navController.navigate(Route.Profile) {
+                            "settings" -> navController.navigate(Route.Settings) {
                                 popUpTo(Route.Home) { inclusive = false }
                                 launchSingleTop = true
                             }

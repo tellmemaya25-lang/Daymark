@@ -20,7 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Person
@@ -214,7 +214,7 @@ fun SettingsScreen(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     ListItem(
-                        headlineContent = { Text("History", style = MaterialTheme.typography.titleSmall) },
+                        headlineContent = { Text("Activity", style = MaterialTheme.typography.titleSmall) },
                         supportingContent = { Text("View completed tasks and activity log", style = MaterialTheme.typography.bodySmall) },
                         leadingContent = {
                             Box(
@@ -224,7 +224,7 @@ fun SettingsScreen(
                                     .background(MaterialTheme.colorScheme.surfaceVariant),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Filled.History, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Filled.BarChart, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         },
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
