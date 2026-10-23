@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Calendar
 import javax.inject.Inject
 
@@ -34,6 +35,11 @@ class AddEditViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val auth: FirebaseAuth
 ) : ViewModel() {
+
+    private companion object {
+        /** Hard ceiling for one save round-trip; keeps the Save button honest. */
+        const val SAVE_TIMEOUT_MS = 20_000L
+    }
 
     private val _uiState = MutableStateFlow(AddEditUiState())
     val uiState: StateFlow<AddEditUiState> = _uiState.asStateFlow()
@@ -214,20 +220,27 @@ class AddEditViewModel @Inject constructor(
     }
 
     fun saveTask(onSuccess: () -> Unit) {
+        // Ignore double taps – a second save while one is in flight causes ghost docs.
+        if (_uiState.value.isSaving) return
+
         val currentUser = auth.currentUser
         if (currentUser == null) {
-            _uiState.update { it.copy(errorMessage = "Not authenticated! Please login again. uid=null") }
+            _uiState.update { it.copy(errorMessage = "Not authenticated. Please log in again.") }
             return
         }
         if (_uiState.value.title.isBlank()) {
             _uiState.update { it.copy(titleError = "Title required") }
             return
         }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true, errorMessage = null) }
             try {
                 val state = _uiState.value
-                android.util.Log.d("AddEditVM", "Saving task: title=${state.title} uid=${currentUser.uid} dueAt=${state.dueAt} cat=${state.categoryId}")
+                android.util.Log.d(
+                    "AddEditVM",
+                    "Saving task: title=${state.title} uid=${currentUser.uid} dueAt=${state.dueAt} cat=${state.categoryId}"
+                )
 
                 val task = Task(
                     id = state.taskId ?: "",
@@ -241,11 +254,12 @@ class AddEditViewModel @Inject constructor(
                     isCompleted = false
                 )
 
-                val result = if (state.isEditMode) {
-                    updateTaskUseCase(task)
-                } else {
-                    addTaskUseCase(task).let { res ->
-                        when (res) {
+                // Bounded so a missing Firestore ack can never leave the button spinning.
+                val result = withTimeoutOrNull(SAVE_TIMEOUT_MS) {
+                    if (state.isEditMode) {
+                        updateTaskUseCase(task)
+                    } else {
+                        when (val res = addTaskUseCase(task)) {
                             is Result.Success -> Result.Success(Unit)
                             is Result.Error -> {
                                 android.util.Log.e("AddEditVM", "addTaskUseCase failed: ${res.message}", res.exception)
@@ -256,31 +270,44 @@ class AddEditViewModel @Inject constructor(
                     }
                 }
 
-                when (result) {
-                    is Result.Success -> {
+                when {
+                    result == null -> {
+                        android.util.Log.e("AddEditVM", "Save timed out after ${SAVE_TIMEOUT_MS}ms")
+                        _uiState.update {
+                            it.copy(
+                                errorMessage = "Save is taking too long. Check your connection and try again."
+                            )
+                        }
+                    }
+                    result is Result.Success -> {
                         android.util.Log.d("AddEditVM", "Task saved successfully")
-                        _uiState.update { it.copy(isSaving = false) }
                         onSuccess()
                     }
-                    is Result.Error -> {
+                    result is Result.Error -> {
                         val msg = result.message ?: "Failed to save task"
                         android.util.Log.e("AddEditVM", "Save failed: $msg", result.exception)
-                        // Provide actionable message for common Firestore errors
-                        val friendly = when {
-                            msg.contains("PERMISSION_DENIED", ignoreCase = true) -> "Firestore permission denied. Check firestore.rules allows users/{uid}. See firestore.rules file in repo."
-                            msg.contains("unavailable", ignoreCase = true) -> "Firestore unavailable (offline?). Task will sync when online if persistence enabled."
-                            msg.contains("not authenticated", ignoreCase = true) -> "Not authenticated. Please logout and login again."
-                            else -> msg
-                        }
-                        _uiState.update { it.copy(isSaving = false, errorMessage = friendly) }
+                        _uiState.update { it.copy(errorMessage = friendlySaveError(msg)) }
                     }
-                    else -> _uiState.update { it.copy(isSaving = false) }
+                    else -> Unit
                 }
             } catch (e: Exception) {
                 android.util.Log.e("AddEditVM", "saveTask crash prevented", e)
-                _uiState.update { it.copy(isSaving = false, errorMessage = "Crash prevented: ${e.message}. Check logcat.") }
+                _uiState.update { it.copy(errorMessage = "Could not save: ${e.message ?: "unknown error"}") }
+            } finally {
+                // Always release the spinner, whatever happened above.
+                _uiState.update { it.copy(isSaving = false) }
             }
         }
+    }
+
+    private fun friendlySaveError(msg: String): String = when {
+        msg.contains("PERMISSION_DENIED", ignoreCase = true) ->
+            "Firestore permission denied. Check firestore.rules allows users/{uid}/tasks."
+        msg.contains("UNAVAILABLE", ignoreCase = true) || msg.contains("offline", ignoreCase = true) ->
+            "Can't reach Firestore right now. The task will sync when you're back online."
+        msg.contains("not authenticated", ignoreCase = true) ->
+            "Not authenticated. Please log out and log in again."
+        else -> msg
     }
 
     fun deleteTask(onSuccess: () -> Unit) {
@@ -297,7 +324,9 @@ class AddEditViewModel @Inject constructor(
                     else -> _uiState.update { it.copy(isSaving = false) }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isSaving = false, errorMessage = "Delete failed: ${e.message}") }
+                _uiState.update { it.copy(errorMessage = "Delete failed: ${e.message}") }
+            } finally {
+                _uiState.update { it.copy(isSaving = false) }
             }
         }
     }

@@ -1,6 +1,7 @@
 package com.sabihon.todo.data.repository
 
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -48,6 +50,71 @@ class TaskRepositoryImpl @Inject constructor(
 
     private fun activityCollection() =
         firestore.collection("users").document(userIdOrThrow()).collection("activity")
+
+    /**
+     * Outcome of a Firestore write.
+     *
+     * [Queued] is the important one: with offline persistence enabled a write is
+     * committed to the local cache immediately, but the Task returned by
+     * `set()`/`add()` only completes once the *server* acknowledges it. Offline, in
+     * a flaky network, or behind a slow proxy that ack never arrives, so awaiting it
+     * hangs forever and the Save button spins indefinitely. We therefore only wait a
+     * bounded time and treat "no answer yet" as queued – the SDK will flush it.
+     */
+    private sealed interface WriteOutcome {
+        data object Acked : WriteOutcome
+        data object Queued : WriteOutcome
+        data class Failed(val error: Exception) : WriteOutcome
+    }
+
+    private suspend fun writeDocument(docRef: DocumentReference, data: Any): WriteOutcome {
+        return try {
+            val acked = withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) {
+                docRef.set(data).await()
+                true
+            }
+            if (acked == true) WriteOutcome.Acked else WriteOutcome.Queued
+        } catch (e: Exception) {
+            WriteOutcome.Failed(e)
+        }
+    }
+
+    private suspend fun boundedWrite(block: suspend () -> Unit): WriteOutcome {
+        return try {
+            val acked = withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) {
+                block()
+                true
+            }
+            if (acked == true) WriteOutcome.Acked else WriteOutcome.Queued
+        } catch (e: Exception) {
+            WriteOutcome.Failed(e)
+        }
+    }
+
+    /** Flattened fallback document used when POJO serialisation is rejected. */
+    private fun minimalTaskMap(task: Task): Map<String, Any?> = hashMapOf(
+        "title" to task.title,
+        "description" to task.description,
+        "categoryId" to task.categoryId,
+        "priority" to task.priority.name,
+        "dueAt" to task.dueAt?.let { Timestamp(Date(it)) },
+        "reminderAt" to task.reminderAt?.let { Timestamp(Date(it)) },
+        "completed" to task.isCompleted,
+        "deleted" to task.isDeleted,
+        "searchKeywords" to generateSearchKeywords(task.title),
+        "createdAt" to Timestamp(Date()),
+        "updatedAt" to Timestamp(Date()),
+        "subTasks" to task.subTasks.map {
+            mapOf("id" to it.id, "title" to it.title, "done" to it.isDone)
+        }
+    )
+
+    private companion object {
+        /** How long we wait for a backend ack before assuming the write is queued. */
+        const val WRITE_ACK_TIMEOUT_MS = 8_000L
+        /** Activity logging is best-effort and must never block a save. */
+        const val ACTIVITY_TIMEOUT_MS = 3_000L
+    }
 
     override fun observeTasks(filter: TaskFilter): Flow<Result<List<Task>>> = callbackFlow {
         trySend(Result.Loading)
@@ -187,32 +254,45 @@ class TaskRepositoryImpl @Inject constructor(
             ).toDto()
             val docRef = if (task.id.isBlank()) tasksCollection().document() else tasksCollection().document(task.id)
             val finalDto = dto.copy(id = docRef.id)
-            try {
-                docRef.set(finalDto).await()
-            } catch (e: Exception) {
-                android.util.Log.e("TaskRepo", "Full DTO failed, fallback minimal", e)
-                val minimal = hashMapOf(
-                    "title" to task.title,
-                    "description" to task.description,
-                    "categoryId" to task.categoryId,
-                    "priority" to task.priority.name,
-                    "dueAt" to task.dueAt?.let { Timestamp(Date(it)) },
-                    "reminderAt" to task.reminderAt?.let { Timestamp(Date(it)) },
-                    "completed" to false,
-                    "deleted" to false,
-                    "searchKeywords" to generateSearchKeywords(task.title),
-                    "createdAt" to Timestamp(Date()),
-                    "updatedAt" to Timestamp(Date()),
-                    "subTasks" to emptyList<Map<String, Any>>()
-                )
-                docRef.set(minimal).await()
+
+            var outcome = writeDocument(docRef, finalDto)
+            if (outcome is WriteOutcome.Failed) {
+                android.util.Log.e("TaskRepo", "Full DTO write failed, retrying with minimal map", outcome.error)
+                outcome = writeDocument(docRef, minimalTaskMap(task))
             }
-            try { logActivity(taskId = docRef.id, taskTitle = task.title, action = "CREATED") } catch (_: Exception) {}
-            try { task.reminderAt?.let { reminderScheduler.scheduleReminder(docRef.id, task.title, task.description, it) } } catch (_: Exception) {}
-            Result.Success(docRef.id)
+
+            when (outcome) {
+                is WriteOutcome.Failed -> {
+                    android.util.Log.e("TaskRepo", "addTask FAILED", outcome.error)
+                    Result.Error(outcome.error, outcome.error.message ?: "Failed to save task")
+                }
+                WriteOutcome.Queued -> {
+                    android.util.Log.w("TaskRepo", "addTask queued locally (no ack yet) – will sync when online")
+                    afterTaskSaved(docRef.id, task)
+                    Result.Success(docRef.id)
+                }
+                WriteOutcome.Acked -> {
+                    afterTaskSaved(docRef.id, task)
+                    Result.Success(docRef.id)
+                }
+            }
         } catch (e: Exception) {
             android.util.Log.e("TaskRepo", "addTask FAILED", e)
             Result.Error(e, e.message ?: "Failed")
+        }
+    }
+
+    /** Best-effort side effects – each is bounded so it can never hang the save. */
+    private suspend fun afterTaskSaved(taskId: String, task: Task) {
+        try {
+            logActivity(taskId = taskId, taskTitle = task.title, action = "CREATED")
+        } catch (_: Exception) {
+        }
+        try {
+            task.reminderAt?.let {
+                reminderScheduler.scheduleReminder(taskId, task.title, task.description, it)
+            }
+        } catch (_: Exception) {
         }
     }
 
@@ -220,7 +300,14 @@ class TaskRepositoryImpl @Inject constructor(
         try {
             val dto = task.copy(updatedAt = System.currentTimeMillis(),
                 searchKeywords = if (task.searchKeywords.isEmpty()) generateSearchKeywords(task.title) else task.searchKeywords).toDto()
-            tasksCollection().document(task.id).set(dto).await()
+            when (val outcome = writeDocument(tasksCollection().document(task.id), dto)) {
+                is WriteOutcome.Failed -> return@withContext Result.Error(
+                    outcome.error,
+                    outcome.error.message ?: "Failed to update task"
+                )
+                WriteOutcome.Queued -> android.util.Log.w("TaskRepo", "update queued locally – will sync")
+                WriteOutcome.Acked -> Unit
+            }
             logActivity(taskId = task.id, taskTitle = task.title, action = "UPDATED")
             try {
                 if (task.reminderAt != null) reminderScheduler.scheduleReminder(task.id, task.title, task.description, task.reminderAt)
@@ -232,8 +319,15 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun deleteTask(taskId: String, softDelete: Boolean): Result<Unit> = withContext(ioDispatcher) {
         try {
-            if (softDelete) tasksCollection().document(taskId).update(mapOf("deleted" to true, "updatedAt" to Timestamp(Date()))).await()
-            else tasksCollection().document(taskId).delete().await()
+            val outcome = boundedWrite {
+                if (softDelete) {
+                    tasksCollection().document(taskId)
+                        .update(mapOf("deleted" to true, "updatedAt" to Timestamp(Date()))).await()
+                } else {
+                    tasksCollection().document(taskId).delete().await()
+                }
+            }
+            if (outcome is WriteOutcome.Failed) return@withContext Result.Error(outcome.error)
             logActivity(taskId = taskId, taskTitle = "", action = "DELETED")
             try { reminderScheduler.cancelReminder(taskId) } catch (_: Exception) {}
             Result.Success(Unit)
@@ -242,8 +336,11 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun restoreTask(taskId: String): Result<Unit> = withContext(ioDispatcher) {
         try {
-            tasksCollection().document(taskId).update(mapOf("deleted" to false, "updatedAt" to Timestamp(Date()))).await()
-            Result.Success(Unit)
+            val outcome = boundedWrite {
+                tasksCollection().document(taskId)
+                    .update(mapOf("deleted" to false, "updatedAt" to Timestamp(Date()))).await()
+            }
+            if (outcome is WriteOutcome.Failed) Result.Error(outcome.error) else Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e) }
     }
 
@@ -251,7 +348,10 @@ class TaskRepositoryImpl @Inject constructor(
         try {
             val updates = mutableMapOf<String, Any?>("completed" to isCompleted, "updatedAt" to Timestamp(Date()))
             if (isCompleted) updates["completedAt"] = Timestamp(Date()) else updates["completedAt"] = null
-            tasksCollection().document(taskId).update(updates).await()
+            val outcome = boundedWrite {
+                tasksCollection().document(taskId).update(updates).await()
+            }
+            if (outcome is WriteOutcome.Failed) return@withContext Result.Error(outcome.error)
             logActivity(taskId = taskId, taskTitle = "", action = if (isCompleted) "COMPLETED" else "REOPENED")
             if (isCompleted) try { reminderScheduler.cancelReminder(taskId) } catch (_: Exception) {}
             Result.Success(Unit)
@@ -274,9 +374,18 @@ class TaskRepositoryImpl @Inject constructor(
 
     private suspend fun logActivity(taskId: String, taskTitle: String, action: String) {
         try {
-            val dto = ActivityDto(taskId = taskId, taskTitle = taskTitle, action = action, timestamp = Timestamp(Date()))
-            activityCollection().add(dto).await()
-        } catch (_: Exception) {}
+            withTimeoutOrNull(ACTIVITY_TIMEOUT_MS) {
+                val dto = ActivityDto(
+                    taskId = taskId,
+                    taskTitle = taskTitle,
+                    action = action,
+                    timestamp = Timestamp(Date())
+                )
+                activityCollection().add(dto).await()
+            }
+        } catch (_: Exception) {
+            // Logging is decorative – never surface or block on it.
+        }
     }
 
     private fun getStartOfDay(t: Long): Long {
