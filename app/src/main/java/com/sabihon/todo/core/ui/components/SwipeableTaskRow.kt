@@ -6,12 +6,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
@@ -23,7 +24,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.sabihon.todo.core.ui.theme.AccentBlue
@@ -83,14 +84,15 @@ fun SwipeableTaskRow(
     coordinator: RevealCoordinator? = null
 ) {
     val density = LocalDensity.current
-    val revealPx = with(density) { 160.dp.toPx() }
+    // The two actions stack, so the panel only needs one button's width.
+    val revealPx = with(density) { 68.dp.toPx() }
     val commitPx = revealPx / 2f                                  // 50% of travel
     val velocityCommit = with(density) { 800.dp.toPx() }          // px/s
     val overscrollMax = with(density) { 28.dp.toPx() }
     val rubberBand = 0.35f
     // Deep swipe that commits the primary action outright. Expressed against the
     // reveal distance rather than the row width so it behaves the same on any screen.
-    val fullSwipePx = revealPx * 1.6f
+    val fullSwipePx = with(density) { 132.dp.toPx() }
     // Furthest the finger can take the card, allowing for the damped overscroll.
     val rawMax = fullSwipePx + overscrollMax / rubberBand
     var isDragging by remember { mutableStateOf(false) }
@@ -168,9 +170,9 @@ fun SwipeableTaskRow(
                 .padding(horizontal = 20.dp, vertical = 4.dp),
             contentAlignment = bgAlignment
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.graphicsLayer {
                     alpha = 0.1f + 0.9f * revealFraction
                     val s = 0.78f + 0.22f * revealFraction + 0.06f * commitFraction
@@ -304,27 +306,33 @@ private fun SwipeAction(
     ringColor: Color,
     onClick: () -> Unit
 ) {
-    IconButton(
-        onClick = onClick,
+    // Two stacked circles: the ring is always drawn (as in the reference) and
+    // thickens with the commit progress so the threshold is still legible.
+    Box(
         modifier = Modifier
-            .size(56.dp)
-            .then(
-                if (commitFraction > 0f) {
-                    Modifier.border(
-                        width = 1.5.dp,
-                        color = ringColor.copy(alpha = ringColor.alpha * commitFraction),
-                        shape = CircleShape
-                    )
+            .size(38.dp)
+            .clip(CircleShape)
+            .border(
+                width = if (commitFraction > 0f) 2.dp else 1.2.dp,
+                color = if (commitFraction > 0f) {
+                    ringColor.copy(alpha = 0.45f + 0.55f * commitFraction)
                 } else {
-                    Modifier
-                }
+                    ringColor.copy(alpha = 0.35f + 0.3f * revealFraction)
+                },
+                shape = CircleShape
             )
+            .clickable(
+                enabled = revealFraction > 0.35f,
+                role = Role.Button,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
             contentDescription = label,
             tint = tint.copy(alpha = 0.45f + 0.55f * revealFraction),
-            modifier = Modifier.size((24 + 2 * commitFraction).dp)
+            modifier = Modifier.size((16 + 3 * commitFraction).dp)
         )
     }
 }

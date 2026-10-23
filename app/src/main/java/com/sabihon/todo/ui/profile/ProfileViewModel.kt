@@ -1,7 +1,10 @@
 package com.sabihon.todo.ui.profile
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.EmailAuthProvider
@@ -23,6 +26,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
@@ -69,24 +73,39 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val uid = user?.uid
-                // Try to load local photo first
                 val localPath = loadLocalPhotoPath(uid)
-                val localUri = localPath?.let { File(it).takeIf { f -> f.exists() }?.let { Uri.fromFile(it) } }
 
                 if (uid != null) {
                     val doc = firestore.collection("users").document(uid).get().await()
                     val firestorePhoto = doc.getString("photoUrl")
                     val firestoreName = doc.getString("displayName")
+
+                    // Photos saved while Firebase Storage was unavailable live in the
+                    // document as a base64 JPEG; rebuild the local cache file from it.
+                    val embedded = doc.getString("photoData")
+                    val restored = if (localPath == null && !embedded.isNullOrBlank()) {
+                        restoreEmbeddedPhoto(uid, embedded)
+                    } else {
+                        null
+                    }
+                    val effectivePath = localPath ?: restored
+                    val effectiveUri = effectivePath
+                        ?.let { File(it).takeIf { f -> f.exists() } }
+                        ?.let { Uri.fromFile(it) }
+
                     _uiState.update {
                         it.copy(
                             displayName = firestoreName ?: user?.displayName ?: "",
                             email = user?.email ?: "",
                             photoUrl = firestorePhoto ?: user?.photoUrl?.toString(),
-                            localPhotoPath = localPath,
-                            localPhotoUri = localUri ?: it.localPhotoUri
+                            localPhotoPath = effectivePath,
+                            localPhotoUri = effectiveUri ?: it.localPhotoUri
                         )
                     }
                 } else {
+                    val localUri = localPath
+                        ?.let { File(it).takeIf { f -> f.exists() } }
+                        ?.let { Uri.fromFile(it) }
                     _uiState.update {
                         it.copy(
                             displayName = user?.displayName ?: "",
@@ -161,44 +180,46 @@ class ProfileViewModel @Inject constructor(
         uploadPhoto(uri)
     }
 
+    /**
+     * Saves the avatar.
+     *
+     * Firebase Storage is the preferred home, but this project may not have a bucket
+     * provisioned ("Object does not exist at location" on downloadUrl). Rather than
+     * failing the upload, fall back to storing a compressed JPEG in the user document
+     * as base64 — a Firestore doc holds 1 MiB and a 512px/ladder-compressed avatar is
+     * a fraction of that. The local cache file is still written either way, so the
+     * photo shows up even before any network round-trip finishes.
+     */
     private fun uploadPhoto(uri: Uri) {
         viewModelScope.launch {
             _uiState.update { it.copy(isUploadingPhoto = true, error = null) }
-            try {
-                val uid = auth.currentUser?.uid ?: throw IllegalStateException("Not authenticated")
-                // Validate URI exists locally first to give clearer error
-                // Use timestamp to avoid overwrite
-                val storageRef = storage.reference.child("users/$uid/profile_${System.currentTimeMillis()}.jpg")
-                // putFile with await – ensure upload completes
-                val uploadTask = storageRef.putFile(uri).await()
-                if (uploadTask.task.isSuccessful.not() && uploadTask.error != null) {
-                    throw uploadTask.error ?: Exception("Upload failed")
+            val uid = auth.currentUser?.uid
+            if (uid == null) {
+                _uiState.update { it.copy(isUploadingPhoto = false, error = "Not authenticated") }
+                return@launch
+            }
+
+            // 1. Preferred path: Firebase Storage, when it is available.
+            val downloadUrl = tryUploadToStorage(uri, uid)
+            if (downloadUrl != null) {
+                try {
+                    val user = auth.currentUser
+                    val profileUpdate = UserProfileChangeRequest.Builder()
+                        .setPhotoUri(Uri.parse(downloadUrl))
+                        .build()
+                    user?.updateProfile(profileUpdate)?.await()
+                } catch (_: Exception) {
+                    // Cosmetic – the Firestore copy is what the app reads back.
                 }
-                // Small delay to ensure object is available (eventual consistency)
-                // Then get download URL with retry
-                var downloadUrl: String? = null
-                var lastError: Exception? = null
-                repeat(3) { attempt ->
-                    try {
-                        downloadUrl = storageRef.downloadUrl.await().toString()
-                        return@repeat
-                    } catch (e: Exception) {
-                        lastError = e
-                        if (attempt < 2) kotlinx.coroutines.delay(500)
-                    }
+                try {
+                    firestore.collection("users").document(uid)
+                        .set(
+                            mapOf("photoUrl" to downloadUrl, "photoData" to null),
+                            com.google.firebase.firestore.SetOptions.merge()
+                        )
+                        .await()
+                } catch (_: Exception) {
                 }
-                if (downloadUrl == null) throw lastError ?: Exception("Failed to get download URL: Object does not exist at location")
-
-                val user = auth.currentUser
-                val profileUpdate = UserProfileChangeRequest.Builder()
-                    .setPhotoUri(Uri.parse(downloadUrl))
-                    .build()
-                user?.updateProfile(profileUpdate)?.await()
-
-                firestore.collection("users").document(uid).update(
-                    mapOf("photoUrl" to downloadUrl)
-                ).await()
-
                 _uiState.update {
                     it.copy(
                         photoUrl = downloadUrl,
@@ -207,23 +228,116 @@ class ProfileViewModel @Inject constructor(
                         successMessage = "Profile photo updated"
                     )
                 }
-            } catch (e: Exception) {
-                val msg = e.message ?: "Unknown error"
-                val friendly = when {
-                    msg.contains("Object does not exist", true) -> "Photo upload failed: Storage file not found. Please enable Firebase Storage in Firebase Console and check rules. Original: $msg"
-                    msg.contains("not authorized", true) || msg.contains("permission", true) -> "Photo upload failed: Not authorized. Check Storage security rules."
-                    msg.contains("bucket", true) -> "Photo upload failed: Storage bucket not configured."
-                    else -> "Photo upload failed: $msg"
-                }
+                return@launch
+            }
+
+            // 2. Fallback: embed the image in the user document.
+            val bytes = compressForEmbedding(uri)
+            if (bytes == null) {
                 _uiState.update {
                     it.copy(
                         isUploadingPhoto = false,
-                        error = friendly
+                        error = "Couldn't read that image. Try another photo."
+                    )
+                }
+                return@launch
+            }
+            try {
+                val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                firestore.collection("users").document(uid)
+                    .set(
+                        mapOf("photoData" to base64, "photoUrl" to null),
+                        com.google.firebase.firestore.SetOptions.merge()
+                    )
+                    .await()
+                _uiState.update {
+                    it.copy(
+                        photoUrl = null,
+                        localPhotoUri = null,
+                        isUploadingPhoto = false,
+                        successMessage = "Profile photo updated"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isUploadingPhoto = false,
+                        error = "Photo save failed: ${e.message ?: "unknown error"}"
                     )
                 }
             }
         }
     }
+
+    /** Uploads to Firebase Storage; null on any failure so the caller can fall back. */
+    private suspend fun tryUploadToStorage(uri: Uri, uid: String): String? = try {
+        val storageRef = storage.reference.child("users/$uid/profile_${System.currentTimeMillis()}.jpg")
+        storageRef.putFile(uri).await()
+        var url: String? = null
+        repeat(3) { attempt ->
+            try {
+                url = storageRef.downloadUrl.await().toString()
+            } catch (_: Exception) {
+                if (attempt < 2) kotlinx.coroutines.delay(400)
+            }
+            if (url != null) return@repeat
+        }
+        url
+    } catch (e: Exception) {
+        android.util.Log.w("ProfileVM", "Storage upload unavailable, embedding instead: ${e.message}")
+        null
+    }
+
+    /** Downscale + quality ladder so the base64 blob stays well under the doc limit. */
+    private suspend fun compressForEmbedding(uri: Uri): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val input = appContext.contentResolver.openInputStream(uri) ?: return@withContext null
+            val original = BitmapFactory.decodeStream(input)
+            input.close()
+            if (original == null) return@withContext null
+
+            val maxSide = 512
+            val longest = maxOf(original.width, original.height)
+            val scaled = if (longest > maxSide) {
+                val scale = maxSide.toFloat() / longest
+                Bitmap.createScaledBitmap(
+                    original,
+                    (original.width * scale).toInt().coerceAtLeast(1),
+                    (original.height * scale).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else {
+                original
+            }
+
+            val out = ByteArrayOutputStream()
+            var quality = 80
+            var bytes: ByteArray
+            do {
+                out.reset()
+                scaled.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                bytes = out.toByteArray()
+                quality -= 15
+            } while (bytes.size > 300_000 && quality >= 35)
+            bytes
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Writes the embedded base64 back to the local cache file and returns its path. */
+    private suspend fun restoreEmbeddedPhoto(uid: String?, data: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val bytes = Base64.decode(data, Base64.DEFAULT)
+                if (bytes.isEmpty()) return@withContext null
+                val file = getLocalPhotoFile(uid)
+                FileOutputStream(file).use { it.write(bytes) }
+                file.absolutePath
+            } catch (e: Exception) {
+                null
+            }
+        }
 
     fun saveDisplayName() {
         viewModelScope.launch {
