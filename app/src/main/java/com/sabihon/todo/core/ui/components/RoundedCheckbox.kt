@@ -67,7 +67,7 @@ fun RoundedCheckbox(
 
 /**
  * Round version for sub-tasks – matches screenshot but circular per request
- * Used in TaskDetail sub-task list – larger icons per request use 1st image for consistency
+ * Used in the sub-task checklist – larger icons per request use 1st image for consistency
  */
 @Composable
 fun SubTaskRoundedCheckbox(
