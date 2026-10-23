@@ -1,7 +1,17 @@
 package com.sabihon.todo.ui.navigation
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -100,7 +110,12 @@ fun SabihonNavHost(
             )
         }
         // Main screens with bottom navigation
-        composable<Route.Home> {
+        composable<Route.Home>(
+            enterTransition = tabEnterTransition,
+            exitTransition = tabExitTransition,
+            popEnterTransition = tabPopEnterTransition,
+            popExitTransition = tabPopExitTransition
+        ) {
             MainScaffold(navController = navController) { _ ->
                 HomeScreen(
                     onNavigateToAllTasks = { navController.navigate(Route.AllTasks) },
@@ -117,7 +132,12 @@ fun SabihonNavHost(
                 )
             }
         }
-        composable<Route.Projects> {
+        composable<Route.Projects>(
+            enterTransition = tabEnterTransition,
+            exitTransition = tabExitTransition,
+            popEnterTransition = tabPopEnterTransition,
+            popExitTransition = tabPopExitTransition
+        ) {
             MainScaffold(navController = navController) { _ ->
                 ProjectsScreen(
                     onProjectClick = { catId -> navController.navigate(Route.CategoryDetail(catId)) },
@@ -168,7 +188,12 @@ fun SabihonNavHost(
                 )
             }
         }
-        composable<Route.History> {
+        composable<Route.History>(
+            enterTransition = tabEnterTransition,
+            exitTransition = tabExitTransition,
+            popEnterTransition = tabPopEnterTransition,
+            popExitTransition = tabPopExitTransition
+        ) {
             MainScaffold(navController = navController) { _ ->
                 HistoryScreen(
                     onTaskClick = { taskId -> navController.navigate(Route.AddEditTask(taskId)) },
@@ -190,7 +215,12 @@ fun SabihonNavHost(
                 )
             }
         }
-        composable<Route.Settings> {
+        composable<Route.Settings>(
+            enterTransition = tabEnterTransition,
+            exitTransition = tabExitTransition,
+            popEnterTransition = tabPopEnterTransition,
+            popExitTransition = tabPopExitTransition
+        ) {
             MainScaffold(navController = navController) { _ ->
                 SettingsScreen(
                     onBack = { navController.navigate(Route.Home) {
@@ -203,4 +233,51 @@ fun SabihonNavHost(
             }
         }
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Tab transitions – a short slide + cross-fade in the swipe direction  */
+/* ------------------------------------------------------------------ */
+
+private fun NavDestination?.tabIndex(): Int {
+    val route = this?.route ?: return -1
+    return when {
+        route.contains("Home") || route.contains("AllTasks") -> 0
+        route.contains("Projects") || route.contains("Categories") -> 1
+        route.contains("History") -> 2
+        route.contains("Settings") || route.contains("Profile") -> 3
+        else -> -1
+    }
+}
+
+/** +1 moving right through the tabs, -1 moving left, 0 when it isn't a tab swap. */
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.tabShift(): Int {
+    val from = initialState.destination.tabIndex()
+    val to = targetState.destination.tabIndex()
+    return when {
+        from < 0 || to < 0 -> 0
+        to > from -> 1
+        to < from -> -1
+        else -> 0
+    }
+}
+
+private val tabEnterTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+    val shift = tabShift()
+    fadeIn(tween(200)) + slideInHorizontally(tween(280)) { full -> shift * full / 10 }
+}
+
+private val tabExitTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+    val shift = tabShift()
+    fadeOut(tween(150)) + slideOutHorizontally(tween(280)) { full -> -shift * full / 10 }
+}
+
+private val tabPopEnterTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+    val shift = tabShift()
+    fadeIn(tween(200)) + slideInHorizontally(tween(280)) { full -> -shift * full / 10 }
+}
+
+private val tabPopExitTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+    val shift = tabShift()
+    fadeOut(tween(150)) + slideOutHorizontally(tween(280)) { full -> shift * full / 10 }
 }
