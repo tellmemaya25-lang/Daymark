@@ -14,8 +14,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -47,6 +50,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.ui.components.BrandHeader
+import com.sabihon.todo.core.ui.components.CompletionSplash
 import com.sabihon.todo.core.ui.components.FilterEmptyState
 import com.sabihon.todo.core.ui.components.LoadingShimmer
 import com.sabihon.todo.core.ui.components.MomentumCard
@@ -98,6 +103,7 @@ fun HomeScreen(
     var showAddSubTaskSheet by remember { mutableStateOf(false) }
     var taskForNewSubTask by remember { mutableStateOf<Task?>(null) }
     var newSubTaskTitle by remember { mutableStateOf("") }
+    var splashTaskTitle by remember { mutableStateOf<String?>(null) }
     var completedExpanded by remember { mutableStateOf(true) }
     var showSortMenu by remember { mutableStateOf(false) }
     val bottomSheetState = rememberModalBottomSheetState()
@@ -125,12 +131,29 @@ fun HomeScreen(
         if (uiState.isLoading) {
             LoadingShimmer(modifier = Modifier.padding(innerPadding))
         } else {
-            LazyColumn(
+            val listState = rememberLazyListState()
+            // Header stays put; a hairline fades in as soon as the list moves under it.
+            val isScrolled by remember {
+                derivedStateOf {
+                    listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+                }
+            }
+            val headerDividerAlpha by animateFloatAsState(
+                targetValue = if (isScrolled) 1f else 0f,
+                animationSpec = tween(180),
+                label = "headerDivider"
+            )
+
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.background)
+                ) {
                     HomeHeader(
                         greetingName = uiState.greetingName,
                         avatarInitials = uiState.avatarInitials,
@@ -138,8 +161,24 @@ fun HomeScreen(
                         onSearchClick = onNavigateToSearch,
                         onAvatarClick = onNavigateToProfile
                     )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(
+                                MaterialTheme.colorScheme.onSurface.copy(
+                                    alpha = 0.10f * headerDividerAlpha
+                                )
+                            )
+                    )
                 }
 
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
                 item {
                     MomentumCard(
                         total = uiState.momentum.total,
@@ -247,7 +286,8 @@ fun HomeScreen(
                         onLongPress = { target ->
                             selectedTask = target
                             showActionSheet = true
-                        }
+                        },
+                        onCompleted = { target -> splashTaskTitle = target.title }
                     )
                 }
 
@@ -278,13 +318,15 @@ fun HomeScreen(
                                 onLongPress = { target ->
                                     selectedTask = target
                                     showActionSheet = true
-                                }
+                                },
+                                onCompleted = { target -> splashTaskTitle = target.title }
                             )
                         }
                     }
                 }
 
                 item { Spacer(Modifier.height(110.dp)) }
+                }
             }
         }
 
@@ -369,8 +411,9 @@ fun HomeScreen(
                             .fillMaxWidth()
                             .clickable {
                                 showActionSheet = false
-                                selectedTask?.let {
-                                    viewModel.onAction(HomeAction.ToggleComplete(it.id, !it.isCompleted))
+                                selectedTask?.let { task ->
+                                    viewModel.onAction(HomeAction.ToggleComplete(task.id, !task.isCompleted))
+                                    if (!task.isCompleted) splashTaskTitle = task.title
                                 }
                             }
                             .padding(horizontal = 20.dp, vertical = 16.dp),
@@ -526,6 +569,13 @@ fun HomeScreen(
                 }
             }
         }
+
+        // Celebration – fires the moment a task is ticked off
+        CompletionSplash(
+            visible = splashTaskTitle != null,
+            subtitle = splashTaskTitle,
+            onFinished = { splashTaskTitle = null }
+        )
     }
 }
 
@@ -761,7 +811,8 @@ private fun HomeTaskCard(
     onOpen: () -> Unit,
     onEdit: () -> Unit,
     onAddSubTaskRequest: (Task) -> Unit,
-    onLongPress: (Task) -> Unit
+    onLongPress: (Task) -> Unit,
+    onCompleted: (Task) -> Unit = {}
 ) {
     SwipeableTaskRow(
         title = task.title,
@@ -775,6 +826,7 @@ private fun HomeTaskCard(
         isHighlighted = isHighlighted,
         onCheckedChange = { checked ->
             viewModel.onAction(HomeAction.ToggleComplete(task.id, checked))
+            if (checked && !task.isCompleted) onCompleted(task)
         },
         onAddSubTask = { onAddSubTaskRequest(task) },
         onSubTaskChecked = { subId, done ->

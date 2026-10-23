@@ -2,6 +2,7 @@ package com.sabihon.todo.core.ui.components
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
@@ -21,7 +22,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,22 +33,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
 import com.sabihon.todo.core.ui.theme.AccentBlue
+import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
 import com.sabihon.todo.domain.model.SubTask
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Swipeable task row – home page swipe right to edit/delete + use color combo from setting for dark mode
- * - Supports BOTH swipe left and swipe right to reveal edit/delete per request
- * - Gesture: draggable horizontal, thresholds ±80dp, reveal 160dp
- * - Icons centered vertically fill height 56dp, no bg, AccentBlue / #E57373, 24.dp clip outer
- * - Background aligned to revealed side so icons are visible
- * - Bg of task: light #e3f5ff per image1, dark #1E2A44 per Settings dark combo for overall dark mode theme, leave light mode as is
+ * Swipeable task row – reveal Edit / Delete behind the card.
+ *
+ * - Drag horizontally; release past ±80dp (or flick faster than 1200px/s) to latch open
+ * - The action icons fade and scale in with the drag instead of snapping into view
+ * - A haptic tick lands the moment the reveal threshold is crossed
+ * - The card dips very slightly while dragging so it feels picked up, and the
+ *   settle uses a springy spec so it overshoots a hair on release
  */
 @Composable
 fun SwipeableTaskRow(
@@ -76,22 +81,41 @@ fun SwipeableTaskRow(
     val endThreshold = with(density) { -80.dp.toPx() }
     val maxStart = with(density) { 160.dp.toPx() }
     val maxEnd = with(density) { -160.dp.toPx() }
+    // ~1200 px/s on a 3x screen – a deliberate flick, not a slow drag.
+    val flingVelocity = with(density) { 400.dp.toPx() }
 
     val offsetX = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
     var isDragging by remember { mutableStateOf(false) }
 
+    // Springy settle so a released card overshoots slightly instead of stopping dead.
+    val settleSpec = spring<Float>(dampingRatio = 0.58f, stiffness = Spring.StiffnessMediumLow)
+    val closeSpec = spring<Float>(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+
+    fun close() = scope.launch { offsetX.animateTo(0f, closeSpec) }
+
     LaunchedEffect(isCompleted) {
-        if (offsetX.value != 0f) {
-            scope.launch {
-                offsetX.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
-            }
-        }
+        if (offsetX.value != 0f) close()
     }
 
-    // Bg of task: light #e3f5ff per image1, dark #1E2A44 per Settings dark combo for overall dark mode theme, leave light mode as is
+    // 0 → 1 as the card slides towards the reveal distance; drives icon alpha/scale.
+    val revealFraction = (abs(offsetX.value) / startThreshold).coerceIn(0f, 1f)
+    val pastThreshold = offsetX.value > startThreshold || offsetX.value < endThreshold
+
+    LaunchedEffect(pastThreshold) {
+        if (pastThreshold) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    }
+
+    val cardScale by animateFloatAsState(
+        targetValue = if (isDragging) 0.985f else 1f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMedium),
+        label = "swipeCardScale"
+    )
+
     val isDark = LocalIsDarkTheme.current
     val swipeBg = if (isDark) Color(0xFF23262F) else Color(0xFFE7EDFB)
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -99,9 +123,7 @@ fun SwipeableTaskRow(
             .clip(RoundedCornerShape(20.dp))
             .background(swipeBg)
     ) {
-        // Background – edit/delete, visible on swipe right (left side) and swipe left (right side)
-        // Aligned to revealed edge so icons are visible even with 160dp offset, centered vertically 56dp
-        // Bg uses Settings dark combo for dark mode
+        // Revealed actions – kept on the edge the card is sliding away from.
         val bgAlignment = when {
             offsetX.value > 10f -> Alignment.CenterStart
             offsetX.value < -10f -> Alignment.CenterEnd
@@ -117,13 +139,17 @@ fun SwipeableTaskRow(
         ) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.graphicsLayer {
+                    alpha = 0.1f + 0.9f * revealFraction
+                    val s = 0.78f + 0.22f * revealFraction
+                    scaleX = s
+                    scaleY = s
+                }
             ) {
                 IconButton(
                     onClick = {
-                        scope.launch {
-                            offsetX.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
-                        }
+                        close()
                         onEdit?.invoke()
                     },
                     modifier = Modifier.size(56.dp)
@@ -137,9 +163,7 @@ fun SwipeableTaskRow(
                 }
                 IconButton(
                     onClick = {
-                        scope.launch {
-                            offsetX.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
-                        }
+                        close()
                         onDelete?.invoke()
                     },
                     modifier = Modifier.size(56.dp)
@@ -158,6 +182,10 @@ fun SwipeableTaskRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .graphicsLayer {
+                    scaleX = cardScale
+                    scaleY = cardScale
+                }
                 .draggable(
                     state = rememberDraggableState { delta ->
                         val newValue = (offsetX.value + delta).coerceIn(maxEnd, maxStart)
@@ -165,20 +193,19 @@ fun SwipeableTaskRow(
                     },
                     orientation = Orientation.Horizontal,
                     onDragStarted = { isDragging = true },
-                    onDragStopped = {
+                    onDragStopped = { velocity ->
                         isDragging = false
                         scope.launch {
-                            when {
-                                offsetX.value > startThreshold -> {
-                                    offsetX.animateTo(maxStart, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
-                                }
-                                offsetX.value < endThreshold -> {
-                                    offsetX.animateTo(maxEnd, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
-                                }
-                                else -> {
-                                    offsetX.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
-                                }
+                            val target = when {
+                                offsetX.value > startThreshold || velocity > flingVelocity -> maxStart
+                                offsetX.value < endThreshold || velocity < -flingVelocity -> maxEnd
+                                else -> 0f
                             }
+                            offsetX.animateTo(
+                                targetValue = target,
+                                animationSpec = if (target == 0f) closeSpec else settleSpec,
+                                initialVelocity = velocity
+                            )
                         }
                     }
                 )
@@ -199,9 +226,7 @@ fun SwipeableTaskRow(
                 onSubTaskChecked = onSubTaskChecked,
                 onClick = {
                     if (offsetX.value != 0f) {
-                        scope.launch {
-                            offsetX.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
-                        }
+                        close()
                     } else {
                         onClick?.invoke()
                     }
