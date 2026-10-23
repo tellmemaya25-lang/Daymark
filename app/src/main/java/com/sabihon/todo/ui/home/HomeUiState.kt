@@ -42,6 +42,7 @@ data class Momentum(
  */
 data class HomeUiState(
     val isLoading: Boolean = true,
+    val isRefreshing: Boolean = false,
     val greetingName: String = "User",
     val avatarInitials: String = "DM",
     val avatarUrl: String? = null,

@@ -25,10 +25,12 @@ import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -55,6 +57,7 @@ import com.sabihon.todo.core.ui.theme.CategoryPaletteHex
  * Brand header, a two-tone headline, then one row per project with its open and
  * completed counts. Tapping a row opens that project's tasks.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProjectsScreen(
     onProjectClick: (String) -> Unit = {},
@@ -75,11 +78,14 @@ fun ProjectsScreen(
                 CircularProgressIndicator()
             }
         } else {
-            LazyColumn(
+            PullToRefreshBox(
+                isRefreshing = uiState.isRefreshing,
+                onRefresh = { viewModel.refresh() },
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
             ) {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
                 item {
                     BrandHeader(
                         avatarInitials = uiState.userInitials,
@@ -158,6 +164,7 @@ fun ProjectsScreen(
                 }
 
                 item { Spacer(Modifier.height(110.dp)) }
+            }
             }
         }
     }

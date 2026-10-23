@@ -82,6 +82,9 @@ fun MainScaffold(
 
     val currentTabIndex = TAB_ORDER.indexOfFirst { tabMatches(it, currentRoute) }
 
+    // Tab the drag is heading towards; the bar lights it up before the commit.
+    var swipePreview by remember { mutableStateOf<String?>(null) }
+
     val navigateToTab: (String) -> Unit = { key -> navController.switchTab(key) }
 
     Scaffold(
@@ -94,7 +97,8 @@ fun MainScaffold(
                             "home", "projects", "activity", "settings" -> navigateToTab(route)
                             "add" -> navController.navigate(Route.AddEditTask())
                         }
-                    }
+                    },
+                    previewTab = swipePreview
                 )
             }
         }
@@ -129,6 +133,7 @@ fun MainScaffold(
                             lastEventTime = 0L
                         },
                         onDragEnd = {
+                            swipePreview = null
                             val travelled = drag.value
                             val flick = velocity
                             val target = when {
@@ -149,6 +154,7 @@ fun MainScaffold(
                             }
                         },
                         onDragCancel = {
+                            swipePreview = null
                             scope.launch { drag.animateTo(0f) }
                         },
                         onHorizontalDrag = { change, amount ->
@@ -163,6 +169,11 @@ fun MainScaffold(
                                 lastEventTime = now
                                 val next = (drag.value + amount).coerceIn(-rawMax, rawMax)
                                 scope.launch { drag.snapTo(next) }
+                                swipePreview = when {
+                                    next <= -commitPx * 0.35f -> TAB_ORDER.getOrNull(currentTabIndex + 1)
+                                    next >= commitPx * 0.35f -> TAB_ORDER.getOrNull(currentTabIndex - 1)
+                                    else -> null
+                                }
                             }
                         }
                     )

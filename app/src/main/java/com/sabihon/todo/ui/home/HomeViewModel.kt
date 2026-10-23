@@ -17,6 +17,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -41,6 +43,9 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
+    /** Live collectors, kept so a pull-to-refresh can restart them. */
+    private val observeJobs = mutableListOf<Job>()
+
     init {
         val user = auth.currentUser
         val displayName = user?.displayName ?: user?.email?.substringBefore("@") ?: "User"
@@ -54,9 +59,32 @@ class HomeViewModel @Inject constructor(
                 weekDays = buildWeek(LocalDate.now(), emptySet())
             )
         }
-        observeDashboardCounts()
-        observeAllTasks()
-        observeCategoryNames()
+        startObserving()
+    }
+
+    private fun startObserving() {
+        observeJobs += observeDashboardCounts()
+        observeJobs += observeAllTasks()
+        observeJobs += observeCategoryNames()
+    }
+
+    /**
+     * Pull-to-refresh: Firestore already streams, so "refresh" means
+     * re-subscribing from scratch — this re-reads the collection and picks up
+     * anything the local cache missed (and anything another device wrote while
+     * the listener was idle). The spinner is held for a beat so the gesture has
+     * visible feedback even when the snapshot comes back instantly.
+     */
+    fun refresh() {
+        if (_uiState.value.isRefreshing) return
+        _uiState.update { it.copy(isRefreshing = true) }
+        viewModelScope.launch {
+            observeJobs.forEach { it.cancel() }
+            observeJobs.clear()
+            startObserving()
+            delay(650)
+            _uiState.update { it.copy(isRefreshing = false) }
+        }
     }
 
     /** "Maya Angelou" -> "MA", "maya" -> "MA", "" -> "DM". */
@@ -93,8 +121,8 @@ class HomeViewModel @Inject constructor(
     private fun dateOf(epochMillis: Long): LocalDate =
         Instant.ofEpochMilli(epochMillis).atZone(zone()).toLocalDate()
 
-    private fun observeDashboardCounts() {
-        viewModelScope.launch {
+    private fun observeDashboardCounts(): Job {
+        return viewModelScope.launch {
             getDashboardCountsUseCase().collectLatest { result ->
                 when (result) {
                     is Result.Success -> _uiState.update { it.copy(counts = result.data) }
@@ -105,8 +133,8 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun observeCategoryNames() {
-        viewModelScope.launch {
+    private fun observeCategoryNames(): Job {
+        return viewModelScope.launch {
             observeCategoriesUseCase().collectLatest { result ->
                 if (result is Result.Success) {
                     val names = result.data.associate { it.id to it.name }
@@ -116,8 +144,8 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun observeAllTasks() {
-        viewModelScope.launch {
+    private fun observeAllTasks(): Job {
+        return viewModelScope.launch {
             observeTasksUseCase(TaskFilter()).collectLatest { result ->
                 when (result) {
                     is Result.Success -> {
@@ -156,7 +184,10 @@ class HomeViewModel @Inject constructor(
                             )
                         }
                     }
-                    is Result.Loading -> _uiState.update { it.copy(isLoading = true) }
+                    is Result.Loading -> _uiState.update {
+                        // A refresh re-subscribes; don't cover live content with the skeleton.
+                        if (it.allTasks.isEmpty()) it.copy(isLoading = true) else it
+                    }
                     is Result.Error -> _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
                 }
             }

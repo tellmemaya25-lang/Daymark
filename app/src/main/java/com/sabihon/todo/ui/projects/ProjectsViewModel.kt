@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -20,6 +22,7 @@ import javax.inject.Inject
 
 data class ProjectsUiState(
     val isLoading: Boolean = true,
+    val isRefreshing: Boolean = false,
     val projects: List<Category> = emptyList(),
     val userInitials: String = "DM",
     val userPhotoUrl: String? = null,
@@ -40,6 +43,8 @@ class ProjectsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(ProjectsUiState())
     val uiState: StateFlow<ProjectsUiState> = _uiState.asStateFlow()
+
+    private var observeJob: Job? = null
 
     init {
         val user = auth.currentUser
@@ -62,8 +67,20 @@ class ProjectsViewModel @Inject constructor(
         }.uppercase()
     }
 
-    private fun observeProjects() {
+    /** Pull-to-refresh – re-subscribes to the category/task streams. */
+    fun refresh() {
+        if (_uiState.value.isRefreshing) return
+        _uiState.update { it.copy(isRefreshing = true) }
         viewModelScope.launch {
+            observeJob?.cancel()
+            observeProjects()
+            delay(650)
+            _uiState.update { it.copy(isRefreshing = false) }
+        }
+    }
+
+    private fun observeProjects() {
+        observeJob = viewModelScope.launch {
             combine(
                 categoryRepository.observeCategories(),
                 taskRepository.observeTasks(TaskFilter())
@@ -86,7 +103,9 @@ class ProjectsViewModel @Inject constructor(
                                 it.copy(isLoading = false, projects = withCounts, error = null)
                             }
                         }
-                        catResult is Result.Loading -> _uiState.update { it.copy(isLoading = true) }
+                        catResult is Result.Loading -> _uiState.update {
+                            if (it.projects.isEmpty()) it.copy(isLoading = true) else it
+                        }
                     }
                 }
         }
