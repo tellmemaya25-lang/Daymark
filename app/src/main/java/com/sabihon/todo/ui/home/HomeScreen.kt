@@ -56,10 +56,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import coil.compose.AsyncImage
+import com.sabihon.todo.core.ui.components.DaymarkMark
+import com.sabihon.todo.core.ui.components.DaymarkWordmark
 import com.sabihon.todo.core.ui.components.FilterEmptyState
 import com.sabihon.todo.core.ui.components.LoadingShimmer
 import com.sabihon.todo.core.ui.components.MomentumCard
@@ -67,6 +72,7 @@ import com.sabihon.todo.core.ui.components.NotelyEmptyState
 import com.sabihon.todo.core.ui.components.SegmentedTabs
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
 import com.sabihon.todo.core.ui.components.TabItem
+import com.sabihon.todo.core.ui.components.WeekStrip
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.Task
 import java.text.SimpleDateFormat
@@ -131,7 +137,10 @@ fun HomeScreen(
                 item {
                     HomeHeader(
                         greetingName = uiState.greetingName,
-                        onSearchClick = onNavigateToSearch
+                        avatarInitials = uiState.avatarInitials,
+                        avatarUrl = uiState.avatarUrl,
+                        onSearchClick = onNavigateToSearch,
+                        onAvatarClick = onNavigateToProfile
                     )
                 }
 
@@ -144,10 +153,26 @@ fun HomeScreen(
                 }
 
                 item {
-                    Spacer(Modifier.height(4.dp))
+                    WeekStrip(
+                        days = uiState.weekDays,
+                        selected = uiState.selectedDate,
+                        onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) }
+                    )
+                }
+
+                item {
                     SegmentedTabs(
                         tabs = listOf(
-                            TabItem("today", "Today", uiState.counts.today),
+                            // When another day is picked the badge follows that day, not today's count.
+                            TabItem(
+                                "today",
+                                "Today",
+                                if (uiState.selectedDate == java.time.LocalDate.now()) {
+                                    uiState.counts.today
+                                } else {
+                                    uiState.visibleTasks.size + uiState.completedTasks.size
+                                }
+                            ),
                             TabItem("upcoming", "Upcoming", null),
                             TabItem("all", "All tasks", uiState.counts.all)
                         ),
@@ -173,6 +198,11 @@ fun HomeScreen(
                 item {
                     ListHeader(
                         count = uiState.visibleTasks.size,
+                        dateHint = if (uiState.selectedDate == java.time.LocalDate.now()) {
+                            null
+                        } else {
+                            formatLocalDate(uiState.selectedDate, "EEE d MMM")
+                        },
                         sortLabel = when (uiState.selectedSort) {
                             HomeSort.DEFAULT -> "Default order"
                             HomeSort.PRIORITY -> "Priority first"
@@ -187,7 +217,13 @@ fun HomeScreen(
                 if (uiState.visibleTasks.isEmpty() && uiState.completedTasks.isEmpty()) {
                     item {
                         when (uiState.selectedFilter) {
-                            HomeFilter.TODAY -> FilterEmptyState(filterName = "Today")
+                            HomeFilter.TODAY -> FilterEmptyState(
+                                filterName = if (uiState.selectedDate == java.time.LocalDate.now()) {
+                                    "Today"
+                                } else {
+                                    formatLocalDate(uiState.selectedDate, "EEEE")
+                                }
+                            )
                             HomeFilter.UPCOMING -> FilterEmptyState(filterName = "Upcoming")
                             HomeFilter.ALL -> NotelyEmptyState(
                                 title = "Get started with daymark .",
@@ -504,62 +540,129 @@ fun HomeScreen(
 @Composable
 private fun HomeHeader(
     greetingName: String,
-    onSearchClick: () -> Unit
+    avatarInitials: String,
+    avatarUrl: String?,
+    onSearchClick: () -> Unit,
+    onAvatarClick: () -> Unit
 ) {
     val today = remember {
         SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(Date())
     }
 
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.Top
+            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp)
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "A fresh start, $greetingName.",
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        // Brand row: mark + wordmark left, avatar right
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            DaymarkMark(size = 26.dp)
+            Spacer(Modifier.width(8.dp))
+            DaymarkWordmark(fontSize = 19, color = MaterialTheme.colorScheme.onBackground)
+            Spacer(Modifier.weight(1f))
+            ProfileAvatar(
+                initials = avatarInitials,
+                photoUrl = avatarUrl,
+                onClick = onAvatarClick
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "Make today count.",
-                style = MaterialTheme.typography.headlineLarge.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 31.sp,
-                    lineHeight = 36.sp,
-                    letterSpacing = (-0.8).sp
-                ),
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(Modifier.height(8.dp))
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        Text(
+            text = "A fresh start, $greetingName.",
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Make today count.",
+            style = MaterialTheme.typography.headlineLarge.copy(
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 31.sp,
+                lineHeight = 36.sp,
+                letterSpacing = (-0.8).sp
+            ),
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        Spacer(Modifier.height(10.dp))
+
+        // Date line with the search button beside it
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = today,
                 style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-        }
-
-        Spacer(Modifier.width(12.dp))
-
-        Box(
-            modifier = Modifier
-                .padding(top = 6.dp)
-                .size(46.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceContainer)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            IconButton(onClick = onSearchClick, modifier = Modifier.size(46.dp)) {
-                Icon(
-                    Icons.Filled.Search,
-                    contentDescription = "Search",
-                    tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.size(20.dp)
-                )
+            Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                IconButton(onClick = onSearchClick, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        Icons.Filled.Search,
+                        contentDescription = "Search",
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
+        }
+    }
+}
+
+/**
+ * 40.dp circle showing the Google photo when available, otherwise the user's initials.
+ */
+@Composable
+private fun ProfileAvatar(
+    initials: String,
+    photoUrl: String?,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                CircleShape
+            )
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (!photoUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = photoUrl,
+                contentDescription = "Profile",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+            )
+        } else {
+            Text(
+                text = initials,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }
@@ -571,6 +674,7 @@ private fun HomeHeader(
 @Composable
 private fun ListHeader(
     count: Int,
+    dateHint: String?,
     sortLabel: String,
     showSortMenu: Boolean,
     onSortMenuChange: (Boolean) -> Unit,
@@ -598,6 +702,21 @@ private fun ListHeader(
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )
+        }
+        if (dateHint != null) {
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = dateHint,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         Spacer(Modifier.weight(1f))
 
@@ -731,6 +850,11 @@ private fun HomeTaskCard(
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
+
+/** Formats a java.time date with the device time zone (no UTC drift). */
+private fun formatLocalDate(date: java.time.LocalDate, pattern: String): String =
+    SimpleDateFormat(pattern, Locale.getDefault())
+        .format(Date.from(date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant()))
 
 /** Compact chip label for the card – "Today", "Tomorrow", "Oct 27". */
 private fun dueChipLabel(dueAt: Long?): String {
