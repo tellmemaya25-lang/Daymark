@@ -13,6 +13,7 @@ import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
 import com.sabihon.todo.core.datastore.ThemePreferences
+import com.sabihon.todo.data.local.AvatarStore
 import com.sabihon.todo.core.datastore.ThemePref
 import com.sabihon.todo.domain.repository.AuthRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -57,7 +58,8 @@ class ProfileViewModel @Inject constructor(
     private val firestore: FirebaseFirestore,
     private val storage: FirebaseStorage,
     private val authRepository: AuthRepository,
-    private val themePreferences: ThemePreferences
+    private val themePreferences: ThemePreferences,
+    private val avatarStore: AvatarStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ProfileUiState())
@@ -102,6 +104,8 @@ class ProfileViewModel @Inject constructor(
                             localPhotoUri = effectiveUri ?: it.localPhotoUri
                         )
                     }
+                    // Home reads the same cache file through AvatarStore.
+                    avatarStore.publishLocal(uid)
                 } else {
                     val localUri = localPath
                         ?.let { File(it).takeIf { f -> f.exists() } }
@@ -228,6 +232,7 @@ class ProfileViewModel @Inject constructor(
                         successMessage = "Profile photo updated"
                     )
                 }
+                avatarStore.publishLocal(uid)
                 return@launch
             }
 
@@ -258,6 +263,7 @@ class ProfileViewModel @Inject constructor(
                         successMessage = "Profile photo updated"
                     )
                 }
+                avatarStore.publishLocal(uid)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(

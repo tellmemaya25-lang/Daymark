@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.sabihon.todo.core.util.Result
+import com.sabihon.todo.data.local.AvatarStore
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.model.TaskFilter
 import com.sabihon.todo.domain.usecase.DeleteTaskUseCase
@@ -37,6 +38,7 @@ class HomeViewModel @Inject constructor(
     private val restoreTaskUseCase: RestoreTaskUseCase,
     private val updateTaskUseCase: UpdateTaskUseCase,
     private val observeCategoriesUseCase: ObserveCategoriesUseCase,
+    private val avatarStore: AvatarStore,
     private val auth: FirebaseAuth
 ) : ViewModel() {
 
@@ -60,6 +62,24 @@ class HomeViewModel @Inject constructor(
             )
         }
         startObserving()
+        observeAvatar()
+    }
+
+    /**
+     * The avatar comes from the shared [AvatarStore], not from FirebaseAuth – a photo
+     * picked in Settings is cached locally (and embedded in Firestore while Storage
+     * is unavailable), so `photoUrl` alone would leave Home showing initials.
+     */
+    private fun observeAvatar() {
+        viewModelScope.launch {
+            val user = auth.currentUser
+            avatarStore.refresh(user?.uid, user?.photoUrl?.toString())
+            avatarStore.avatar.collect { uri ->
+                _uiState.update {
+                    it.copy(avatarUrl = uri ?: auth.currentUser?.photoUrl?.toString())
+                }
+            }
+        }
     }
 
     private fun startObserving() {
