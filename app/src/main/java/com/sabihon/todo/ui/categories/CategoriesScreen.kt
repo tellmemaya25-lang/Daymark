@@ -20,7 +20,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -42,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.Role
@@ -190,7 +190,7 @@ fun AddEditCategoryDialog(
 }
 
 /**
- * A colour as a plain circle – the hex string told you nothing at a glance.
+ * A color as a plain circle – the hex string told you nothing at a glance.
  * Four of the six palette entries are near-white, so every swatch keeps a
  * hairline ring and the tick flips to dark ink on the pale ones.
  */
@@ -290,7 +290,10 @@ fun CategoryDetailScreen(
                         TaskRow(
                             title = task.title,
                             isCompleted = task.isCompleted,
-                            timeLabel = task.dueAt?.let { java.text.SimpleDateFormat("MMM d • h:mm a").format(java.util.Date(it)) } ?: "No date",
+                            timeLabel = task.dueAt?.let {
+                                java.text.SimpleDateFormat("MMM d • h:mm a", java.util.Locale.getDefault())
+                                    .format(java.util.Date(it))
+                            } ?: "No date",
                             description = task.description.takeIf { it.isNotBlank() },
                             // Without this the chevron renders but has nothing to expand.
                             subTasks = task.subTasks,
