@@ -20,7 +20,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.util.Calendar
+import java.time.DayOfWeek
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 
 @HiltViewModel
@@ -39,12 +42,56 @@ class HomeViewModel @Inject constructor(
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
     init {
-        val displayName = auth.currentUser?.displayName ?: auth.currentUser?.email?.substringBefore("@") ?: "User"
-        _uiState.update { it.copy(greetingName = displayName.split(" ").firstOrNull() ?: displayName) }
+        val user = auth.currentUser
+        val displayName = user?.displayName ?: user?.email?.substringBefore("@") ?: "User"
+        val first = displayName.trim().split(" ").filter { it.isNotBlank() }.firstOrNull() ?: displayName
+        _uiState.update {
+            it.copy(
+                greetingName = first,
+                avatarInitials = initialsOf(displayName),
+                avatarUrl = user?.photoUrl?.toString(),
+                selectedDate = LocalDate.now(),
+                weekDays = buildWeek(LocalDate.now(), emptySet())
+            )
+        }
         observeDashboardCounts()
         observeAllTasks()
         observeCategoryNames()
     }
+
+    /** "Maya Angelou" -> "MA", "maya" -> "MA", "" -> "DM". */
+    private fun initialsOf(name: String): String {
+        val parts = name.trim().split(" ").filter { it.isNotBlank() }
+        return when {
+            parts.size >= 2 -> "" + parts.first().first() + parts.last().first()
+            parts.size == 1 -> parts.first().take(2)
+            else -> "DM"
+        }.uppercase()
+    }
+
+    /**
+     * Monday -> Sunday containing [anchor], with a dot on every day that still
+     * has work ([daysWithTasks] is a set of epoch-day numbers).
+     */
+    private fun buildWeek(anchor: LocalDate, daysWithTasks: Set<Long>): List<WeekDay> {
+        val monday = anchor.with(DayOfWeek.MONDAY)
+        val today = LocalDate.now()
+        return (0..6).map { offset ->
+            val date = monday.plusDays(offset.toLong())
+            WeekDay(
+                date = date,
+                letter = date.dayOfWeek.name.take(1), // M T W T F S S
+                dayOfMonth = date.dayOfMonth,
+                isToday = date == today,
+                hasTasks = date.toEpochDay() in daysWithTasks
+            )
+        }
+    }
+
+    private fun zone(): ZoneId = ZoneId.systemDefault()
+
+    private fun dateOf(epochMillis: Long): LocalDate =
+        Instant.ofEpochMilli(epochMillis).atZone(zone()).toLocalDate()
 
     private fun observeDashboardCounts() {
         viewModelScope.launch {
@@ -74,9 +121,8 @@ class HomeViewModel @Inject constructor(
             observeTasksUseCase(TaskFilter()).collectLatest { result ->
                 when (result) {
                     is Result.Success -> {
-                        val now = System.currentTimeMillis()
-                        val start = getStartOfDay(now)
-                        val end = getEndOfDay(now)
+                        val start = getStartOfDay(LocalDate.now())
+                        val end = getEndOfDay(LocalDate.now())
                         val allTasks = result.data.filter { !it.isDeleted }.sortedBy { it.dueAt ?: Long.MAX_VALUE }
                         val todayTasks = allTasks.filter { task ->
                             task.dueAt == null || task.dueAt in start..end
@@ -85,15 +131,28 @@ class HomeViewModel @Inject constructor(
                             total = todayTasks.size,
                             done = todayTasks.count { it.isCompleted }
                         )
+                        // Days that still have open work -> strip dots. Undated tasks land on today.
+                        val today = LocalDate.now()
+                        val daysWithTasks = allTasks
+                            .filter { !it.isCompleted }
+                            .map { task -> task.dueAt?.let { dateOf(it) } ?: today }
+                            .map { it.toEpochDay() }
+                            .toSet()
                         _uiState.update { current ->
-                            val (visible, completed) = splitTasks(allTasks, current.selectedFilter, current.selectedSort)
+                            val (visible, completed) = splitTasks(
+                                allTasks,
+                                current.selectedFilter,
+                                current.selectedSort,
+                                current.selectedDate
+                            )
                             current.copy(
                                 isLoading = false,
                                 allTasks = allTasks,
                                 todayTasks = todayTasks,
                                 visibleTasks = visible,
                                 completedTasks = completed,
-                                momentum = momentum
+                                momentum = momentum,
+                                weekDays = buildWeek(current.selectedDate, daysWithTasks)
                             )
                         }
                     }
@@ -111,13 +170,17 @@ class HomeViewModel @Inject constructor(
     private fun splitTasks(
         tasks: List<Task>,
         filter: HomeFilter,
-        sort: HomeSort
+        sort: HomeSort,
+        selectedDate: LocalDate = LocalDate.now()
     ): Pair<List<Task>, List<Task>> {
-        val now = System.currentTimeMillis()
-        val start = getStartOfDay(now)
-        val end = getEndOfDay(now)
+        val start = getStartOfDay(selectedDate)
+        val end = getEndOfDay(selectedDate)
+        // Undated tasks belong to "today", not to whatever day is selected.
+        val isTodaySelected = selectedDate == LocalDate.now()
         val matching = when (filter) {
-            HomeFilter.TODAY -> tasks.filter { it.dueAt == null || it.dueAt in start..end }
+            HomeFilter.TODAY -> tasks.filter { task ->
+                (task.dueAt == null && isTodaySelected) || (task.dueAt != null && task.dueAt in start..end)
+            }
             HomeFilter.UPCOMING -> tasks.filter { it.dueAt != null && it.dueAt > end }
             HomeFilter.ALL -> tasks
         }
@@ -143,7 +206,12 @@ class HomeViewModel @Inject constructor(
             is HomeAction.ToggleSubTask -> toggleSubTask(action.taskId, action.subTaskId, action.isDone)
             is HomeAction.SetFilter -> {
                 _uiState.update { current ->
-                    val (visible, completed) = splitTasks(current.allTasks, action.filter, current.selectedSort)
+                    val (visible, completed) = splitTasks(
+                        current.allTasks,
+                        action.filter,
+                        current.selectedSort,
+                        current.selectedDate
+                    )
                     current.copy(
                         selectedFilter = action.filter,
                         visibleTasks = visible,
@@ -153,11 +221,40 @@ class HomeViewModel @Inject constructor(
             }
             is HomeAction.SetSort -> {
                 _uiState.update { current ->
-                    val (visible, completed) = splitTasks(current.allTasks, current.selectedFilter, action.sort)
+                    val (visible, completed) = splitTasks(
+                        current.allTasks,
+                        current.selectedFilter,
+                        action.sort,
+                        current.selectedDate
+                    )
                     current.copy(
                         selectedSort = action.sort,
                         visibleTasks = visible,
                         completedTasks = completed
+                    )
+                }
+            }
+            is HomeAction.SelectDate -> {
+                _uiState.update { current ->
+                    // Picking a day always means "show me that day", so snap back to Today.
+                    val (visible, completed) = splitTasks(
+                        current.allTasks,
+                        HomeFilter.TODAY,
+                        current.selectedSort,
+                        action.date
+                    )
+                    val today = LocalDate.now()
+                    val daysWithTasks = current.allTasks
+                        .filter { !it.isCompleted }
+                        .map { task -> task.dueAt?.let { dateOf(it) } ?: today }
+                        .map { it.toEpochDay() }
+                        .toSet()
+                    current.copy(
+                        selectedDate = action.date,
+                        selectedFilter = HomeFilter.TODAY,
+                        visibleTasks = visible,
+                        completedTasks = completed,
+                        weekDays = buildWeek(action.date, daysWithTasks)
                     )
                 }
             }
@@ -211,21 +308,9 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun getStartOfDay(timeMillis: Long): Long {
-        val cal = Calendar.getInstance().apply {
-            this.timeInMillis = timeMillis
-            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-        }
-        return cal.timeInMillis
-    }
+    private fun getStartOfDay(date: LocalDate): Long =
+        date.atStartOfDay(zone()).toInstant().toEpochMilli()
 
-    private fun getEndOfDay(timeMillis: Long): Long {
-        val cal = Calendar.getInstance().apply {
-            this.timeInMillis = timeMillis
-            set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)
-            set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
-        }
-        return cal.timeInMillis
-    }
+    private fun getEndOfDay(date: LocalDate): Long =
+        date.atTime(23, 59, 59, 999_000_000).atZone(zone()).toInstant().toEpochMilli()
 }

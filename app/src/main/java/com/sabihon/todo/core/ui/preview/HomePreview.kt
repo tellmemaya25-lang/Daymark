@@ -1,26 +1,38 @@
 package com.sabihon.todo.core.ui.preview
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sabihon.todo.core.ui.components.DaymarkMark
+import com.sabihon.todo.core.ui.components.DaymarkWordmark
 import com.sabihon.todo.core.ui.components.MomentumCard
 import com.sabihon.todo.core.ui.components.SegmentedTabs
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
 import com.sabihon.todo.core.ui.components.TabItem
+import com.sabihon.todo.core.ui.components.WeekStrip
 import com.sabihon.todo.core.ui.theme.SabihonTheme
+import com.sabihon.todo.ui.home.WeekDay
+import java.time.LocalDate
 import com.sabihon.todo.domain.model.SubTask
 
 /**
@@ -45,17 +57,62 @@ private fun HomeBlocksLightPreview() {
 }
 
 @Composable
+private fun previewWeek(): List<WeekDay> {
+    val today = LocalDate.now()
+    val monday = today.with(java.time.DayOfWeek.MONDAY)
+    return (0..6).map { offset ->
+        val date = monday.plusDays(offset.toLong())
+        WeekDay(
+            date = date,
+            letter = date.dayOfWeek.name.take(1),
+            dayOfMonth = date.dayOfMonth,
+            isToday = date == today,
+            hasTasks = offset % 2 == 0
+        )
+    }
+}
+
+@Composable
 private fun HomeBlocks() {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
+        // Brand row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, top = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            DaymarkMark(size = 26.dp)
+            Spacer(Modifier.width(8.dp))
+            DaymarkWordmark(fontSize = 19, color = MaterialTheme.colorScheme.onBackground)
+            Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "MA",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+
         // Header
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 20.dp, top = 20.dp)
+                .padding(start = 20.dp, end = 20.dp, top = 18.dp)
         ) {
             Text(
                 text = "A fresh start, Maya.",
@@ -84,6 +141,12 @@ private fun HomeBlocks() {
             total = 5,
             done = 2,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
+        )
+
+        WeekStrip(
+            days = previewWeek(),
+            selected = LocalDate.now(),
+            onSelect = {}
         )
 
         SegmentedTabs(

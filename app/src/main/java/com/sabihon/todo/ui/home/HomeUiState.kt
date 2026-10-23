@@ -2,6 +2,7 @@ package com.sabihon.todo.ui.home
 
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.usecase.DashboardCounts
+import java.time.LocalDate
 import kotlin.math.roundToInt
 
 /**
@@ -13,6 +14,17 @@ enum class HomeFilter { TODAY, UPCOMING, ALL }
  * "Default order" control next to the ON YOUR LIST header.
  */
 enum class HomeSort { DEFAULT, PRIORITY, DUE_DATE }
+
+/**
+ * One cell of the week strip above the task list.
+ */
+data class WeekDay(
+    val date: LocalDate,
+    val letter: String,
+    val dayOfMonth: Int,
+    val isToday: Boolean,
+    val hasTasks: Boolean
+)
 
 /**
  * Numbers behind the daily momentum card.
@@ -31,6 +43,10 @@ data class Momentum(
 data class HomeUiState(
     val isLoading: Boolean = true,
     val greetingName: String = "User",
+    val avatarInitials: String = "DM",
+    val avatarUrl: String? = null,
+    val selectedDate: LocalDate = LocalDate.now(),
+    val weekDays: List<WeekDay> = emptyList(),
     val counts: DashboardCounts = DashboardCounts(),
     val allTasks: List<Task> = emptyList(),
     val todayTasks: List<Task> = emptyList(),
@@ -53,4 +69,5 @@ sealed interface HomeAction {
     data class ToggleSubTask(val taskId: String, val subTaskId: String, val isDone: Boolean) : HomeAction
     data class SetFilter(val filter: HomeFilter) : HomeAction
     data class SetSort(val sort: HomeSort) : HomeAction
+    data class SelectDate(val date: LocalDate) : HomeAction
 }
