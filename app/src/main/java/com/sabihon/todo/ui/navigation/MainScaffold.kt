@@ -37,28 +37,22 @@ private fun tabMatches(key: String, route: String): Boolean = when (key) {
 }
 
 /**
- * Navigates to a tab. Each branch uses a concrete destination type on purpose:
- * type-safe navigation serialises the declared type, so passing these through a
- * `Route`-typed variable would resolve to the interface instead of the screen.
+ * Navigates to a tab from a screen that is *not* the pager host (Search, a project
+ * page, Profile …). The pager itself is reached through [Route.Home]; which page to
+ * land on is handed over through [MainTabsRequest] so the request survives the
+ * back-stack hop.
  */
 private fun NavController.switchTab(key: String) {
-    when (key) {
-        "projects" -> navigate(Route.Projects) {
-            popUpTo(Route.Home) { inclusive = false }
-            launchSingleTop = true
-        }
-        "activity" -> navigate(Route.History) {
-            popUpTo(Route.Home) { inclusive = false }
-            launchSingleTop = true
-        }
-        "settings" -> navigate(Route.Settings) {
-            popUpTo(Route.Home) { inclusive = false }
-            launchSingleTop = true
-        }
-        else -> navigate(Route.Home) {
-            popUpTo(Route.Home) { inclusive = false }
-            launchSingleTop = true
-        }
+    val page = when (key) {
+        "projects" -> 1
+        "activity" -> 2
+        "settings" -> 3
+        else -> 0
+    }
+    MainTabsRequest.open(page)
+    navigate(Route.Home) {
+        popUpTo(Route.Home) { inclusive = false }
+        launchSingleTop = true
     }
 }
 

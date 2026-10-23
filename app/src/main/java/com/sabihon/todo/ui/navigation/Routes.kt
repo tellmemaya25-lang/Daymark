@@ -38,19 +38,11 @@ sealed interface Route {
     data object Search : Route
 
     @Serializable
-    data object History : Route
-
-    @Serializable
     data object Profile : Route
 
     @Serializable
     data object Categories : Route
 
-    @Serializable
-    data object Projects : Route
-
-    @Serializable
-    data object Settings : Route
 }
 
 // Legacy string routes for fallback

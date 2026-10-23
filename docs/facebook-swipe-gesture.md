@@ -249,3 +249,34 @@ listeners are long-lived, so re-subscribing is what actually re-reads the collec
 picks up anything the local cache missed. The spinner is held ~650 ms so the gesture still
 feels acknowledged when the snapshot returns instantly, and the loading skeleton is
 suppressed during a refresh so live content is not covered by a skeleton flash.
+
+
+---
+
+## 8. Revision — real pager (white flash fix)
+
+The first tab implementation slid the *current* screen and then navigated. That is why the
+next page appeared blank and then loaded: a navigation transition can only animate content
+that already exists, and the incoming destination had not composed (or started its Firestore
+listener) when the animation began.
+
+Swiping must **reveal**, not preview-then-load. Fixed by making the four tabs pages of one
+`HorizontalPager` inside a single destination (`Route.Home` → `MainTabsScreen`):
+
+- `beyondViewportPageCount = 1` composes the neighbours ahead of the gesture, so the page
+  being revealed is already drawn — no white gap.
+- each page is wrapped in `SaveableStateProvider`, so scroll position survives switching
+  without keeping four lists composed.
+- the view models are scoped to the one nav entry, so the data stays loaded; a page is never
+  "reloaded" when you come back to it.
+- `Route.Projects`, `Route.History`, `Route.Settings` are gone; screens outside the pager
+  (Search, Profile, a project page) ask for a page through `MainTabsRequest`, which is
+  Compose state so a request still lands if the pager is already on screen.
+- back on a non-first tab returns to Home before leaving the app.
+- the bottom bar follows `pagerState.currentPage`, so the highlight moves at the halfway
+  point of the drag, exactly like a native pager.
+
+Consequences worth knowing: the tab destinations no longer have separate back-stack entries,
+which is the same trade Instagram makes (its back button walks tab history instead). If tab
+history out of order is ever needed, the pager's `currentPage` can be pushed into the nav
+graph on each settle.
