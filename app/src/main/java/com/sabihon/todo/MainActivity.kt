@@ -9,9 +9,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.datastore.ThemePref
 import com.sabihon.todo.core.ui.theme.AppThemeViewModel
@@ -53,6 +55,18 @@ class MainActivity : ComponentActivity() {
                 ThemePref.LIGHT -> false
                 ThemePref.DARK -> true
                 ThemePref.SYSTEM -> systemDark
+            }
+
+            // enableEdgeToEdge() decides the status/nav bar icon colour from the *device*
+            // theme. When the app is forced to Light on a dark phone (or the other way
+            // round) the icons end up white-on-white and the clock/battery vanish.
+            // Icon appearance has to follow the app's own theme instead.
+            val window = this@MainActivity.window
+            LaunchedEffect(darkTheme) {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !darkTheme
+                    isAppearanceLightNavigationBars = !darkTheme
+                }
             }
 
             SabihonTheme(darkTheme = darkTheme) {
