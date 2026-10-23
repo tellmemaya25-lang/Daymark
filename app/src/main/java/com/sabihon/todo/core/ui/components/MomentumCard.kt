@@ -1,6 +1,16 @@
 package com.sabihon.todo.core.ui.components
 
+import android.provider.Settings
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,12 +32,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -113,20 +128,10 @@ fun MomentumCard(
             }
             Spacer(Modifier.width(12.dp))
             // Sparkle badge
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .border(1.dp, DaymarkNavy.copy(alpha = 0.22f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Filled.AutoAwesome,
-                    contentDescription = null,
-                    tint = DaymarkNavy,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
+            SparkleBadge(
+                replayKey = done,
+                modifier = Modifier.size(44.dp)
+            )
         }
 
         Spacer(Modifier.height(18.dp))
@@ -163,14 +168,117 @@ fun MomentumCard(
 }
 
 /**
- * Small sparkle used by the momentum card when it appears inline (kept for reuse).
+ * The circled sparkle in the momentum card's top-right corner.
+ *
+ * Idle: a slow breath, not a spin. The four-point star scales 0.94 -> 1.06,
+ * rolls -9 deg -> 9 deg and fades 0.78 -> 1.0 over 1.6 s, while a soft halo
+ * behind it expands and fades out on the same curve. Small and slow on purpose:
+ * the card is decoration, and anything faster steals attention from the
+ * headline next to it.
+ *
+ * Completion: pass the completed count as [replayKey] and the star pops once
+ * each time it grows. Editing a task's date or reopening one leaves the badge
+ * still.
+ *
+ * Motion is skipped entirely when the device has animations turned off
+ * (Settings > Accessibility > Remove animations).
  */
 @Composable
-fun MomentumSparkle(tint: Color = DaymarkNavy, size: Int = 20) {
-    Icon(
-        Icons.Filled.AutoAwesome,
-        contentDescription = null,
-        tint = tint,
-        modifier = Modifier.size(size.dp)
+private fun SparkleBadge(
+    replayKey: Int,
+    modifier: Modifier = Modifier
+) {
+    val animationsEnabled = rememberSystemAnimationsEnabled()
+
+    val transition = rememberInfiniteTransition(label = "momentumSparkle")
+    val pulse by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "momentumSparklePulse"
     )
+
+    // One-shot pop when the completed count goes up. Skipped on first
+    // composition, so opening Home does not animate for an existing count.
+    val burst = remember { Animatable(1f) }
+    val seenKey = remember { mutableIntStateOf(replayKey) }
+    LaunchedEffect(replayKey) {
+        if (replayKey > seenKey.intValue && animationsEnabled) {
+            burst.snapTo(1f)
+            burst.animateTo(
+                targetValue = 1.24f,
+                animationSpec = tween(durationMillis = 160, easing = FastOutLinearInEasing)
+            )
+            burst.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(
+                    dampingRatio = 0.55f,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            )
+        }
+        seenKey.intValue = replayKey
+    }
+
+    val iconScale = (if (animationsEnabled) 0.94f + 0.12f * pulse else 1f) * burst.value
+    val iconRotation = if (animationsEnabled) -9f + 18f * pulse else 0f
+    val iconAlpha = if (animationsEnabled) 0.78f + 0.22f * pulse else 1f
+    val haloScale = if (animationsEnabled) 0.80f + 0.40f * pulse else 1f
+    val haloAlpha = if (animationsEnabled) 0.14f - 0.10f * pulse else 0.10f
+
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .border(1.dp, DaymarkNavy.copy(alpha = 0.22f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .graphicsLayer {
+                    scaleX = haloScale
+                    scaleY = haloScale
+                    alpha = haloAlpha
+                }
+                .background(
+                    brush = Brush.radialGradient(
+                        colors = listOf(DaymarkNavy, Color.Transparent)
+                    ),
+                    shape = CircleShape
+                )
+        )
+        Icon(
+            imageVector = Icons.Filled.AutoAwesome,
+            contentDescription = null,
+            tint = DaymarkNavy,
+            modifier = Modifier
+                .size(20.dp)
+                .graphicsLayer {
+                    scaleX = iconScale
+                    scaleY = iconScale
+                    rotationZ = iconRotation
+                    alpha = iconAlpha
+                }
+        )
+    }
+}
+
+/**
+ * Reads the system-wide animator duration scale. Users who pick "Remove
+ * animations" in accessibility settings get 0 here, and the badge stays still.
+ */
+@Composable
+private fun rememberSystemAnimationsEnabled(): Boolean {
+    val context = LocalContext.current
+    return remember(context) {
+        runCatching {
+            Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE
+            )
+        }.getOrDefault(1f) > 0f
+    }
 }
