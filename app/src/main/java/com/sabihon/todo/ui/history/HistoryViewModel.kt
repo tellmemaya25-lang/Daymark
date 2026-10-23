@@ -71,7 +71,8 @@ class HistoryViewModel @Inject constructor(
                 ActivityFeedItem(
                     id = log.id,
                     taskId = log.taskId,
-                    taskTitle = log.taskTitle,
+                    // Entries written before titles were logged carry an empty string.
+                    taskTitle = log.taskTitle.ifBlank { "Untitled task" },
                     action = log.action,
                     timestamp = log.timestamp
                 )

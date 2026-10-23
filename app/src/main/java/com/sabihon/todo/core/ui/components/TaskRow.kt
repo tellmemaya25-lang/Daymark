@@ -272,7 +272,10 @@ fun TaskRow(
                         onMoreClick != null -> "Task options"
                         else -> null
                     },
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                        // Nothing to expand and no menu behind it – fade it so it doesn't look tappable.
+                        alpha = if (canExpand || onMoreClick != null) 0.7f else 0.28f
+                    ),
                     modifier = Modifier
                         .size(28.dp)
                         .rotate(chevronRotation)

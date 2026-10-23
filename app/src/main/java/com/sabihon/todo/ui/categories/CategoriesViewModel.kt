@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -93,6 +94,24 @@ class CategoryDetailViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(CategoryDetailUiState())
     val uiState: StateFlow<CategoryDetailUiState> = _uiState.asStateFlow()
+
+    /** Ticking a sub-task in the expanded card writes through immediately. */
+    fun toggleSubTask(taskId: String, subTaskId: String, isDone: Boolean) {
+        viewModelScope.launch {
+            try {
+                val stored = taskRepository.observeTaskById(taskId).first()
+                if (stored is Result.Success) {
+                    val task = stored.data
+                    val updated = task.subTasks.map {
+                        if (it.id == subTaskId) it.copy(isDone = isDone) else it
+                    }
+                    taskRepository.updateTask(task.copy(subTasks = updated))
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("CategoryDetailVM", "sub-task toggle failed: ${e.message}")
+            }
+        }
+    }
 
     fun loadCategory(categoryId: String) {
         viewModelScope.launch {

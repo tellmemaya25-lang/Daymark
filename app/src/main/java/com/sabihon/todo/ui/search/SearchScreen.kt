@@ -355,6 +355,10 @@ fun SearchScreen(
                                     java.text.SimpleDateFormat("MMM d • h:mm a").format(java.util.Date(it))
                                 } ?: "No date",
                                 description = task.description,
+                                subTasks = task.subTasks,
+                                onSubTaskChecked = { subTaskId, done ->
+                                    viewModel.toggleSubTask(task.id, subTaskId, done)
+                                },
                                 onClick = {
                                     viewModel.saveRecentSearch(task.title)
                                     onTaskClick(task.id)
