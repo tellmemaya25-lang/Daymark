@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "676648773593",
+    "project_id": "sabihon-todo",
+    "storage_bucket": "sabihon-todo.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:676648773593:android:4a22c129e7ddcb78ee5bc8",
+        "android_client_info": {
+          "package_name": "com.sabihon.todo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAuvd_KPSvOqrH5w3o6HG3mlVRWDQjrwYs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

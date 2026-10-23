@@ -100,10 +100,10 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.animation:animation")
 
-    // Hilt
-    implementation("com.google.dagger:hilt-android:2.55")
+    // Hilt (2.56+ supports Kotlin metadata 2.2.0)
+    implementation("com.google.dagger:hilt-android:2.56")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
-    ksp("com.google.dagger:hilt-compiler:2.55")
+    ksp("com.google.dagger:hilt-compiler:2.56")
 
     // Firebase BOM
     implementation(platform("com.google.firebase:firebase-bom:33.12.0"))
