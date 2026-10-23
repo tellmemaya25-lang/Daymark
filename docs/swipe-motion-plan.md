@@ -1,7 +1,15 @@
 # Swipe & drag motion — research and implementation plan
 
-Status: proposal. Nothing here is implemented yet; current behaviour is what shipped in
-PR #13 (row swipe) and PR #15 (tab swipe).
+Status: sections B, C and D are implemented. Section A (the `anchoredDraggable` refactor)
+is deliberately deferred — see the note in §5.
+
+### Decisions (confirmed)
+
+1. **Full swipe → delete**, guarded by the existing "Task deleted / Undo" snackbar.
+2. **Bidirectional reveal stays**; a full swipe in either direction runs the primary
+   action, because Delete is the end-most action on both sides.
+3. **No wrap-around** on the tab swipe: at Settings a leftward swipe does nothing, and at
+   Home a rightward swipe does nothing.
 
 ---
 
@@ -123,7 +131,7 @@ Row reveal
   snap spec               spring(dampingRatio 0.9, stiffness MediumLow)   // no bounce past the anchor
   decay spec              splineBasedDecay
   overscroll              rubber band: excess * 0.35, capped at 28 dp
-  full-swipe commit       75% of row width → primary action (delete + undo snackbar)
+  full-swipe commit       1.6× the reveal distance (≈256 dp) → primary action (delete + undo)
   threshold cue           icon budget: colour → AccentBlue at 100%, plus a 6 dp→10 dp
                           radial ring around the icon; haptic tick on the crossing
 
@@ -143,7 +151,15 @@ Tab swipe
 
 Four PRs, each independently shippable. A and B are behaviour-preserving; C and D change feel.
 
-### A. Row swipe → `AnchoredDraggableState`
+### A. Row swipe → `AnchoredDraggableState` — DEFERRED
+
+> **Why it is not in this pass.** Foundation is mid-churn on this API: constructor
+> configuration (`positionalThreshold` / `velocityThreshold` / animation specs) is deprecated
+> in favour of per-modifier config, `settle()` lost its velocity parameter, and
+> `AnchoredDraggableState(...)` exists in two shapes depending on the exact version. With no
+> compiler in this environment that is a coin-flip on handing back another red build — which
+> is exactly how the `clip()` regression happened. Nothing below depends on it: the shipped
+> behaviour runs on `Modifier.draggable` with the same thresholds.
 
 **Files:** `SwipeableTaskRow.kt` (rewrite of the gesture half), new
 `core/ui/components/SwipeRevealState.kt`.
@@ -174,6 +190,9 @@ Anchors set in `Modifier.onSizeChanged` (or `layout {}`): `Start at -revealPx`, 
 
 **Done when:** drag, flick, and click-away-to-close behave as today, minus the wall at ±160 dp.
 
+*Skipped — the equivalent behaviour ships on `draggable`:* anchors ±160 dp, 50% positional
+threshold, 800 dp/s velocity threshold, rubber band at 35%, spring settle.
+
 ### B. Coordination and thresholds
 
 **Files:** `SwipeableTaskRow.kt`, `HomeScreen.kt`, `CategoriesScreen.kt`, `SearchScreen.kt`,
@@ -192,7 +211,7 @@ new `RevealCoordinator.kt`.
 
 **Files:** `SwipeableTaskRow.kt`, `HomeScreen.kt` (undo snackbar already exists for delete).
 
-- Add a fourth anchor pair at `±0.75 * width` (`FullStart`/`FullEnd`), or use
+- Add a fourth anchor pair at `±1.6 * revealPx` (`FullStart`/`FullEnd`), or use
   `FlingBehavior`-driven `onFullSwipe` if we prefer the Wear model.
 - Material says the primary action is the **end-aligned** one. Today the order is
   `[Edit] [Delete]`; delete is end-aligned, so a full swipe commits **delete**, guarded by the

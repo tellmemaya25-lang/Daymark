@@ -69,6 +69,7 @@ import com.sabihon.todo.core.ui.components.CompletionSplash
 import com.sabihon.todo.core.ui.components.FilterEmptyState
 import com.sabihon.todo.core.ui.components.LoadingShimmer
 import com.sabihon.todo.core.ui.components.MomentumCard
+import com.sabihon.todo.core.ui.components.RevealCoordinator
 import com.sabihon.todo.core.ui.components.NotelyEmptyState
 import com.sabihon.todo.core.ui.components.SegmentedTabs
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
@@ -104,6 +105,8 @@ fun HomeScreen(
     var taskForNewSubTask by remember { mutableStateOf<Task?>(null) }
     var newSubTaskTitle by remember { mutableStateOf("") }
     var splashTaskTitle by remember { mutableStateOf<String?>(null) }
+    // Only one revealed task card at a time on this screen.
+    val revealCoordinator = remember { RevealCoordinator() }
     var completedExpanded by remember { mutableStateOf(true) }
     var showSortMenu by remember { mutableStateOf(false) }
     val bottomSheetState = rememberModalBottomSheetState()
@@ -137,6 +140,9 @@ fun HomeScreen(
                 derivedStateOf {
                     listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
                 }
+            }
+            LaunchedEffect(listState.isScrollInProgress) {
+                if (listState.isScrollInProgress) revealCoordinator.closeAll()
             }
             val headerDividerAlpha by animateFloatAsState(
                 targetValue = if (isScrolled) 1f else 0f,
@@ -274,6 +280,7 @@ fun HomeScreen(
                         categoryName = task.categoryId?.let { uiState.categoryNames[it] },
                         isHighlighted = index == 0,
                         viewModel = viewModel,
+                        revealCoordinator = revealCoordinator,
                         onOpen = { onNavigateToTaskDetail(task.id) },
                         onEdit = {
                             if (onNavigateToEditTask != {}) onNavigateToEditTask(task.id) else onNavigateToTaskDetail(task.id)
@@ -306,6 +313,7 @@ fun HomeScreen(
                                 categoryName = task.categoryId?.let { uiState.categoryNames[it] },
                                 isHighlighted = false,
                                 viewModel = viewModel,
+                                revealCoordinator = revealCoordinator,
                                 onOpen = { onNavigateToTaskDetail(task.id) },
                                 onEdit = {
                                     if (onNavigateToEditTask != {}) onNavigateToEditTask(task.id) else onNavigateToTaskDetail(task.id)
@@ -812,7 +820,8 @@ private fun HomeTaskCard(
     onEdit: () -> Unit,
     onAddSubTaskRequest: (Task) -> Unit,
     onLongPress: (Task) -> Unit,
-    onCompleted: (Task) -> Unit = {}
+    onCompleted: (Task) -> Unit = {},
+    revealCoordinator: RevealCoordinator? = null
 ) {
     SwipeableTaskRow(
         title = task.title,
@@ -836,9 +845,8 @@ private fun HomeTaskCard(
         onLongClick = { onLongPress(task) },
         onEdit = onEdit,
         onDelete = { viewModel.onAction(HomeAction.DeleteTask(task)) },
-        onToggleComplete = { checked ->
-            viewModel.onAction(HomeAction.ToggleComplete(task.id, checked))
-        }
+        rowId = task.id,
+        coordinator = revealCoordinator
     )
 }
 

@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -101,11 +103,18 @@ fun MainScaffold(
         val haptics = LocalHapticFeedback.current
         val scope = rememberCoroutineScope()
 
-        // Live drag position – the content trails the finger a little, then either
-        // commits to the next tab or springs back.
         val drag = remember { Animatable(0f) }
-        val threshold = with(density) { 64.dp.toPx() }
-        val maxDrag = with(density) { 220.dp.toPx() }
+        // 25% of a typical phone width – and a deliberate flick counts too.
+        val commitPx = with(density) { 96.dp.toPx() }
+        val edgePx = with(density) { 24.dp.toPx() }
+        val velocityCommit = with(density) { 800.dp.toPx() }   // px/s
+        val overscrollMax = with(density) { 40.dp.toPx() }
+        val elastic = 0.35f
+        val rawMax = commitPx + overscrollMax / elastic
+
+        var edgeBlocked by remember { mutableStateOf(false) }
+        var velocity by remember { mutableStateOf(0f) }
+        var lastEventTime by remember { mutableStateOf(0L) }
 
         Box(
             modifier = Modifier
@@ -113,21 +122,30 @@ fun MainScaffold(
                 .pointerInput(currentTabIndex) {
                     if (currentTabIndex < 0) return@pointerInput
                     detectHorizontalDragGestures(
+                        onDragStart = { startOffset ->
+                            // Leave the screen edges to the system back gesture.
+                            edgeBlocked = startOffset.x < edgePx || startOffset.x > size.width - edgePx
+                            velocity = 0f
+                            lastEventTime = 0L
+                        },
                         onDragEnd = {
                             val travelled = drag.value
+                            val flick = velocity
                             val target = when {
-                                travelled <= -threshold && currentTabIndex < TAB_ORDER.lastIndex ->
-                                    TAB_ORDER[currentTabIndex + 1]
-                                travelled >= threshold && currentTabIndex > 0 ->
-                                    TAB_ORDER[currentTabIndex - 1]
+                                travelled <= -commitPx || flick <= -velocityCommit ->
+                                    TAB_ORDER.getOrNull(currentTabIndex + 1)
+                                travelled >= commitPx || flick >= velocityCommit ->
+                                    TAB_ORDER.getOrNull(currentTabIndex - 1)
                                 else -> null
                             }
                             if (target != null) {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                // No snap-back: the navigation transition carries the motion.
                                 navigateToTab(target)
-                            }
-                            scope.launch {
-                                drag.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+                            } else {
+                                scope.launch {
+                                    drag.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+                                }
                             }
                         },
                         onDragCancel = {
@@ -135,8 +153,16 @@ fun MainScaffold(
                         },
                         onHorizontalDrag = { change, amount ->
                             change.consume()
-                            scope.launch {
-                                drag.snapTo((drag.value + amount).coerceIn(-maxDrag, maxDrag))
+                            if (!edgeBlocked) {
+                                val now = change.uptimeMillis
+                                if (lastEventTime != 0L) {
+                                    val dt = (now - lastEventTime).coerceAtLeast(1L)
+                                    val instant = amount / dt * 1000f
+                                    velocity = velocity * 0.7f + instant * 0.3f
+                                }
+                                lastEventTime = now
+                                val next = (drag.value + amount).coerceIn(-rawMax, rawMax)
+                                scope.launch { drag.snapTo(next) }
                             }
                         }
                     )
@@ -144,13 +170,19 @@ fun MainScaffold(
         ) {
             Box(
                 modifier = Modifier.graphicsLayer {
-                    // Resist rather than track 1:1, so a swipe feels elastic.
-                    translationX = drag.value * 0.18f
-                    alpha = 1f - (kotlin.math.abs(drag.value) / maxDrag) * 0.15f
+                    translationX = rubberBand(drag.value, commitPx, elastic, overscrollMax)
                 }
             ) {
                 content(Modifier)
             }
         }
     }
+}
+
+/** Compresses travel past [limit] so the page gives instead of stopping dead. */
+private fun rubberBand(value: Float, limit: Float, factor: Float, max: Float): Float {
+    val magnitude = kotlin.math.abs(value)
+    if (magnitude <= limit) return value
+    val excess = ((magnitude - limit) * factor).coerceAtMost(max)
+    return (limit + excess) * kotlin.math.sign(value)
 }
