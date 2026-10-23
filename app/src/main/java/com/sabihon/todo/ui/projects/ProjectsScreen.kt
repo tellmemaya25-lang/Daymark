@@ -1,7 +1,9 @@
 package com.sabihon.todo.ui.projects
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,12 +31,17 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.ui.components.BrandHeader
+import com.sabihon.todo.core.ui.components.ConfirmDialog
 import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
 import com.sabihon.todo.core.ui.theme.parseColorHex
 import com.sabihon.todo.domain.model.Category
@@ -66,6 +74,10 @@ fun ProjectsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val isDark = LocalIsDarkTheme.current
+    // Long-press opens this row's actions; Delete asks for confirmation first.
+    var actionProject by remember { mutableStateOf<Category?>(null) }
+    var confirmDelete by remember { mutableStateOf<Category?>(null) }
+    val sheetState = rememberModalBottomSheetState()
 
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         if (uiState.isLoading) {
@@ -149,13 +161,14 @@ fun ProjectsScreen(
                             project = project,
                             isDark = isDark,
                             showDivider = index < uiState.projects.lastIndex,
-                            onClick = { onProjectClick(project.id) }
+                            onClick = { onProjectClick(project.id) },
+                            onLongClick = { actionProject = project }
                         )
                     }
 
                     item {
                         Text(
-                            text = "Select a project to see its tasks.",
+                            text = "Select a project to see its tasks. Long-press to edit or delete.",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                             modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp)
@@ -167,6 +180,56 @@ fun ProjectsScreen(
             }
             }
         }
+    }
+
+    // Long-press actions
+    if (actionProject != null) {
+        ModalBottomSheet(
+            onDismissRequest = { actionProject = null },
+            sheetState = sheetState,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp
+        ) {
+            Column(modifier = Modifier.padding(bottom = 32.dp)) {
+                Text(
+                    text = actionProject?.name.orEmpty(),
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+                ProjectActionRow(
+                    icon = Icons.Filled.Edit,
+                    label = "Edit project",
+                    tint = MaterialTheme.colorScheme.onSurface
+                ) {
+                    val target = actionProject
+                    actionProject = null
+                    if (target != null) viewModel.editProject(target)
+                }
+                ProjectActionRow(
+                    icon = Icons.Filled.Delete,
+                    label = "Delete project",
+                    tint = Color(0xFFE57373)
+                ) {
+                    val target = actionProject
+                    actionProject = null
+                    confirmDelete = target
+                }
+            }
+        }
+    }
+
+    if (confirmDelete != null) {
+        ConfirmDialog(
+            title = "Delete project?",
+            message = "\u201C${confirmDelete?.name.orEmpty()}\u201D will be removed. Its tasks stay in your list, just unfiled.",
+            onConfirm = {
+                confirmDelete?.let { viewModel.deleteProject(it.id) }
+                confirmDelete = null
+            },
+            onDismiss = { confirmDelete = null }
+        )
     }
 
     if (uiState.showAddDialog) {
@@ -181,11 +244,33 @@ fun ProjectsScreen(
 }
 
 @Composable
+private fun ProjectActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: Color,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = tint)
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 private fun ProjectRow(
     project: Category,
     isDark: Boolean,
     showDivider: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val open = (project.taskCount - project.completedCount).coerceAtLeast(0)
     val completed = project.completedCount
@@ -195,7 +280,7 @@ private fun ProjectRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onClick)
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
                 .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {

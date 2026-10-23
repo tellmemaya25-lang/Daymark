@@ -4,11 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.remote.dto.ActivityDto
-import com.sabihon.todo.data.remote.dto.TaskDto
-import com.sabihon.todo.data.remote.dto.toDomain
 import com.sabihon.todo.domain.model.ActivityAction
 import com.sabihon.todo.domain.model.ActivityLog
 import com.sabihon.todo.domain.model.Task
@@ -22,7 +21,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import java.util.Calendar
 import javax.inject.Inject
 
@@ -35,6 +33,13 @@ class HistoryViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(HistoryUiState())
     val uiState: StateFlow<HistoryUiState> = _uiState.asStateFlow()
+
+    private var activityRegistration: ListenerRegistration? = null
+
+    private companion object {
+        /** Enough to scroll a few days of activity without paging. */
+        const val ACTIVITY_LIMIT = 80L
+    }
 
     init {
         val user = auth.currentUser
@@ -114,30 +119,47 @@ class HistoryViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Live listener rather than a one-shot read: deleting or completing a task while
+     * this screen is open has to land in the feed immediately, and a single `.get()`
+     * at init was why deleted tasks never appeared until the screen was recreated.
+     */
     private fun observeActivity() {
-        viewModelScope.launch {
-            try {
-                val uid = auth.currentUser?.uid ?: return@launch
-                val snapshot = firestore.collection("users").document(uid).collection("activity")
-                    .orderBy("timestamp", Query.Direction.DESCENDING)
-                    .limit(50)
-                    .get()
-                    .await()
+        val uid = auth.currentUser?.uid ?: return
+        activityRegistration = firestore.collection("users").document(uid)
+            .collection("activity")
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .limit(ACTIVITY_LIMIT)
+            .addSnapshotListener { snapshot, _ ->
+                if (snapshot == null) return@addSnapshotListener
                 val logs = snapshot.documents.mapNotNull { doc ->
                     doc.toObject(ActivityDto::class.java)?.let { dto ->
                         ActivityLog(
                             id = doc.id,
                             taskId = dto.taskId,
                             taskTitle = dto.taskTitle,
-                            action = try { com.sabihon.todo.domain.model.ActivityAction.valueOf(dto.action) } catch (e: Exception) { com.sabihon.todo.domain.model.ActivityAction.CREATED },
+                            action = parseAction(dto.action),
                             timestamp = dto.timestamp?.toDate()?.time ?: 0L
                         )
                     }
                 }
                 _uiState.update { it.copy(activityLogs = logs) }
                 _uiState.update { it.copy(feed = buildFeed()) }
-            } catch (_: Exception) {}
-        }
+            }
+    }
+
+    /**
+     * Unknown/missing verbs used to collapse to CREATED, which made an unreadable entry
+     * look like a fresh task. Match on the string first and fall back to UPDATED.
+     */
+    private fun parseAction(raw: String?): ActivityAction =
+        ActivityAction.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+            ?: ActivityAction.UPDATED
+
+    override fun onCleared() {
+        super.onCleared()
+        activityRegistration?.remove()
+        activityRegistration = null
     }
 
     private fun groupByDay(tasks: List<Task>): Map<String, List<Task>> {
