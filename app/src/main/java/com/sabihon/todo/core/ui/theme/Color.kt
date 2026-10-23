@@ -69,3 +69,20 @@ fun parseColorHex(hex: String): Color {
         SoftBlue
     }
 }
+
+/**
+ * daymark brand tokens – derived from the splash / home / task-list design refs.
+ * The lavender + navy pair is the same one used by the launcher icon.
+ */
+val DaymarkLavender = Color(0xFFC4D2FF)
+val DaymarkLavenderSoft = Color(0xFFD9E2FF)
+val DaymarkLavenderDeep = Color(0xFFAFC0F5)
+val DaymarkNavy = Color(0xFF243B71)
+val DaymarkEyebrow = Color(0xFFA9B8F0)
+
+// Dark surfaces used by the home mock (near-black canvas, slightly raised cards)
+val DaymarkDarkCanvas = Color(0xFF101114)
+val DaymarkDarkCard = Color(0xFF1A1C22)
+val DaymarkDarkCardRaised = Color(0xFF20232C)
+val DaymarkDarkCardFocus = Color(0xFF232B45)
+val DaymarkDarkHairline = Color(0xFF2A2D36)

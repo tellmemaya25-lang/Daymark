@@ -59,6 +59,9 @@ fun SwipeableTaskRow(
     description: String? = null,
     subTasks: List<SubTask> = emptyList(),
     categoryLabel: String? = null,
+    priorityLabel: String? = null,
+    priorityDotColor: Color? = null,
+    isHighlighted: Boolean = false,
     onCheckedChange: (Boolean) -> Unit = {},
     onAddSubTask: (() -> Unit)? = null,
     onSubTaskChecked: ((String, Boolean) -> Unit)? = null,
@@ -88,12 +91,12 @@ fun SwipeableTaskRow(
 
     // Bg of task: light #e3f5ff per image1, dark #1E2A44 per Settings dark combo for overall dark mode theme, leave light mode as is
     val isDark = isSystemInDarkTheme()
-    val swipeBg = if (isDark) Color(0xFF1E2A44) else Color(0xFFE3F5FF)
+    val swipeBg = if (isDark) Color(0xFF23262F) else Color(0xFFE7EDFB)
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(24.dp))
+            .padding(horizontal = 20.dp, vertical = 5.dp)
+            .clip(RoundedCornerShape(20.dp))
             .background(swipeBg)
     ) {
         // Background – edit/delete, visible on swipe right (left side) and swipe left (right side)
@@ -107,7 +110,7 @@ fun SwipeableTaskRow(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .clip(RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(20.dp))
                 .background(swipeBg)
                 .padding(horizontal = 20.dp, vertical = 4.dp),
             contentAlignment = bgAlignment
@@ -187,6 +190,9 @@ fun SwipeableTaskRow(
                 description = description,
                 subTasks = subTasks,
                 categoryLabel = categoryLabel,
+                priorityLabel = priorityLabel,
+                priorityDotColor = priorityDotColor,
+                isHighlighted = isHighlighted,
                 hasOuterPadding = false,
                 onCheckedChange = onCheckedChange,
                 onAddSubTask = onAddSubTask,

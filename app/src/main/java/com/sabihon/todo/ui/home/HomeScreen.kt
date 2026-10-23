@@ -1,6 +1,7 @@
 package com.sabihon.todo.ui.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,20 +15,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,8 +44,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,15 +58,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.sabihon.todo.core.ui.components.DaymarkMark
 import com.sabihon.todo.core.ui.components.FilterEmptyState
 import com.sabihon.todo.core.ui.components.LoadingShimmer
+import com.sabihon.todo.core.ui.components.MomentumCard
 import com.sabihon.todo.core.ui.components.NotelyEmptyState
-import com.sabihon.todo.core.ui.components.SectionHeader
+import com.sabihon.todo.core.ui.components.SegmentedTabs
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
+import com.sabihon.todo.core.ui.components.TabItem
+import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.Task
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -91,6 +96,8 @@ fun HomeScreen(
     var showAddSubTaskSheet by remember { mutableStateOf(false) }
     var taskForNewSubTask by remember { mutableStateOf<Task?>(null) }
     var newSubTaskTitle by remember { mutableStateOf("") }
+    var completedExpanded by remember { mutableStateOf(true) }
+    var showSortMenu by remember { mutableStateOf(false) }
     val bottomSheetState = rememberModalBottomSheetState()
     val addSheetState = rememberModalBottomSheetState()
 
@@ -110,38 +117,6 @@ fun HomeScreen(
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    DaymarkMark(
-                        size = 32.dp,
-                        modifier = Modifier.padding(start = 12.dp)
-                    )
-                },
-                title = {
-                    Column {
-                        Text(
-                            text = "Hello, ${uiState.greetingName},",
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                        )
-                        Text(
-                            text = "You have work today",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onNavigateToSearch) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search")
-                    }
-                    IconButton(onClick = onNavigateToSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
-            )
-        },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
@@ -151,110 +126,137 @@ fun HomeScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
-                verticalArrangement = Arrangement.spacedBy(0.dp)
+                    .padding(innerPadding)
             ) {
-                // 5 Chips: All first as default
                 item {
-                    LazyRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        val chips = listOf(
-                            HomeFilter.ALL to "All",
-                            HomeFilter.TODAY to "Today",
-                            HomeFilter.PENDING to "Pending",
-                            HomeFilter.COMPLETED to "Completed",
-                            HomeFilter.OVERDUE to "Overdue"
-                        )
-                        items(chips) { (filter, label) ->
-                            FilterChip(
-                                selected = uiState.selectedFilter == filter,
-                                onClick = { viewModel.onAction(HomeAction.SetFilter(filter)) },
-                                label = { Text(label) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    HomeHeader(
+                        greetingName = uiState.greetingName,
+                        onSearchClick = onNavigateToSearch
+                    )
+                }
+
+                item {
+                    MomentumCard(
+                        total = uiState.momentum.total,
+                        done = uiState.momentum.done,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
+                    )
+                }
+
+                item {
+                    Spacer(Modifier.height(4.dp))
+                    SegmentedTabs(
+                        tabs = listOf(
+                            TabItem("today", "Today", uiState.counts.today),
+                            TabItem("upcoming", "Upcoming", null),
+                            TabItem("all", "All tasks", uiState.counts.all)
+                        ),
+                        selectedId = when (uiState.selectedFilter) {
+                            HomeFilter.TODAY -> "today"
+                            HomeFilter.UPCOMING -> "upcoming"
+                            HomeFilter.ALL -> "all"
+                        },
+                        onSelect = { id ->
+                            viewModel.onAction(
+                                HomeAction.SetFilter(
+                                    when (id) {
+                                        "today" -> HomeFilter.TODAY
+                                        "upcoming" -> HomeFilter.UPCOMING
+                                        else -> HomeFilter.ALL
+                                    }
                                 )
+                            )
+                        }
+                    )
+                }
+
+                item {
+                    ListHeader(
+                        count = uiState.visibleTasks.size,
+                        sortLabel = when (uiState.selectedSort) {
+                            HomeSort.DEFAULT -> "Default order"
+                            HomeSort.PRIORITY -> "Priority first"
+                            HomeSort.DUE_DATE -> "Due date"
+                        },
+                        showSortMenu = showSortMenu,
+                        onSortMenuChange = { showSortMenu = it },
+                        onSortSelected = { sort -> viewModel.onAction(HomeAction.SetSort(sort)) }
+                    )
+                }
+
+                if (uiState.visibleTasks.isEmpty() && uiState.completedTasks.isEmpty()) {
+                    item {
+                        when (uiState.selectedFilter) {
+                            HomeFilter.TODAY -> FilterEmptyState(filterName = "Today")
+                            HomeFilter.UPCOMING -> FilterEmptyState(filterName = "Upcoming")
+                            HomeFilter.ALL -> NotelyEmptyState(
+                                title = "Get started with daymark .",
+                                subtitle = "Add notes, calendar events, tasks files and more with the action bar"
                             )
                         }
                     }
                 }
 
-                item {
-                    Spacer(Modifier.height(8.dp))
-                    SectionHeader(
-                        title = when (uiState.selectedFilter) {
-                            HomeFilter.TODAY -> "Today's Task"
-                            HomeFilter.PENDING -> "Pending Tasks"
-                            HomeFilter.COMPLETED -> "Completed Tasks"
-                            HomeFilter.ALL -> "All Tasks"
-                            HomeFilter.OVERDUE -> "Overdue Tasks"
+                itemsIndexed(uiState.visibleTasks, key = { _, task -> task.id }) { index, task ->
+                    HomeTaskCard(
+                        task = task,
+                        categoryName = task.categoryId?.let { uiState.categoryNames[it] },
+                        isHighlighted = index == 0,
+                        viewModel = viewModel,
+                        onOpen = { onNavigateToTaskDetail(task.id) },
+                        onEdit = {
+                            if (onNavigateToEditTask != {}) onNavigateToEditTask(task.id) else onNavigateToTaskDetail(task.id)
                         },
-                        modifier = Modifier.padding(horizontal = 20.dp)
+                        onAddSubTaskRequest = { target ->
+                            taskForNewSubTask = target
+                            newSubTaskTitle = ""
+                            showAddSubTaskSheet = true
+                        },
+                        onLongPress = { target ->
+                            selectedTask = target
+                            showActionSheet = true
+                        }
                     )
-                    Spacer(Modifier.height(8.dp))
                 }
 
-                if (uiState.filteredTasks.isEmpty()) {
+                if (uiState.completedTasks.isNotEmpty()) {
                     item {
-                        when (uiState.selectedFilter) {
-                            HomeFilter.ALL -> {
-                                NotelyEmptyState(
-                                    title = "Get started with daymark .",
-                                    subtitle = "Add notes, calendar events, tasks files and more with the action bar"
-                                )
-                            }
-                            HomeFilter.TODAY -> FilterEmptyState(filterName = "Today")
-                            HomeFilter.PENDING -> FilterEmptyState(filterName = "Pending")
-                            HomeFilter.COMPLETED -> FilterEmptyState(filterName = "Completed")
-                            HomeFilter.OVERDUE -> FilterEmptyState(filterName = "Overdue")
-                        }
-                    }
-                } else {
-                    items(uiState.filteredTasks, key = { it.id }) { task ->
-                        SwipeableTaskRow(
-                            title = task.title,
-                            isCompleted = task.isCompleted,
-                            timeLabel = formatTimeLabel(task.dueAt),
-                            description = task.description.takeIf { it.isNotBlank() },
-                            subTasks = task.subTasks,
-                            categoryLabel = null,
-                            onCheckedChange = { checked ->
-                                viewModel.onAction(HomeAction.ToggleComplete(task.id, checked))
-                            },
-                            onAddSubTask = {
-                                taskForNewSubTask = task
-                                newSubTaskTitle = ""
-                                showAddSubTaskSheet = true
-                            },
-                            onSubTaskChecked = { subId, done ->
-                                viewModel.onAction(HomeAction.ToggleSubTask(task.id, subId, done))
-                            },
-                            onClick = { onNavigateToTaskDetail(task.id) },
-                            onLongClick = {
-                                selectedTask = task
-                                showActionSheet = true
-                            },
-                            onEdit = {
-                                // Edit should go to edit tasks per request – image pencil blue + trash red
-                                if (onNavigateToEditTask != {}) onNavigateToEditTask(task.id) else onNavigateToTaskDetail(task.id)
-                            },
-                            onDelete = { viewModel.onAction(HomeAction.DeleteTask(task)) },
-                            onToggleComplete = { checked ->
-                                viewModel.onAction(HomeAction.ToggleComplete(task.id, checked))
-                            }
+                        CompletedHeader(
+                            count = uiState.completedTasks.size,
+                            expanded = completedExpanded,
+                            onToggle = { completedExpanded = !completedExpanded }
                         )
                     }
+                    if (completedExpanded) {
+                        itemsIndexed(uiState.completedTasks, key = { _, task -> task.id }) { _, task ->
+                            HomeTaskCard(
+                                task = task,
+                                categoryName = task.categoryId?.let { uiState.categoryNames[it] },
+                                isHighlighted = false,
+                                viewModel = viewModel,
+                                onOpen = { onNavigateToTaskDetail(task.id) },
+                                onEdit = {
+                                    if (onNavigateToEditTask != {}) onNavigateToEditTask(task.id) else onNavigateToTaskDetail(task.id)
+                                },
+                                onAddSubTaskRequest = { target ->
+                                    taskForNewSubTask = target
+                                    newSubTaskTitle = ""
+                                    showAddSubTaskSheet = true
+                                },
+                                onLongPress = { target ->
+                                    selectedTask = target
+                                    showActionSheet = true
+                                }
+                            )
+                        }
+                    }
                 }
 
-                item { Spacer(Modifier.height(100.dp)) }
+                item { Spacer(Modifier.height(110.dp)) }
             }
         }
 
-        // Bottom sheet – Edit / Mark as Done / Delete – matches screenshot Webinar bottom sheet
+        // Bottom sheet – Edit / Mark as Done / Delete
         if (showActionSheet && selectedTask != null) {
             ModalBottomSheet(
                 onDismissRequest = { showActionSheet = false },
@@ -269,7 +271,6 @@ fun HomeScreen(
                         .fillMaxWidth()
                         .padding(bottom = 32.dp)
                 ) {
-                    // Double handle like screenshot – dark + light gray
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -298,7 +299,7 @@ fun HomeScreen(
                     }
 
                     Text(
-                        text = selectedTask?.title ?: "Webinar",
+                        text = selectedTask?.title ?: "",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                         maxLines = 2
@@ -309,7 +310,6 @@ fun HomeScreen(
                         thickness = 0.5.dp
                     )
 
-                    // Edit – pencil icon – should go to edit tasks per request
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -332,7 +332,6 @@ fun HomeScreen(
                         Text("Edit", style = MaterialTheme.typography.bodyLarge)
                     }
 
-                    // Mark as Done – check icon
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -358,15 +357,12 @@ fun HomeScreen(
                         )
                     }
 
-                    // Delete – trash red like screenshot
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
                                 showActionSheet = false
-                                selectedTask?.let {
-                                    viewModel.onAction(HomeAction.DeleteTask(it))
-                                }
+                                selectedTask?.let { viewModel.onAction(HomeAction.DeleteTask(it)) }
                             }
                             .padding(horizontal = 20.dp, vertical = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -387,7 +383,6 @@ fun HomeScreen(
 
                     Spacer(Modifier.height(24.dp))
 
-                    // Bottom handle like iOS
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -408,7 +403,7 @@ fun HomeScreen(
             }
         }
 
-        // Bottom sheet – Add new task / Rename – like image bottom edit, for sub-task
+        // Bottom sheet – add sub-task
         if (showAddSubTaskSheet && taskForNewSubTask != null) {
             ModalBottomSheet(
                 onDismissRequest = { showAddSubTaskSheet = false },
@@ -425,7 +420,6 @@ fun HomeScreen(
                         .padding(bottom = 32.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Handle
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -503,38 +497,275 @@ fun HomeScreen(
     }
 }
 
-private fun formatTimeLabel(dueAt: Long?): String {
-    if (dueAt == null) return "Today"
-    val now = System.currentTimeMillis()
-    val startOfToday = getStartOfDay(now)
-    val startOfYesterday = startOfToday - 24 * 60 * 60 * 1000L
-    val endOfToday = getEndOfDay(now)
-    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
-    val timeStr = timeFormat.format(Date(dueAt))
-    return when {
-        dueAt in startOfToday..endOfToday -> "Today • $timeStr"
-        dueAt in startOfYesterday until startOfToday -> "Yesterday • $timeStr"
-        else -> {
-            val dateFormat = SimpleDateFormat("MMM d • h:mm a", Locale.getDefault())
-            dateFormat.format(Date(dueAt))
+/* ------------------------------------------------------------------ */
+/* Header                                                              */
+/* ------------------------------------------------------------------ */
+
+@Composable
+private fun HomeHeader(
+    greetingName: String,
+    onSearchClick: () -> Unit
+) {
+    val today = remember {
+        SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(Date())
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "A fresh start, $greetingName.",
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Make today count.",
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 31.sp,
+                    lineHeight = 36.sp,
+                    letterSpacing = (-0.8).sp
+                ),
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = today,
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Box(
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .size(46.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            IconButton(onClick = onSearchClick, modifier = Modifier.size(46.dp)) {
+                Icon(
+                    Icons.Filled.Search,
+                    contentDescription = "Search",
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }
 
-private fun getStartOfDay(timeMillis: Long): Long {
-    val cal = java.util.Calendar.getInstance().apply {
-        this.timeInMillis = timeMillis
-        set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
-        set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+/* ------------------------------------------------------------------ */
+/* "ON YOUR LIST" header + sort menu                                   */
+/* ------------------------------------------------------------------ */
+
+@Composable
+private fun ListHeader(
+    count: Int,
+    sortLabel: String,
+    showSortMenu: Boolean,
+    onSortMenuChange: (Boolean) -> Unit,
+    onSortSelected: (HomeSort) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "ON YOUR LIST",
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                letterSpacing = 1.4.sp
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (count > 0) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "$count",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
+        }
+        Spacer(Modifier.weight(1f))
+
+        Box {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onSortMenuChange(true) }
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Filled.Tune,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = sortLabel,
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            DropdownMenu(
+                expanded = showSortMenu,
+                onDismissRequest = { onSortMenuChange(false) }
+            ) {
+                listOf(
+                    HomeSort.DEFAULT to "Default order",
+                    HomeSort.PRIORITY to "Priority first",
+                    HomeSort.DUE_DATE to "Due date"
+                ).forEach { (sort, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label, style = MaterialTheme.typography.bodyMedium) },
+                        onClick = {
+                            onSortSelected(sort)
+                            onSortMenuChange(false)
+                        }
+                    )
+                }
+            }
+        }
     }
-    return cal.timeInMillis
 }
 
-private fun getEndOfDay(timeMillis: Long): Long {
-    val cal = java.util.Calendar.getInstance().apply {
+/* ------------------------------------------------------------------ */
+/* Completed section                                                   */
+/* ------------------------------------------------------------------ */
+
+@Composable
+private fun CompletedHeader(
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle() }
+            .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "Completed",
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp
+            ),
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "$count",
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.weight(1f))
+        Icon(
+            if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = if (expanded) "Collapse completed" else "Expand completed",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Task card                                                           */
+/* ------------------------------------------------------------------ */
+
+@Composable
+private fun HomeTaskCard(
+    task: Task,
+    categoryName: String?,
+    isHighlighted: Boolean,
+    viewModel: HomeViewModel,
+    onOpen: () -> Unit,
+    onEdit: () -> Unit,
+    onAddSubTaskRequest: (Task) -> Unit,
+    onLongPress: (Task) -> Unit
+) {
+    SwipeableTaskRow(
+        title = task.title,
+        isCompleted = task.isCompleted,
+        timeLabel = dueChipLabel(task.dueAt),
+        description = task.description.takeIf { it.isNotBlank() },
+        subTasks = task.subTasks,
+        categoryLabel = categoryName,
+        priorityLabel = priorityChipLabel(task.priority),
+        priorityDotColor = priorityDotColor(task.priority),
+        isHighlighted = isHighlighted,
+        onCheckedChange = { checked ->
+            viewModel.onAction(HomeAction.ToggleComplete(task.id, checked))
+        },
+        onAddSubTask = { onAddSubTaskRequest(task) },
+        onSubTaskChecked = { subId, done ->
+            viewModel.onAction(HomeAction.ToggleSubTask(task.id, subId, done))
+        },
+        onClick = onOpen,
+        onLongClick = { onLongPress(task) },
+        onEdit = onEdit,
+        onDelete = { viewModel.onAction(HomeAction.DeleteTask(task)) },
+        onToggleComplete = { checked ->
+            viewModel.onAction(HomeAction.ToggleComplete(task.id, checked))
+        }
+    )
+}
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+/** Compact chip label for the card – "Today", "Tomorrow", "Oct 27". */
+private fun dueChipLabel(dueAt: Long?): String {
+    if (dueAt == null) return "Today"
+    val now = System.currentTimeMillis()
+    val startOfToday = getStartOfDay(now)
+    val startOfTomorrow = startOfToday + 24 * 60 * 60 * 1000L
+    val startOfDayAfter = startOfTomorrow + 24 * 60 * 60 * 1000L
+    return when {
+        dueAt < startOfToday -> "Overdue"
+        dueAt < startOfTomorrow -> "Today"
+        dueAt < startOfDayAfter -> "Tomorrow"
+        else -> SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(dueAt))
+    }
+}
+
+private fun priorityChipLabel(priority: Priority): String = when (priority) {
+    Priority.URGENT -> "Urgent"
+    Priority.HIGH -> "High priority"
+    Priority.MEDIUM -> "Medium"
+    Priority.LOW -> "Low"
+}
+
+private fun priorityDotColor(priority: Priority): Color? = when (priority) {
+    Priority.URGENT -> Color(0xFFEB5757)
+    Priority.HIGH -> Color(0xFFF2994A)
+    Priority.MEDIUM -> null
+    Priority.LOW -> null
+}
+
+private fun getStartOfDay(timeMillis: Long): Long {
+    val cal = Calendar.getInstance().apply {
         this.timeInMillis = timeMillis
-        set(java.util.Calendar.HOUR_OF_DAY, 23); set(java.util.Calendar.MINUTE, 59)
-        set(java.util.Calendar.SECOND, 59); set(java.util.Calendar.MILLISECOND, 999)
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }
     return cal.timeInMillis
 }

@@ -6,11 +6,15 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.toRoute
 import com.sabihon.todo.ui.auth.ForgotPasswordScreen
 import com.sabihon.todo.ui.auth.LoginScreen
 import com.sabihon.todo.ui.auth.SignUpScreen
 import com.sabihon.todo.ui.auth.SplashScreen
+import com.sabihon.todo.ui.auth.StartDestination
+import com.sabihon.todo.ui.onboarding.OnboardingScreen
+import com.sabihon.todo.ui.onboarding.OnboardingViewModel
 import com.sabihon.todo.ui.categories.CategoriesScreen
 import com.sabihon.todo.ui.categories.CategoryDetailScreen
 import com.sabihon.todo.ui.history.HistoryScreen
@@ -34,14 +38,37 @@ fun SabihonNavHost(
     ) {
         composable<Route.Splash> {
             SplashScreen(
-                onNavigateToLogin = {
-                    navController.navigate(Route.Login) {
+                onFinished = { destination ->
+                    val next: Route = when (destination) {
+                        StartDestination.HOME -> Route.Home
+                        StartDestination.ONBOARDING -> Route.Onboarding
+                        StartDestination.LOGIN -> Route.Login
+                    }
+                    navController.navigate(next) {
                         popUpTo(Route.Splash) { inclusive = true }
                     }
+                }
+            )
+        }
+        composable<Route.Onboarding> {
+            val onboardingViewModel: OnboardingViewModel = hiltViewModel()
+            OnboardingScreen(
+                onGetStarted = {
+                    onboardingViewModel.markSeen()
+                    navController.navigate(Route.SignUp) {
+                        popUpTo(Route.Onboarding) { inclusive = true }
+                    }
                 },
-                onNavigateToHome = {
-                    navController.navigate(Route.Home) {
-                        popUpTo(Route.Splash) { inclusive = true }
+                onSignIn = {
+                    onboardingViewModel.markSeen()
+                    navController.navigate(Route.Login) {
+                        popUpTo(Route.Onboarding) { inclusive = true }
+                    }
+                },
+                onSkip = {
+                    onboardingViewModel.markSeen()
+                    navController.navigate(Route.Login) {
+                        popUpTo(Route.Onboarding) { inclusive = true }
                     }
                 }
             )
