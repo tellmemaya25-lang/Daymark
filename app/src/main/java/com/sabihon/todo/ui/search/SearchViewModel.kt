@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -105,6 +106,24 @@ class SearchViewModel @Inject constructor(
     fun clearFilters() {
         _uiState.update { it.copy(filter = TaskFilter(), query = "") }
         queryFlow.value = ""
+    }
+
+    /** Ticking a sub-task in an expanded search result writes through immediately. */
+    fun toggleSubTask(taskId: String, subTaskId: String, isDone: Boolean) {
+        viewModelScope.launch {
+            try {
+                val stored = taskRepository.observeTaskById(taskId).first()
+                if (stored is Result.Success) {
+                    val task = stored.data
+                    val updated = task.subTasks.map {
+                        if (it.id == subTaskId) it.copy(isDone = isDone) else it
+                    }
+                    taskRepository.updateTask(task.copy(subTasks = updated))
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SearchVM", "sub-task toggle failed: ${e.message}")
+            }
+        }
     }
 
     fun saveRecentSearch(query: String) {

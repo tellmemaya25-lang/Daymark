@@ -166,6 +166,7 @@ fun ProjectsScreen(
         AddEditCategoryDialog(
             initialName = uiState.editingProject?.name ?: "",
             initialColor = uiState.editingProject?.colorHex ?: CategoryPaletteHex.first(),
+            noun = "project",
             onDismiss = { viewModel.showAddDialog(false) },
             onConfirm = { name, color -> viewModel.addOrUpdateProject(name, color) }
         )

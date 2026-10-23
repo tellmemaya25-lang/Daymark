@@ -319,6 +319,8 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun deleteTask(taskId: String, softDelete: Boolean): Result<Unit> = withContext(ioDispatcher) {
         try {
+            // Grab the title before the document goes away – the feed shows it.
+            val title = readTaskTitle(taskId)
             val outcome = boundedWrite {
                 if (softDelete) {
                     tasksCollection().document(taskId)
@@ -328,7 +330,7 @@ class TaskRepositoryImpl @Inject constructor(
                 }
             }
             if (outcome is WriteOutcome.Failed) return@withContext Result.Error(outcome.error)
-            logActivity(taskId = taskId, taskTitle = "", action = "DELETED")
+            logActivity(taskId = taskId, taskTitle = title, action = "DELETED")
             try { reminderScheduler.cancelReminder(taskId) } catch (_: Exception) {}
             Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e) }
@@ -346,13 +348,14 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun toggleComplete(taskId: String, isCompleted: Boolean): Result<Unit> = withContext(ioDispatcher) {
         try {
+            val title = readTaskTitle(taskId)
             val updates = mutableMapOf<String, Any?>("completed" to isCompleted, "updatedAt" to Timestamp(Date()))
             if (isCompleted) updates["completedAt"] = Timestamp(Date()) else updates["completedAt"] = null
             val outcome = boundedWrite {
                 tasksCollection().document(taskId).update(updates).await()
             }
             if (outcome is WriteOutcome.Failed) return@withContext Result.Error(outcome.error)
-            logActivity(taskId = taskId, taskTitle = "", action = if (isCompleted) "COMPLETED" else "REOPENED")
+            logActivity(taskId = taskId, taskTitle = title, action = if (isCompleted) "COMPLETED" else "REOPENED")
             if (isCompleted) try { reminderScheduler.cancelReminder(taskId) } catch (_: Exception) {}
             Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e) }
@@ -370,6 +373,21 @@ class TaskRepositoryImpl @Inject constructor(
             }.filter { it.title.lowercase().contains(lower) || it.description.lowercase().contains(lower) }
             emit(Result.Success(tasks))
         } catch (e: Exception) { emit(Result.Error(e)) }
+    }
+
+    /**
+     * Best-effort title lookup for log entries that only carry a task id.
+     * Bounded and swallowing failures – a missing title must never fail a write.
+     */
+    private suspend fun readTaskTitle(taskId: String): String = try {
+        withTimeoutOrNull(ACTIVITY_TIMEOUT_MS) {
+            tasksCollection().document(taskId).get().await()
+                .getString("title")
+                ?.trim()
+                .orEmpty()
+        }.orEmpty()
+    } catch (_: Exception) {
+        ""
     }
 
     private suspend fun logActivity(taskId: String, taskTitle: String, action: String) {
