@@ -5,6 +5,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -45,15 +47,18 @@ import com.sabihon.todo.domain.model.SubTask
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sign
 
 /**
  * Swipeable task row – reveal Edit / Delete behind the card.
  *
- * - Drag horizontally; release past ±80dp (or flick faster than 1200px/s) to latch open
- * - The action icons fade and scale in with the drag instead of snapping into view
- * - A haptic tick lands the moment the reveal threshold is crossed
- * - The card dips very slightly while dragging so it feels picked up, and the
- *   settle uses a springy spec so it overshoots a hair on release
+ * Motion rules (see docs/swipe-motion-plan.md):
+ * - reveal anchors at ±160 dp, commit threshold at 50% of that
+ * - release commits on position **or** velocity (800 dp/s), so a quick flick works
+ * - dragging past the anchor rubber-bands at 35% instead of hitting a wall
+ * - a full swipe (75% of the row) runs the primary action: delete, with undo
+ * - one row open per list via [RevealCoordinator]; scrolling folds everything back
+ * - the reveal colours up and rings its icons once it will commit, and ticks haptically
  */
 @Composable
 fun SwipeableTaskRow(
@@ -74,38 +79,64 @@ fun SwipeableTaskRow(
     onLongClick: (() -> Unit)? = null,
     onEdit: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
-    onToggleComplete: ((Boolean) -> Unit)? = null
+    rowId: String? = null,
+    coordinator: RevealCoordinator? = null
 ) {
     val density = LocalDensity.current
-    val startThreshold = with(density) { 80.dp.toPx() }
-    val endThreshold = with(density) { -80.dp.toPx() }
-    val maxStart = with(density) { 160.dp.toPx() }
-    val maxEnd = with(density) { -160.dp.toPx() }
-    // ~1200 px/s on a 3x screen – a deliberate flick, not a slow drag.
-    val flingVelocity = with(density) { 400.dp.toPx() }
+    val revealPx = with(density) { 160.dp.toPx() }
+    val commitPx = revealPx / 2f                                  // 50% of travel
+    val velocityCommit = with(density) { 800.dp.toPx() }          // px/s
+    val overscrollMax = with(density) { 28.dp.toPx() }
+    val rubberBand = 0.35f
+    // Deep swipe that commits the primary action outright. Expressed against the
+    // reveal distance rather than the row width so it behaves the same on any screen.
+    val fullSwipePx = revealPx * 1.6f
+    // Furthest the finger can take the card, allowing for the damped overscroll.
+    val rawMax = fullSwipePx + overscrollMax / rubberBand
+    var isDragging by remember { mutableStateOf(false) }
+    var isOpen by remember { mutableStateOf(false) }
+    var crossedCommit by remember { mutableStateOf(false) }
 
-    val offsetX = remember { Animatable(0f) }
+    // Raw drag distance; what gets drawn is `raw` passed through the rubber band.
+    val raw = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
-    var isDragging by remember { mutableStateOf(false) }
 
-    // Springy settle so a released card overshoots slightly instead of stopping dead.
-    val settleSpec = spring<Float>(dampingRatio = 0.58f, stiffness = Spring.StiffnessMediumLow)
+    val settleSpec = spring<Float>(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
     val closeSpec = spring<Float>(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+    val visual = damp(raw.value, revealPx, rubberBand, overscrollMax)
 
-    fun close() = scope.launch { offsetX.animateTo(0f, closeSpec) }
+    fun close() {
+        isOpen = false
+        rowId?.let { coordinator?.onClosed(it) }
+        scope.launch { raw.animateTo(0f, closeSpec) }
+    }
+
+    // Only one revealed row per list.
+    val openRowId = coordinator?.openRowId
+    LaunchedEffect(openRowId) {
+        if (isOpen && rowId != null && openRowId != rowId) close()
+    }
 
     LaunchedEffect(isCompleted) {
-        if (offsetX.value != 0f) close()
+        if (raw.value != 0f) close()
     }
 
-    // 0 → 1 as the card slides towards the reveal distance; drives icon alpha/scale.
-    val revealFraction = (abs(offsetX.value) / startThreshold).coerceIn(0f, 1f)
-    val pastThreshold = offsetX.value > startThreshold || offsetX.value < endThreshold
-
-    LaunchedEffect(pastThreshold) {
-        if (pastThreshold) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    // Haptic tick once per crossing, not once per frame.
+    val pastCommit = abs(raw.value) >= commitPx
+    LaunchedEffect(pastCommit) {
+        if (pastCommit && !crossedCommit) {
+            crossedCommit = true
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        } else if (!pastCommit) {
+            crossedCommit = false
+        }
     }
+
+    // 0 → 1 across the reveal distance; drives icon fade/scale.
+    val revealFraction = (abs(visual) / commitPx).coerceIn(0f, 1f)
+    // 0 → 1 between "will commit" and "fully revealed"; drives the ring + colour.
+    val commitFraction = ((abs(visual) - commitPx) / (revealPx - commitPx)).coerceIn(0f, 1f)
 
     val cardScale by animateFloatAsState(
         targetValue = if (isDragging) 0.985f else 1f,
@@ -115,6 +146,7 @@ fun SwipeableTaskRow(
 
     val isDark = LocalIsDarkTheme.current
     val swipeBg = if (isDark) Color(0xFF23262F) else Color(0xFFE7EDFB)
+    val ringColor = if (isDark) Color.White.copy(alpha = 0.55f) else AccentBlue.copy(alpha = 0.65f)
 
     Box(
         modifier = modifier
@@ -123,10 +155,9 @@ fun SwipeableTaskRow(
             .clip(RoundedCornerShape(20.dp))
             .background(swipeBg)
     ) {
-        // Revealed actions – kept on the edge the card is sliding away from.
         val bgAlignment = when {
-            offsetX.value > 10f -> Alignment.CenterStart
-            offsetX.value < -10f -> Alignment.CenterEnd
+            visual > 10f -> Alignment.CenterStart
+            visual < -10f -> Alignment.CenterEnd
             else -> Alignment.Center
         }
         Box(
@@ -142,70 +173,87 @@ fun SwipeableTaskRow(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.graphicsLayer {
                     alpha = 0.1f + 0.9f * revealFraction
-                    val s = 0.78f + 0.22f * revealFraction
+                    val s = 0.78f + 0.22f * revealFraction + 0.06f * commitFraction
                     scaleX = s
                     scaleY = s
                 }
             ) {
-                IconButton(
+                SwipeAction(
+                    icon = Icons.Filled.Edit,
+                    label = "Edit",
+                    tint = AccentBlue,
+                    revealFraction = revealFraction,
+                    commitFraction = commitFraction,
+                    ringColor = ringColor,
                     onClick = {
                         close()
                         onEdit?.invoke()
-                    },
-                    modifier = Modifier.size(56.dp)
-                ) {
-                    Icon(
-                        Icons.Filled.Edit,
-                        contentDescription = "Edit",
-                        tint = AccentBlue,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-                IconButton(
+                    }
+                )
+                SwipeAction(
+                    icon = Icons.Filled.Delete,
+                    label = "Delete",
+                    tint = Color(0xFFE57373),
+                    revealFraction = revealFraction,
+                    commitFraction = commitFraction,
+                    ringColor = ringColor,
                     onClick = {
                         close()
                         onDelete?.invoke()
-                    },
-                    modifier = Modifier.size(56.dp)
-                ) {
-                    Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = "Delete",
-                        tint = Color(0xFFE57373),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+                    }
+                )
             }
         }
 
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .offset { IntOffset(visual.roundToInt(), 0) }
                 .graphicsLayer {
                     scaleX = cardScale
                     scaleY = cardScale
                 }
                 .draggable(
                     state = rememberDraggableState { delta ->
-                        val newValue = (offsetX.value + delta).coerceIn(maxEnd, maxStart)
-                        scope.launch { offsetX.snapTo(newValue) }
+                        val next = (raw.value + delta).coerceIn(-rawMax, rawMax)
+                        scope.launch { raw.snapTo(next) }
                     },
                     orientation = Orientation.Horizontal,
                     onDragStarted = { isDragging = true },
                     onDragStopped = { velocity ->
                         isDragging = false
                         scope.launch {
-                            val target = when {
-                                offsetX.value > startThreshold || velocity > flingVelocity -> maxStart
-                                offsetX.value < endThreshold || velocity < -flingVelocity -> maxEnd
-                                else -> 0f
+                            val travelled = raw.value
+
+                            // Deep swipe runs the primary action outright.
+                            if (abs(travelled) >= fullSwipePx) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                isOpen = false
+                                rowId?.let { coordinator?.onClosed(it) }
+                                raw.snapTo(0f)
+                                onDelete?.invoke()
+                                return@launch
                             }
-                            offsetX.animateTo(
-                                targetValue = target,
-                                animationSpec = if (target == 0f) closeSpec else settleSpec,
-                                initialVelocity = velocity
-                            )
+
+                            val openRight = travelled > commitPx || velocity > velocityCommit
+                            val openLeft = travelled < -commitPx || velocity < -velocityCommit
+                            when {
+                                openRight -> {
+                                    raw.animateTo(revealPx, settleSpec, initialVelocity = velocity)
+                                    isOpen = true
+                                    rowId?.let { coordinator?.onOpened(it) }
+                                }
+                                openLeft -> {
+                                    raw.animateTo(-revealPx, settleSpec, initialVelocity = velocity)
+                                    isOpen = true
+                                    rowId?.let { coordinator?.onOpened(it) }
+                                }
+                                else -> {
+                                    isOpen = false
+                                    rowId?.let { coordinator?.onClosed(it) }
+                                    raw.animateTo(0f, closeSpec, initialVelocity = velocity)
+                                }
+                            }
                         }
                     }
                 )
@@ -225,14 +273,14 @@ fun SwipeableTaskRow(
                 onAddSubTask = onAddSubTask,
                 onSubTaskChecked = onSubTaskChecked,
                 onClick = {
-                    if (offsetX.value != 0f) {
+                    if (raw.value != 0f) {
                         close()
                     } else {
                         onClick?.invoke()
                     }
                 },
                 onLongClick = {
-                    if (offsetX.value == 0f) {
+                    if (raw.value == 0f) {
                         onLongClick?.invoke()
                     }
                 },
@@ -240,4 +288,51 @@ fun SwipeableTaskRow(
             )
         }
     }
+}
+
+/**
+ * One revealed action. Grows and brightens with the drag, then draws a ring the
+ * moment the row will actually commit on release.
+ */
+@Composable
+private fun SwipeAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: Color,
+    revealFraction: Float,
+    commitFraction: Float,
+    ringColor: Color,
+    onClick: () -> Unit
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(56.dp)
+            .then(
+                if (commitFraction > 0f) {
+                    Modifier.border(
+                        width = 1.5.dp,
+                        color = ringColor.copy(alpha = ringColor.alpha * commitFraction),
+                        shape = CircleShape
+                    )
+                } else {
+                    Modifier
+                }
+            )
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = tint.copy(alpha = 0.45f + 0.55f * revealFraction),
+            modifier = Modifier.size((24 + 2 * commitFraction).dp)
+        )
+    }
+}
+
+/** Compresses travel past [limit] so the card gives instead of stopping dead. */
+private fun damp(value: Float, limit: Float, factor: Float, max: Float): Float {
+    val magnitude = abs(value)
+    if (magnitude <= limit) return value
+    val excess = ((magnitude - limit) * factor).coerceAtMost(max)
+    return (limit + excess) * sign(value)
 }
