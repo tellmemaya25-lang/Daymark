@@ -32,9 +32,6 @@ sealed interface Route {
     data class CategoryDetail(val categoryId: String) : Route
 
     @Serializable
-    data class TaskDetail(val taskId: String) : Route
-
-    @Serializable
     data class AddEditTask(val taskId: String? = null) : Route
 
     @Serializable

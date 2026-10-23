@@ -23,7 +23,6 @@ import com.sabihon.todo.ui.profile.ProfileScreen
 import com.sabihon.todo.ui.projects.ProjectsScreen
 import com.sabihon.todo.ui.search.SearchScreen
 import com.sabihon.todo.ui.settings.SettingsScreen
-import com.sabihon.todo.ui.taskdetail.TaskDetailScreen
 import com.sabihon.todo.ui.addedit.AddEditTaskScreen
 
 @Composable
@@ -106,7 +105,8 @@ fun SabihonNavHost(
                 HomeScreen(
                     onNavigateToAllTasks = { navController.navigate(Route.AllTasks) },
                     onNavigateToCategories = { navController.navigate(Route.Categories) },
-                    onNavigateToTaskDetail = { taskId -> navController.navigate(Route.TaskDetail(taskId)) },
+                    // Tapping a task opens the editor directly – no read-only detail page.
+                    onNavigateToTaskDetail = { taskId -> navController.navigate(Route.AddEditTask(taskId)) },
                     onNavigateToEditTask = { taskId -> navController.navigate(Route.AddEditTask(taskId)) },
                     onNavigateToAddTask = { navController.navigate(Route.AddEditTask()) },
                     onNavigateToSearch = { navController.navigate(Route.Search) },
@@ -146,16 +146,8 @@ fun SabihonNavHost(
             CategoryDetailScreen(
                 categoryId = args.categoryId,
                 onBack = { navController.popBackStack() },
-                onTaskClick = { taskId -> navController.navigate(Route.TaskDetail(taskId)) },
+                onTaskClick = { taskId -> navController.navigate(Route.AddEditTask(taskId)) },
                 onAddTask = { navController.navigate(Route.AddEditTask()) }
-            )
-        }
-        composable<Route.TaskDetail> { backStackEntry ->
-            val args = backStackEntry.toRoute<Route.TaskDetail>()
-            TaskDetailScreen(
-                taskId = args.taskId,
-                onBack = { navController.popBackStack() },
-                onEdit = { taskId -> navController.navigate(Route.AddEditTask(taskId)) }
             )
         }
         composable<Route.AddEditTask> { backStackEntry ->
@@ -172,14 +164,14 @@ fun SabihonNavHost(
                     onBack = { navController.navigate(Route.Home) {
                         popUpTo(Route.Home) { inclusive = false }
                     }},
-                    onTaskClick = { taskId -> navController.navigate(Route.TaskDetail(taskId)) }
+                    onTaskClick = { taskId -> navController.navigate(Route.AddEditTask(taskId)) }
                 )
             }
         }
         composable<Route.History> {
             MainScaffold(navController = navController) { _ ->
                 HistoryScreen(
-                    onTaskClick = { taskId -> navController.navigate(Route.TaskDetail(taskId)) },
+                    onTaskClick = { taskId -> navController.navigate(Route.AddEditTask(taskId)) },
                     onProfileClick = { navController.navigate(Route.Profile) }
                 )
             }

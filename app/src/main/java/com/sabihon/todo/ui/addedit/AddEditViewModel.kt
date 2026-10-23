@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -43,6 +44,12 @@ class AddEditViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(AddEditUiState())
     val uiState: StateFlow<AddEditUiState> = _uiState.asStateFlow()
+
+    /**
+     * The form is seeded from Firestore exactly once. Later emissions (including the
+     * echo of our own sub-task writes) must not overwrite what the user is typing.
+     */
+    private var seededTaskId: String? = null
 
     init {
         observeCategories()
@@ -77,6 +84,7 @@ class AddEditViewModel @Inject constructor(
                     when (result) {
                         is Result.Success -> {
                             val task = result.data
+                            if (seededTaskId != task.id) seededTaskId = task.id else return@collectLatest
                             _uiState.update {
                                 it.copy(
                                     isLoading = false,
@@ -198,10 +206,12 @@ class AddEditViewModel @Inject constructor(
         if (title.isBlank()) return
         val newSub = SubTask(id = System.currentTimeMillis().toString() + "_" + (0..999).random(), title = title, isDone = false)
         _uiState.update { it.copy(subTasks = it.subTasks + newSub, newSubTaskTitle = "") }
+        persistSubTasks()
     }
 
     fun removeSubTask(subTaskId: String) {
         _uiState.update { it.copy(subTasks = it.subTasks.filter { st -> st.id != subTaskId }) }
+        persistSubTasks()
     }
 
     fun toggleSubTask(subTaskId: String) {
@@ -209,6 +219,7 @@ class AddEditViewModel @Inject constructor(
             val updated = current.subTasks.map { if (it.id == subTaskId) it.copy(isDone = !it.isDone) else it }
             current.copy(subTasks = updated)
         }
+        persistSubTasks()
     }
 
     fun editSubTask(subTaskId: String, newTitle: String) {
@@ -216,6 +227,28 @@ class AddEditViewModel @Inject constructor(
         _uiState.update { current ->
             val updated = current.subTasks.map { if (it.id == subTaskId) it.copy(title = newTitle.trim()) else it }
             current.copy(subTasks = updated)
+        }
+        persistSubTasks()
+    }
+
+    /**
+     * Writes the checklist on its own, so ticking a sub-task sticks without having to
+     * press Update. Reads the stored task first so no other field is clobbered by
+     * unsaved form state. Best effort – a failure just leaves the change in memory.
+     */
+    private fun persistSubTasks() {
+        val snapshot = _uiState.value
+        val id = snapshot.taskId ?: return
+        if (!snapshot.isEditMode) return
+        viewModelScope.launch {
+            try {
+                val stored = taskRepository.observeTaskById(id).first()
+                if (stored is Result.Success) {
+                    taskRepository.updateTask(stored.data.copy(subTasks = snapshot.subTasks))
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("AddEditVM", "sub-task save skipped: ${e.message}")
+            }
         }
     }
 
