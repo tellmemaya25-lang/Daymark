@@ -1,9 +1,11 @@
 package com.sabihon.todo.core.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -32,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -167,6 +170,32 @@ fun RoundedBottomNavBar(
                         label = "tabScale"
                     )
 
+                    // Little pop each time a tab becomes active – snaps under, springs over.
+                    val pop = remember { Animatable(1f) }
+                    LaunchedEffect(isSelected) {
+                        if (isSelected) {
+                            pop.snapTo(0.88f)
+                            pop.animateTo(
+                                targetValue = 1f,
+                                animationSpec = spring(
+                                    dampingRatio = 0.34f,
+                                    stiffness = Spring.StiffnessMedium
+                                )
+                            )
+                        }
+                    }
+
+                    // Soft tinted pill behind the active tab.
+                    val pillColor by animateColorAsState(
+                        targetValue = if (isSelected) {
+                            AccentBlue.copy(alpha = 0.10f)
+                        } else {
+                            Color.Transparent
+                        },
+                        animationSpec = tween(220),
+                        label = "tabPill"
+                    )
+
                     val iconTint by animateColorAsState(
                         targetValue = if (isSelected) AccentBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         animationSpec = spring(stiffness = Spring.StiffnessMedium),
@@ -176,7 +205,8 @@ fun RoundedBottomNavBar(
                     Column(
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
-                            .scale(scale)
+                            .background(pillColor)
+                            .scale(scale * pop.value)
                             .clickable(
                                 interactionSource = interactionSource,
                                 indication = ripple(bounded = true, radius = 32.dp),
