@@ -11,6 +11,9 @@ sealed interface Route {
     data object Splash : Route
 
     @Serializable
+    data object Onboarding : Route
+
+    @Serializable
     data object Login : Route
 
     @Serializable
@@ -53,6 +56,7 @@ sealed interface Route {
 // Legacy string routes for fallback
 object LegacyRoutes {
     const val SPLASH = "splash"
+    const val ONBOARDING = "onboarding"
     const val LOGIN = "login"
     const val SIGN_UP = "signup"
     const val FORGOT = "forgot"

@@ -17,32 +17,37 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.sabihon.todo.core.datastore.OnboardingPreferences
 import com.sabihon.todo.core.ui.components.DaymarkLockup
 import com.sabihon.todo.domain.repository.AuthRepository
-import androidx.lifecycle.ViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * Splash – checks auth state.
+ * Where the splash hands off to.
+ */
+enum class StartDestination { HOME, ONBOARDING, LOGIN }
+
+/**
+ * Splash – checks auth state and whether the first-run cover still needs to be shown.
  */
 @Composable
 fun SplashScreen(
-    onNavigateToLogin: () -> Unit,
-    onNavigateToHome: () -> Unit,
+    onFinished: (StartDestination) -> Unit,
     viewModel: SplashViewModel = hiltViewModel()
 ) {
-    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
+    val destination by viewModel.startDestination.collectAsState()
 
-    LaunchedEffect(isLoggedIn) {
-        // Small delay for branding
-        delay(800)
-        isLoggedIn?.let { loggedIn ->
-            if (loggedIn) onNavigateToHome() else onNavigateToLogin()
-        }
+    LaunchedEffect(destination) {
+        // Small delay so the daymark lockup is readable
+        delay(900)
+        destination?.let(onFinished)
     }
 
     Box(
@@ -72,12 +77,21 @@ fun SplashScreen(
 
 @HiltViewModel
 class SplashViewModel @Inject constructor(
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val onboardingPreferences: OnboardingPreferences
 ) : ViewModel() {
-    private val _isLoggedIn = MutableStateFlow<Boolean?>(null)
-    val isLoggedIn: StateFlow<Boolean?> = _isLoggedIn
+    private val _startDestination = MutableStateFlow<StartDestination?>(null)
+    val startDestination: StateFlow<StartDestination?> = _startDestination
 
     init {
-        _isLoggedIn.value = authRepository.isUserLoggedIn()
+        viewModelScope.launch {
+            val loggedIn = authRepository.isUserLoggedIn()
+            val seenOnboarding = onboardingPreferences.hasSeenOnboardingNow()
+            _startDestination.value = when {
+                loggedIn -> StartDestination.HOME
+                !seenOnboarding -> StartDestination.ONBOARDING
+                else -> StartDestination.LOGIN
+            }
+        }
     }
 }

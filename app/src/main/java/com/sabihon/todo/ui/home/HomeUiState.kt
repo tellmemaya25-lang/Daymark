@@ -2,9 +2,27 @@ package com.sabihon.todo.ui.home
 
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.usecase.DashboardCounts
+import kotlin.math.roundToInt
 
-enum class HomeFilter {
-    TODAY, COMPLETED, PENDING, ALL, OVERDUE
+/**
+ * Segmented tabs on Home – mirrors the design ref: Today / Upcoming / All tasks.
+ */
+enum class HomeFilter { TODAY, UPCOMING, ALL }
+
+/**
+ * "Default order" control next to the ON YOUR LIST header.
+ */
+enum class HomeSort { DEFAULT, PRIORITY, DUE_DATE }
+
+/**
+ * Numbers behind the daily momentum card.
+ */
+data class Momentum(
+    val total: Int = 0,
+    val done: Int = 0
+) {
+    val remaining: Int get() = (total - done).coerceAtLeast(0)
+    val percent: Int get() = if (total == 0) 0 else ((done.toFloat() / total) * 100f).roundToInt()
 }
 
 /**
@@ -16,8 +34,12 @@ data class HomeUiState(
     val counts: DashboardCounts = DashboardCounts(),
     val allTasks: List<Task> = emptyList(),
     val todayTasks: List<Task> = emptyList(),
-    val filteredTasks: List<Task> = emptyList(),
-    val selectedFilter: HomeFilter = HomeFilter.ALL,
+    val visibleTasks: List<Task> = emptyList(),
+    val completedTasks: List<Task> = emptyList(),
+    val selectedFilter: HomeFilter = HomeFilter.TODAY,
+    val selectedSort: HomeSort = HomeSort.DEFAULT,
+    val categoryNames: Map<String, String> = emptyMap(),
+    val momentum: Momentum = Momentum(),
     val errorMessage: String? = null,
     val showUndo: Boolean = false,
     val lastDeletedTask: Task? = null
@@ -30,4 +52,5 @@ sealed interface HomeAction {
     data class AddSubTask(val taskId: String, val subTaskTitle: String) : HomeAction
     data class ToggleSubTask(val taskId: String, val subTaskId: String, val isDone: Boolean) : HomeAction
     data class SetFilter(val filter: HomeFilter) : HomeAction
+    data class SetSort(val sort: HomeSort) : HomeAction
 }
