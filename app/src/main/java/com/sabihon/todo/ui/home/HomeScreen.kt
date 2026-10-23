@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.sabihon.todo.core.ui.components.DaymarkMark
 import com.sabihon.todo.core.ui.components.FilterEmptyState
 import com.sabihon.todo.core.ui.components.LoadingShimmer
 import com.sabihon.todo.core.ui.components.NotelyEmptyState
@@ -111,6 +112,12 @@ fun HomeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    DaymarkMark(
+                        size = 32.dp,
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
+                },
                 title = {
                     Column {
                         Text(
