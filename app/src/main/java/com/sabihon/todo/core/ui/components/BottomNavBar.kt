@@ -66,7 +66,9 @@ data class BottomNavTab(
 fun RoundedBottomNavBar(
     currentRoute: String,
     onNavigate: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Tab the user is swiping towards – lights up before the commit lands. */
+    previewTab: String? = null
 ) {
     val tabs = listOf(
         BottomNavTab("Home", Icons.Filled.Home, "home"),
@@ -115,6 +117,8 @@ fun RoundedBottomNavBar(
                     "add" -> false
                     else -> false
                 }
+
+                val isPreviewed = !isSelected && previewTab == tab.route
 
                 if (tab.route == "add") {
                     val interactionSource = remember { MutableInteractionSource() }
@@ -187,17 +191,21 @@ fun RoundedBottomNavBar(
 
                     // Soft tinted pill behind the active tab.
                     val pillColor by animateColorAsState(
-                        targetValue = if (isSelected) {
-                            AccentBlue.copy(alpha = 0.10f)
-                        } else {
-                            Color.Transparent
+                        targetValue = when {
+                            isSelected -> AccentBlue.copy(alpha = 0.10f)
+                            isPreviewed -> AccentBlue.copy(alpha = 0.05f)
+                            else -> Color.Transparent
                         },
                         animationSpec = tween(220),
                         label = "tabPill"
                     )
 
                     val iconTint by animateColorAsState(
-                        targetValue = if (isSelected) AccentBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        targetValue = when {
+                            isSelected -> AccentBlue
+                            isPreviewed -> AccentBlue.copy(alpha = 0.55f)
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        },
                         animationSpec = spring(stiffness = Spring.StiffnessMedium),
                         label = "iconTint"
                     )

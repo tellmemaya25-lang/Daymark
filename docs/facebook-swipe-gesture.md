@@ -210,3 +210,42 @@ of the row, P4 is a flourish.
 4. **Delete on long drag, or complete?** Facebook fires the *last* entry. In Daymark's
    `[Edit][Delete]` order that is delete — which matches the full-swipe decision already made
    in `docs/swipe-motion-plan.md`.
+
+
+---
+
+## 7. Follow-up — the two gestures actually asked for
+
+Clarified after the first pass: **swipe-to-navigate** (between tabs) and
+**swipe-to-refresh** (pull down to reload). Both are now implemented; the row-reveal
+research above stays as background for a later pass.
+
+### Swipe-to-navigate — what shipped
+
+A true pager (Instagram's ViewPager-behind-the-bar) would mean collapsing the four tab
+destinations into a single destination hosting a `HorizontalPager`. That fights three things
+here: per-tab back stacks, the row swipe inside the pager (both are horizontal drags), and
+the system back gesture at the left edge. Not worth it for four tabs that already animate.
+
+What ships instead is a *commit-and-slide* model with pager-like feedback:
+
+- 1:1 finger tracking to 25% of the width, then a rubber band (40 dp of give)
+- vertical/horizontal arbitration left to touch slop, so lists still scroll
+- 24 dp edge exclusion keeps the system back gesture working
+- **the destination tab lights up in the bottom bar while you drag** — the same
+  pre-highlight a pager gives you by revealing the next page, without rendering it
+- commit on 25% travel or an 800 dp/s flick; the nav transition continues the motion
+  instead of snapping back first
+- no wrap-around at either end
+
+### Swipe-to-refresh — what shipped
+
+Both lists that show server data (Home, Projects) wrap their content in Material 3's
+`PullToRefreshBox`. The gesture is vertical, so it does not compete with the tab swipe or
+the row swipe at all.
+
+`refresh()` on both view models cancels the live collectors and re-subscribes: Firestore's
+listeners are long-lived, so re-subscribing is what actually re-reads the collection and
+picks up anything the local cache missed. The spinner is held ~650 ms so the gesture still
+feels acknowledged when the snapshot returns instantly, and the loading skeleton is
+suppressed during a refresh so live content is not covered by a skeleton flash.
