@@ -62,7 +62,7 @@ fun DaymarkWordmark(
             ),
             color = color
         )
-        Spacer(Modifier.width((fontSize * 0.32f).dp))
+        Spacer(Modifier.width((fontSize * 0.36f).dp))
         Canvas(modifier = Modifier.size((fontSize * 0.20f).dp)) {
             drawCircle(color = dotColor)
         }
