@@ -17,65 +17,11 @@ plugins {
 // APK installed, so the rebrand never appears. The repo ships the same config as
 // `app/cls`, so copy it into place whenever it is missing.
 // An existing google-services.json is never touched.
-//
-// Single source of truth for the app id. Also used to sanity-check Firebase configs:
-// the google-services plugin only reports "No matching client found for package
-// name ...", which does not say which packages the file *does* contain. Anyone who
-// registers the app under a different package in the console - very easy to do while
-// rebranding - gets a build failure that reads like a corrupt file.
-val expectedApplicationId = "com.sabihon.todo"
-
-/** Package names registered in a google-services.json, without needing a JSON parser. */
-fun packagesInFirebaseConfig(file: File): List<String> =
-    Regex("\"package_name\"\\s*:\\s*\"([^\"]+)\"")
-        .findAll(file.readText())
-        .map { it.groupValues[1] }
-        .toList()
-
 val bundledFirebaseConfig = file("cls")
 val firebaseConfig = file("google-services.json")
-
-if (!firebaseConfig.exists()) {
-    if (bundledFirebaseConfig.exists()) {
-        val bundledPackages = packagesInFirebaseConfig(bundledFirebaseConfig)
-        if (bundledPackages.isNotEmpty() && expectedApplicationId !in bundledPackages) {
-            throw GradleException(
-                """
-                app/cls cannot be used to bootstrap app/google-services.json.
-                  expected package: $expectedApplicationId
-                  app/cls contains: ${bundledPackages.joinToString(", ")}
-                Replace app/cls with a config from the Firebase project that has an
-                Android app registered as $expectedApplicationId, or put a valid
-                app/google-services.json in place yourself.
-                """.trimIndent()
-            )
-        }
-        bundledFirebaseConfig.copyTo(firebaseConfig)
-        logger.lifecycle("daymark: created app/google-services.json from app/cls")
-    }
-} else {
-    // Most common misconfiguration: a real download, from the right project, but the
-    // Android app in it was registered under another package name.
-    val packages = packagesInFirebaseConfig(firebaseConfig)
-    if (packages.isNotEmpty() && expectedApplicationId !in packages) {
-        throw GradleException(
-            """
-            app/google-services.json has no Android app for $expectedApplicationId.
-              it contains: ${packages.joinToString(", ")}
-
-            Fix: in Firebase Console > Project settings > Your apps, add an Android app
-            with package name exactly "$expectedApplicationId", then download
-            google-services.json for that app and replace app/google-services.json.
-
-            Do not rename the package in the console to match an existing app: the
-            applicationId here is what the installed APK and your existing Firestore
-            data are keyed to.
-
-            Check a config before building with:
-              powershell -File tools\check-firebase-config.ps1
-            """.trimIndent()
-        )
-    }
+if (!firebaseConfig.exists() && bundledFirebaseConfig.exists()) {
+    bundledFirebaseConfig.copyTo(firebaseConfig)
+    logger.lifecycle("daymark: created app/google-services.json from app/cls")
 }
 
 android {
@@ -83,7 +29,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = expectedApplicationId
+        applicationId = "com.sabihon.todo"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
