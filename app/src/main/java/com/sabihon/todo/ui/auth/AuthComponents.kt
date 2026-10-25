@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -75,8 +76,19 @@ import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
  *    reference, not a treatment.
  */
 
-/** Brand row height + the rhythm everything below it hangs from. */
+/** Horizontal page padding, shared by every auth screen. */
 private val ScreenPadding = 22.dp
+
+/**
+ * Height of the brand row.
+ *
+ * Fixed rather than wrapped, because the row's tallest child is the optional back
+ * button: wrapping meant Sign in measured 26 dp (just the mark) while Create account
+ * measured 48 dp (the button), so the same logo sat about 11 dp lower on one screen
+ * than the other. Reserving the button's height on both keeps the mark, the wordmark
+ * and the headline start in exactly the same place whichever way the user arrived.
+ */
+private val BrandRowHeight = 48.dp
 
 /**
  * Shared page: brand row (with an optional back button), headline, supporting copy,
@@ -104,10 +116,15 @@ fun AuthScaffold(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = ScreenPadding)
         ) {
+            // padding *before* height: the top inset sits outside the 48 dp row, so the
+            // row's own box is exactly 48 on every screen and the children centre in the
+            // same place. (The other way round, padding eats into the 48 and the mark
+            // drifts whenever the back button is absent.)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 12.dp),
+                    .padding(top = 12.dp)
+                    .height(BrandRowHeight),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 DaymarkMark(size = 26.dp)
