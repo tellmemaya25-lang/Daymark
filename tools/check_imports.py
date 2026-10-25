@@ -28,14 +28,22 @@ SOURCE_ROOT = ROOT / "app" / "src" / "main" / "java"
 # Symbols that always need an explicit import when they appear in code.
 # Scope members (RowScope.weight, Arrangement.spacedBy, Modifier.offset …) are
 # deliberately absent — they resolve off the receiver, not an import.
+# Members that genuinely hang off the Modifier receiver and need no import.
+MODIFIER_SCOPE_MEMBERS = {
+    "menuAnchor",      # ExposedDropdownMenuBoxScope
+    "weight", "align", "then", "fillMaxWidth", "fillMaxHeight", "fillMaxSize",
+    "padding", "size", "height", "width", "heightIn", "widthIn", "offset",
+    "paddingValues", "clipToBounds", "wrapContentWidth", "wrapContentHeight",
+}
+
 REQUIRED = [
     # layout / drawing
     "Arrangement", "Alignment", "RoundedCornerShape", "CircleShape",
     "WindowInsets", "fontScale",
     # Modifier extensions that resolve only via an import, and whose names are not
-    # also common parameter names. "clip" is here because it has already caused a
-    # red build once; "alpha"/"offset"/"padding" are deliberately absent because
-    # they appear as arguments (`copy(alpha = 0.6f)`) and would cry wolf.
+    # also common parameter names. "clip" and "border" have each caused a red build
+    # once; "alpha"/"offset"/"padding" are deliberately absent because they appear as
+    # arguments (`copy(alpha = 0.6f)`) and would cry wolf.
     "clip", "graphicsLayer",
     # text / graphics
     "Color", "FontWeight", "TextOverflow", "TextAlign", "TextDecoration",
@@ -56,9 +64,46 @@ REQUIRED = [
 
 
 def strip_comments_and_strings(text: str) -> str:
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    text = re.sub(r"//[^\n]*", "", text)
-    return re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+    """Blank out comments and string literals in one pass, preserving everything else.
+
+    This was three regexes, and it was wrong: `"image/*"` contains a block-comment
+    opener, so the comment pass deleted everything from that string to the next `*/`
+    - silently swallowing real code and hiding exactly the kind of missing import this
+    script exists to find. A single left-to-right scan cannot make that mistake.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            if text.startswith('"""', i):
+                end = text.find('"""', i + 3)
+                i = n if end == -1 else end + 3
+            else:
+                j = i + 1
+                while j < n:
+                    if text[j] == "\\":
+                        j += 2
+                        continue
+                    if text[j] == '"':
+                        j += 1
+                        break
+                    j += 1
+                i = j
+            out.append('""')
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+            out.append(" ")
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+            out.append(" ")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def check_file(path: Path) -> list[str]:
@@ -66,6 +111,9 @@ def check_file(path: Path) -> list[str]:
     imports = set(re.findall(r"^import\s+([\w.]+)", source, re.M))
     body = strip_comments_and_strings(re.sub(r"^import .*$", "", source, flags=re.M))
     declared = set(re.findall(r"\b(?:fun|val|var|class|object|interface)\s+(\w+)", body))
+    # Extension functions: `fun Modifier.entrance(...)` declares "entrance", not
+    # "Modifier", and resolves without an import.
+    declared |= set(re.findall(r"\bfun\s+[\w.<>]+\.(\w+)\s*\(", body))
 
     problems: list[str] = []
 
@@ -76,6 +124,14 @@ def check_file(path: Path) -> list[str]:
     for name in sorted(set(re.findall(r"Icons\.(?:AutoMirrored\.)?Filled\.(\w+)", body))):
         if not imported(name):
             problems.append(f"Icons.Filled.{name} is used but not imported")
+
+    # `Modifier.someExtension(` is unambiguous: these always need an import.
+    for name in sorted(set(re.findall(r"Modifier\.(\w+)\s*\(", body))):
+        if name in MODIFIER_SCOPE_MEMBERS or imported(name):
+            continue
+        declared_here = name in declared
+        if not declared_here:
+            problems.append(f"Modifier.{name}(...) is used but not imported")
 
     for name in REQUIRED:
         if name in declared or imported(name):
