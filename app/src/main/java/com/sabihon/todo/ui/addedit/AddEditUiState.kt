@@ -32,5 +32,13 @@ data class AddEditUiState(
     // ---- repeating task ----
     val repeat: RepeatRule = RepeatRule.NONE,
     /** Selected weekdays, 1 = Monday … 7 = Sunday. Only meaningful for WEEKLY. */
-    val repeatDays: List<Int> = emptyList()
+    val repeatDays: List<Int> = emptyList(),
+
+    // ---- quick add ----
+    /** A parse is in flight; the button shows a small spinner and ignores taps. */
+    val isQuickAddBusy: Boolean = false,
+    /** "AI filled: Fri 30 Oct, 17:00 · High" - null hides the strip. */
+    val quickAddSummary: String? = null,
+    /** The one-line failure message, when there was nothing worth filling. */
+    val quickAddError: String? = null
 )

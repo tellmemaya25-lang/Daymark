@@ -120,12 +120,26 @@ dependencies {
     ksp("com.google.dagger:hilt-compiler:2.56")
 
     // Firebase BOM
-    implementation(platform("com.google.firebase:firebase-bom:33.12.0"))
+    //
+    // 35.1.0 is the first line that ships `firebase-ai` (the KTX-era `firebase-vertexai`
+    // is gone). This is a major bump for every Firebase library at once, so it is worth
+    // smoke-testing sign-in, add, complete, activity and restore after it lands.
+    implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-storage")
     implementation("com.google.firebase:firebase-messaging")
     implementation("com.google.firebase:firebase-analytics")
+
+    // AI quick add. `firebase-ai` talks to the Gemini Developer API through the Firebase
+    // project, so no API key ships in the app.
+    implementation("com.google.firebase:firebase-ai")
+
+    // Required, not optional: Firebase enforces App Check for AI Logic from 2026-11-02,
+    // and requests without a token are rejected from that date on. Play Integrity for
+    // release builds, the debug provider for local runs.
+    implementation("com.google.firebase:firebase-appcheck-playintegrity")
+    implementation("com.google.firebase:firebase-appcheck-debug")
 
     // Play Services Auth (Google Sign-In)
     implementation("com.google.android.gms:play-services-auth:21.3.0")
