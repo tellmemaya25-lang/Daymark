@@ -1,45 +1,29 @@
 package com.sabihon.todo.ui.auth
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.sabihon.todo.core.ui.theme.AccentBlue
 
 /**
- * Sign Up screen with Google OAuth – fixed color contrast light/dark + consistency 24.dp
+ * Create account.
+ *
+ * Same frame as Sign in. One password field, not two: the reference has one, and the
+ * Show toggle is the check that matters - a second hidden field mostly catches the copy
+ * of a typo rather than the typo itself. `AuthViewModel.validateSignUp` still compares
+ * the two when a confirm value is supplied, so re-adding the field later needs no logic.
+ *
+ * The prototype disclaimer from the mock ("no account is created, nothing is saved") is
+ * not reproduced: this screen creates a real Firebase account.
  */
 @Composable
 fun SignUpScreen(
@@ -57,147 +41,76 @@ fun SignUpScreen(
         }
     }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbarHostState) }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "Create account",
-                style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold, fontSize = 28.sp),
-                color = MaterialTheme.colorScheme.onBackground
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "Join daymark . today",
-                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(32.dp))
+    AuthScaffold(
+        headlineLead = "A fresh start.",
+        headlineAccent = "All yours.",
+        supporting = "Make space for your plans, one little step at a time.",
+        snackbarHostState = snackbarHostState,
+        onBack = onNavigateBack
+    ) {
+        AuthField(
+            label = "Your name",
+            value = uiState.displayName,
+            onValueChange = viewModel::onDisplayNameChange,
+            placeholder = "What should we call you?",
+            keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Next,
+            error = uiState.displayNameError
+        )
 
-            OutlinedTextField(
-                value = uiState.displayName,
-                onValueChange = viewModel::onDisplayNameChange,
-                label = { Text("Display Name", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                isError = uiState.displayNameError != null,
-                supportingText = { uiState.displayNameError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                shape = RoundedCornerShape(24.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                    focusedBorderColor = AccentBlue,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    cursorColor = AccentBlue
-                )
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = uiState.email,
-                onValueChange = viewModel::onEmailChange,
-                label = { Text("Email", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                isError = uiState.emailError != null,
-                supportingText = { uiState.emailError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                shape = RoundedCornerShape(24.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                    focusedBorderColor = AccentBlue,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    cursorColor = AccentBlue
-                )
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = uiState.password,
-                onValueChange = viewModel::onPasswordChange,
-                label = { Text("Password", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                isError = uiState.passwordError != null,
-                supportingText = { uiState.passwordError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                shape = RoundedCornerShape(24.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                    focusedBorderColor = AccentBlue,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    cursorColor = AccentBlue
-                )
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = uiState.confirmPassword,
-                onValueChange = viewModel::onConfirmPasswordChange,
-                label = { Text("Confirm Password", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                isError = uiState.confirmPasswordError != null,
-                supportingText = { uiState.confirmPasswordError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                shape = RoundedCornerShape(24.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                    focusedBorderColor = AccentBlue,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    cursorColor = AccentBlue
-                )
-            )
-            Spacer(Modifier.height(24.dp))
-            Button(
-                onClick = { viewModel.signUp(onSignUpSuccess) },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !uiState.isLoading,
-                shape = RoundedCornerShape(24.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue, contentColor = Color.White)
-            ) {
-                if (uiState.isLoading) CircularProgressIndicator(modifier = Modifier.height(20.dp), color = Color.White)
-                else Text("Sign Up", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            }
+        Spacer(Modifier.height(14.dp))
 
-            Spacer(Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                HorizontalDivider(modifier = Modifier.weight(1f), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                Text("OR", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                HorizontalDivider(modifier = Modifier.weight(1f), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-            }
-            Spacer(Modifier.height(16.dp))
+        AuthField(
+            label = "Email address",
+            value = uiState.email,
+            onValueChange = viewModel::onEmailChange,
+            placeholder = "you@example.com",
+            keyboardType = KeyboardType.Email,
+            imeAction = ImeAction.Next,
+            error = uiState.emailError
+        )
 
-            GoogleAuthButton(
-                onIdTokenReceived = { token -> viewModel.signInWithGoogle(token, onSignUpSuccess) },
-                onError = { err -> viewModel.setError(err) },
-                isLoading = uiState.isLoading,
-                buttonText = "Sign up with Google"
-            )
+        Spacer(Modifier.height(14.dp))
 
-            Spacer(Modifier.height(16.dp))
-            TextButton(onClick = onNavigateBack, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
-                Text("Already have an account? Login", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-            }
-        }
+        AuthField(
+            label = "Password",
+            value = uiState.password,
+            onValueChange = viewModel::onPasswordChange,
+            placeholder = "Create a password",
+            isPassword = true,
+            keyboardType = KeyboardType.Password,
+            imeAction = ImeAction.Done,
+            error = uiState.passwordError,
+            helper = "Use at least 6 characters."
+        )
+
+        Spacer(Modifier.height(24.dp))
+
+        AuthPrimaryButton(
+            text = "Create account",
+            isLoading = uiState.isLoading,
+            onClick = { viewModel.signUp(onSignUpSuccess) }
+        )
+
+        Spacer(Modifier.height(22.dp))
+
+        AuthDivider()
+
+        Spacer(Modifier.height(16.dp))
+
+        GoogleAuthButton(
+            onIdTokenReceived = { token -> viewModel.signInWithGoogle(token, onSignUpSuccess) },
+            onError = { err -> viewModel.setError(err) },
+            isLoading = uiState.isLoading,
+            buttonText = "Sign up with Google"
+        )
+
+        Spacer(Modifier.height(6.dp))
+
+        AuthSwitchLink(
+            prefix = "Already have an account?",
+            action = "Sign in",
+            onClick = onNavigateBack
+        )
     }
 }
