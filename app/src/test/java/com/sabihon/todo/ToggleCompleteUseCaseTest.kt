@@ -76,6 +76,44 @@ class ToggleCompleteUseCaseTest {
     }
 
     @Test
+    fun `a task is completable once every sub-task is done`() = runTest {
+        // The complement of the guard above: it must block the half-done checklist
+        // without also blocking the finished one.
+        emitting(
+            Result.Success(
+                task(
+                    subTasks = listOf(
+                        SubTask("a", "one", isDone = true),
+                        SubTask("b", "two", isDone = true)
+                    )
+                )
+            )
+        )
+        coEvery { repo.toggleComplete("1", true) } returns Result.Success(Unit)
+
+        assertTrue(useCase("1", true) is Result.Success)
+        coVerify(exactly = 1) { repo.toggleComplete("1", true) }
+    }
+
+    @Test
+    fun `the completion predicate is true only when nothing is left to tick`() {
+        // This is the same test Home reads before it plays the completion splash: a
+        // no-checklist task is ready, a finished checklist is ready, anything in
+        // between is not.
+        assertTrue(task().subTasksDone)
+        assertTrue(task(subTasks = listOf(SubTask("a", "one", isDone = true))).subTasksDone)
+        assertTrue(
+            !task(
+                subTasks = listOf(
+                    SubTask("a", "one", isDone = true),
+                    SubTask("b", "two")
+                )
+            ).subTasksDone
+        )
+        assertTrue(!task(subTasks = listOf(SubTask("a", "one"))).subTasksDone)
+    }
+
+    @Test
     fun `the loading emission does not bypass the sub-task guard`() = runTest {
         // Regression: taking .first() used to read Result.Loading and allow anything.
         emitting(

@@ -34,10 +34,7 @@ class ToggleCompleteUseCase @Inject constructor(
 
         if (isCompleted) {
             task = readTask(taskId)
-            if (task != null &&
-                task.subTasks.isNotEmpty() &&
-                task.subTasks.any { !it.isDone }
-            ) {
+            if (task != null && !task.subTasksDone) {
                 return Result.Error(
                     Exception(
                         "Complete all ${task.subTasks.size} sub-tasks first " +
