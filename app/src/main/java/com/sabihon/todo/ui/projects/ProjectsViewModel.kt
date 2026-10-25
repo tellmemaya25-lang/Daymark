@@ -6,6 +6,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.TaskFilter
+import com.sabihon.todo.data.local.AvatarStore
 import com.sabihon.todo.domain.repository.CategoryRepository
 import com.sabihon.todo.domain.repository.TaskRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -38,7 +39,8 @@ data class ProjectsUiState(
 class ProjectsViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val taskRepository: TaskRepository,
-    private val auth: FirebaseAuth
+    private val auth: FirebaseAuth,
+    private val avatarStore: AvatarStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ProjectsUiState())
@@ -49,13 +51,24 @@ class ProjectsViewModel @Inject constructor(
     init {
         val user = auth.currentUser
         val displayName = user?.displayName ?: user?.email?.substringBefore("@") ?: "User"
-        _uiState.update {
-            it.copy(
-                userInitials = initialsOf(displayName),
-                userPhotoUrl = user?.photoUrl?.toString()
-            )
-        }
+        _uiState.update { it.copy(userInitials = initialsOf(displayName)) }
+        observeAvatar()
         observeProjects()
+    }
+
+    /**
+     * The avatar comes from [AvatarStore], not from `FirebaseAuth.photoUrl` - that
+     * field is only ever set by a Storage upload, so with no bucket it stays null and
+     * the header falls back to initials even though the photo is sitting in the local
+     * cache.
+     */
+    private fun observeAvatar() {
+        viewModelScope.launch {
+            val user = auth.currentUser
+            avatarStore.observe(user?.uid, user?.photoUrl?.toString()).collect { uri ->
+                _uiState.update { it.copy(userPhotoUrl = uri) }
+            }
+        }
     }
 
     private fun initialsOf(name: String): String {

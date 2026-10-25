@@ -13,6 +13,7 @@ import com.sabihon.todo.domain.model.ActivityLog
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.model.TaskFilter
 import com.sabihon.todo.domain.model.TaskStatusFilter
+import com.sabihon.todo.data.local.AvatarStore
 import com.sabihon.todo.domain.repository.TaskRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,7 +29,8 @@ import javax.inject.Inject
 class HistoryViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val firestore: FirebaseFirestore,
-    private val auth: FirebaseAuth
+    private val auth: FirebaseAuth,
+    private val avatarStore: AvatarStore
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HistoryUiState())
@@ -44,14 +46,20 @@ class HistoryViewModel @Inject constructor(
     init {
         val user = auth.currentUser
         val displayName = user?.displayName ?: user?.email?.substringBefore("@") ?: "User"
-        _uiState.update {
-            it.copy(
-                userInitials = initialsOf(displayName),
-                userPhotoUrl = user?.photoUrl?.toString()
-            )
-        }
+        _uiState.update { it.copy(userInitials = initialsOf(displayName)) }
+        observeAvatar()
         observeCompletedTasks()
         observeActivity()
+    }
+
+    /** Same shared source as Home and Projects; see [AvatarStore.observe]. */
+    private fun observeAvatar() {
+        viewModelScope.launch {
+            val user = auth.currentUser
+            avatarStore.observe(user?.uid, user?.photoUrl?.toString()).collect { uri ->
+                _uiState.update { it.copy(userPhotoUrl = uri) }
+            }
+        }
     }
 
     /** "Maya Angelou" -> "MA", "maya" -> "MA". */

@@ -76,11 +76,9 @@ class HomeViewModel @Inject constructor(
     private fun observeAvatar() {
         viewModelScope.launch {
             val user = auth.currentUser
-            avatarStore.refresh(user?.uid, user?.photoUrl?.toString())
-            avatarStore.avatar.collect { uri ->
-                _uiState.update {
-                    it.copy(avatarUrl = uri ?: auth.currentUser?.photoUrl?.toString())
-                }
+            // Same entry point as Projects and Activity; see AvatarStore.observe.
+            avatarStore.observe(user?.uid, user?.photoUrl?.toString()).collect { uri ->
+                _uiState.update { it.copy(avatarUrl = uri) }
             }
         }
     }
