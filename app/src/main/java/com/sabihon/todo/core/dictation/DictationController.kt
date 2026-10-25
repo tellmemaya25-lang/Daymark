@@ -1,4 +1,4 @@
-package com.sabihon.todo.ui.addedit.speech
+package com.sabihon.todo.core.dictation
 
 import android.content.Context
 import android.content.Intent
@@ -40,7 +40,9 @@ class DictationController(private val context: Context) {
         target: DictationTarget,
         baseText: String,
         multiline: Boolean,
-        onText: (String) -> Unit
+        onText: (String) -> Unit,
+        /** Search replaces the box; the Add Task form appends to it. */
+        replace: Boolean = false
     ) {
         // A second microphone tap while one is open puts the first field back first.
         if (_state.value.isListening) cancel()
@@ -50,7 +52,7 @@ class DictationController(private val context: Context) {
             return
         }
 
-        buffer = DictationBuffer(baseText, multiline)
+        buffer = DictationBuffer(baseText, multiline, replace)
         this.onText = onText
         published = false
 

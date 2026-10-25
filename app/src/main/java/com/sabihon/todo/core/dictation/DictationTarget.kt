@@ -1,4 +1,4 @@
-package com.sabihon.todo.ui.addedit.speech
+package com.sabihon.todo.core.dictation
 
 /**
  * Where a dictated sentence goes.
@@ -15,6 +15,9 @@ sealed interface DictationTarget {
 
     data object NewSubTask : DictationTarget
 
+    /** The Search box: a spoken query replaces what is there rather than appending. */
+    data object SearchQuery : DictationTarget
+
     /** A sub-task that already exists, being renamed in place. */
     data class ExistingSubTask(val id: String) : DictationTarget
 }
@@ -25,5 +28,6 @@ val DictationTarget.label: String
         DictationTarget.Title -> "Title"
         DictationTarget.Description -> "Description"
         DictationTarget.NewSubTask -> "New sub-task"
+        DictationTarget.SearchQuery -> "Search"
         is DictationTarget.ExistingSubTask -> "Sub-task"
     }

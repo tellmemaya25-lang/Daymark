@@ -103,6 +103,8 @@ API 31+ can ask `isOnDeviceRecognitionAvailable()` and API 33+ can `createOnDevi
 |---|---|
 | `AndroidManifest.xml` | `RECORD_AUDIO` + the `<queries>` block from §2 |
 | `AddEditTaskScreen.kt` | Mic icons, dictation strip, permission launcher, controller lifecycle |
+| `SearchScreen.kt` | The same microphone in the search box; a spoken query replaces rather than appends |
+| `core/ui/components/DictationControls.kt` | `DictationMic` and `DictationStrip`, shared by both screens |
 | `AddEditViewModel.kt` | Setters only — `onTitleChange`, `onDescriptionChange`, `onNewSubTaskTitleChange`, `editSubTask` already exist and are reused as-is |
 
 `AddEditUiState` stays untouched. Dictation state lives with the screen, because the recogniser does: a ViewModel that survives a rotation should not own the microphone, and a field being dictated is not part of the task being edited.
@@ -145,7 +147,28 @@ The recognizer itself stays out of the ViewModel: it is a framework service conn
 
 ---
 
-## 8. What I would *not* do
+## 8. Search: the same microphone, one different rule
+
+Voice search lands on the Search box with the recogniser unchanged. Only the text
+policy differs, and it differs because a query is not a sentence:
+
+| | Add Task fields | Search box |
+|---|---|---|
+| A spoken phrase | **appends** to what is there | **replaces** the query |
+| Why | "Buy milk", then "call mom", is one task with more detail | "groceries", then "dentist", is a new search |
+| Cancel | puts the field back byte for byte | puts the old query back |
+| Heard nothing | the field is untouched | the old query is untouched |
+
+`DictationBuffer` carries this as a `replace` flag, so the difference is one branch in
+the pure class rather than a second code path in the UI.
+
+Partial results go through `SearchViewModel.onQueryChange`, so the existing 300 ms
+debounce filters the list as you speak — no new search plumbing at all.
+
+`DictationMic` and `DictationStrip` moved to `core/ui/components`: two screens, one
+control, one set of words.
+
+## 9. What I would *not* do
 
 - Route audio through Firebase AI Logic while the platform transcribes for free.
 - Fire the microphone permission prompt when the screen opens.
