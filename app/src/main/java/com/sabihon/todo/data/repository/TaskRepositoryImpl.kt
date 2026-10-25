@@ -330,7 +330,13 @@ class TaskRepositoryImpl @Inject constructor(
                 }
             }
             if (outcome is WriteOutcome.Failed) return@withContext Result.Error(outcome.error)
-            logActivity(taskId = taskId, taskTitle = title, action = "DELETED")
+            // "Deleted" and "deleted for good" are different events: only the first one
+            // leaves a document that the Activity page can restore.
+            logActivity(
+                taskId = taskId,
+                taskTitle = title,
+                action = if (softDelete) "DELETED" else "PURGED"
+            )
             try { reminderScheduler.cancelReminder(taskId) } catch (_: Exception) {}
             Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e) }
@@ -338,11 +344,33 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun restoreTask(taskId: String): Result<Unit> = withContext(ioDispatcher) {
         try {
+            // One read up front, for three things: the title the activity entry shows,
+            // the reminder that delete cancelled (so restoring does not quietly lose the
+            // notification), and whether the task was completed when it was deleted.
+            val snapshot = try {
+                withTimeoutOrNull(ACTIVITY_TIMEOUT_MS) {
+                    tasksCollection().document(taskId).get().await()
+                }
+            } catch (_: Exception) {
+                null
+            }
+            val title = snapshot?.getString("title")?.trim().orEmpty()
+            val description = snapshot?.getString("description").orEmpty()
+            val reminderAt = snapshot?.getTimestamp("reminderAt")?.toDate()?.time
+            val wasCompleted = snapshot?.getBoolean("completed") == true
+
             val outcome = boundedWrite {
                 tasksCollection().document(taskId)
                     .update(mapOf("deleted" to false, "updatedAt" to Timestamp(Date()))).await()
             }
-            if (outcome is WriteOutcome.Failed) Result.Error(outcome.error) else Result.Success(Unit)
+            if (outcome is WriteOutcome.Failed) return@withContext Result.Error(outcome.error)
+
+            logActivity(taskId = taskId, taskTitle = title, action = "RESTORED")
+
+            if (!wasCompleted && reminderAt != null && reminderAt > System.currentTimeMillis()) {
+                try { reminderScheduler.scheduleReminder(taskId, title, description, reminderAt) } catch (_: Exception) {}
+            }
+            Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e) }
     }
 

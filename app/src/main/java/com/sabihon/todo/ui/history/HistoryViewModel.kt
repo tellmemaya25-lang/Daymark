@@ -80,14 +80,26 @@ class HistoryViewModel @Inject constructor(
     private fun buildFeed(): List<ActivityFeedItem> {
         val state = _uiState.value
         if (state.activityLogs.isNotEmpty()) {
-            return state.activityLogs.map { log ->
+            val logs = state.activityLogs.sortedByDescending { it.timestamp }
+            // Newest event per task. A "Deleted" row is only restorable while it is the
+            // last thing that happened to that task - once a RESTORED entry exists, the
+            // older delete rows are history, not a button.
+            val latestActionByTask = logs
+                .groupBy { it.taskId }
+                .mapValues { (_, entries) -> entries.first().action }
+
+            return logs.map { log ->
                 ActivityFeedItem(
                     id = log.id,
                     taskId = log.taskId,
                     // Entries written before titles were logged carry an empty string.
                     taskTitle = log.taskTitle.ifBlank { "Untitled task" },
                     action = log.action,
-                    timestamp = log.timestamp
+                    timestamp = log.timestamp,
+                    restorable = log.action == ActivityAction.DELETED &&
+                        latestActionByTask[log.taskId] == ActivityAction.DELETED &&
+                        log.taskId.isNotBlank(),
+                    gone = latestActionByTask[log.taskId] == ActivityAction.PURGED
                 )
             }.sortedByDescending { it.timestamp }
         }
@@ -246,18 +258,56 @@ class HistoryViewModel @Inject constructor(
         return streak
     }
 
+    /**
+     * Undo a deletion.
+     *
+     * This used to also call `toggleComplete(false)`, which meant "restore" on a task
+     * that had been deleted *after* being completed also silently reopened it. Restore
+     * now only clears the deleted flag - the task comes back in the state it was in.
+     *
+     * The old code also ignored the result, so a restore against a task that had already
+     * been deleted for good failed without a word. Every outcome now reports.
+     */
     fun restoreTask(taskId: String) {
         viewModelScope.launch {
-            taskRepository.restoreTask(taskId)
-            // Also toggle complete to false? Actually restore just undoes delete, but for completed we want reopen
-            taskRepository.toggleComplete(taskId, false)
+            val result = taskRepository.restoreTask(taskId)
+            _uiState.update {
+                it.copy(
+                    message = if (result.isSuccess()) {
+                        "Task restored"
+                    } else {
+                        "Could not restore - this task was deleted for good"
+                    }
+                )
+            }
+        }
+    }
+
+    /** Undo a completion. Separate from restore on purpose: they are different actions. */
+    fun reopenTask(taskId: String) {
+        viewModelScope.launch {
+            val result = taskRepository.toggleComplete(taskId, false)
+            _uiState.update {
+                it.copy(
+                    message = if (result.isSuccess()) "Task reopened" else "Could not reopen this task"
+                )
+            }
         }
     }
 
     fun permanentlyDelete(taskId: String) {
         viewModelScope.launch {
-            taskRepository.deleteTask(taskId, softDelete = false)
+            val result = taskRepository.deleteTask(taskId, softDelete = false)
+            _uiState.update {
+                it.copy(
+                    message = if (result.isSuccess()) "Task deleted for good" else "Could not delete this task"
+                )
+            }
         }
+    }
+
+    fun clearMessage() {
+        _uiState.update { it.copy(message = null) }
     }
 
     private fun getStartOfDay(timeMillis: Long): Long {

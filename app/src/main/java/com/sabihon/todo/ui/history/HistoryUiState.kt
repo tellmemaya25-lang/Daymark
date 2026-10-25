@@ -12,7 +12,18 @@ data class ActivityFeedItem(
     val taskId: String,
     val taskTitle: String,
     val action: ActivityAction,
-    val timestamp: Long
+    val timestamp: Long,
+    /**
+     * True only for the *newest* event of a task that is currently deleted. Restoring
+     * twice from an older "Deleted" row would write a second RESTORED entry, so the
+     * decision is made once, in [HistoryViewModel.buildFeed], against the whole feed.
+     */
+    val restorable: Boolean = false,
+    /**
+     * The newest event of this task is a permanent delete, so there is no document left
+     * to open.
+     */
+    val gone: Boolean = false
 ) {
     /** "Completed", "Created", "Reopened"… */
     val verb: String
@@ -22,6 +33,8 @@ data class ActivityFeedItem(
             ActivityAction.COMPLETED -> "Completed"
             ActivityAction.REOPENED -> "Reopened"
             ActivityAction.DELETED -> "Deleted"
+            ActivityAction.RESTORED -> "Restored"
+            ActivityAction.PURGED -> "Deleted for good"
         }
 
     /** Green dot only for wins; everything else is muted. */
@@ -36,11 +49,24 @@ data class ActivityFeedItem(
             ActivityAction.COMPLETED -> "Completed"
             ActivityAction.REOPENED -> "Reopened"
             ActivityAction.DELETED -> "Deleted"
+            ActivityAction.RESTORED -> "Restored"
+            ActivityAction.PURGED -> "Deleted for good"
         }
 
     /** Deleted rows have no task to open any more. */
     val isDeleted: Boolean
         get() = action == ActivityAction.DELETED
+
+    /**
+     * A deleted row offers restore while it is the task's latest event: the document
+     * still exists (delete is a soft delete), it is simply flagged `deleted = true`.
+     */
+    val canRestore: Boolean
+        get() = restorable
+
+    /** Reopening only makes sense for a completion. */
+    val canReopen: Boolean
+        get() = action == ActivityAction.COMPLETED
 }
 
 data class HistoryUiState(
@@ -51,7 +77,9 @@ data class HistoryUiState(
     val grouped: Map<String, List<Task>> = emptyMap(), // Today, Yesterday, Earlier
     val activityLogs: List<ActivityLog> = emptyList(),
     val feed: List<ActivityFeedItem> = emptyList(),
-    val stats: HistoryStats = HistoryStats()
+    val stats: HistoryStats = HistoryStats(),
+    /** One-shot snackbar text for restore / reopen / delete-for-good. */
+    val message: String? = null
 )
 
 data class HistoryStats(
