@@ -3,15 +3,13 @@ package com.sabihon.todo.ui.auth
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -19,9 +17,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.sabihon.todo.R
 
 /**
  * Reusable Google OAuth 2.0 sign-in button.
@@ -105,12 +107,20 @@ fun GoogleAuthButton(
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
-        Icon(
-            imageVector = Icons.Filled.AccountCircle,
-            contentDescription = "Google",
-            modifier = Modifier.size(20.dp)
+        // The real four-colour G rather than a Material person silhouette: a generic
+        // account glyph says "sign in as someone", not "continue with Google".
+        Image(
+            painter = painterResource(id = R.drawable.ic_google_g),
+            contentDescription = null,
+            modifier = Modifier.size(18.dp)
         )
-        Spacer(Modifier.width(8.dp))
-        Text(buttonText)
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = buttonText,
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium
+            )
+        )
     }
 }
