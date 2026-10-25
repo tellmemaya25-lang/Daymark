@@ -1,5 +1,10 @@
 package com.sabihon.todo.ui.addedit
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.speech.SpeechRecognizer
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +28,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -51,6 +58,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -61,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,6 +80,9 @@ import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.usecase.RepeatScheduler
+import com.sabihon.todo.ui.addedit.speech.DictationController
+import com.sabihon.todo.ui.addedit.speech.DictationTarget
+import com.sabihon.todo.ui.addedit.speech.label
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -91,6 +103,62 @@ fun AddEditTaskScreen(
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // ---- dictation ----
+    // The recogniser belongs to the screen, not the ViewModel: it is a service
+    // connection with a microphone attached, and it must die with the form.
+    val context = LocalContext.current
+    val recogniserAvailable = remember(context) { SpeechRecognizer.isRecognitionAvailable(context) }
+    val dictation = remember(context) { DictationController(context) }
+    val dictationState by dictation.state.collectAsState()
+
+    // A start that is waiting on the permission dialog. Held here so the sentence is
+    // not lost while the system prompt is on screen.
+    var pendingDictation by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    val microphonePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val next = pendingDictation
+        pendingDictation = null
+        if (granted) next?.invoke() else dictation.permissionDenied()
+    }
+
+    DisposableEffect(dictation) {
+        onDispose { dictation.release() }
+    }
+
+    fun isSpeaking(target: DictationTarget): Boolean =
+        dictationState.isListening && dictationState.target == target
+
+    /**
+     * Mic tapped. Already listening here means stop; anywhere else means move.
+     *
+     * The permission prompt is asked for on the tap that needs it, never when the
+     * screen opens, and dictation is never the only way to fill a field - the keyboard
+     * is right there either way.
+     */
+    fun dictate(
+        target: DictationTarget,
+        baseText: String,
+        multiline: Boolean,
+        onText: (String) -> Unit
+    ) {
+        if (!recogniserAvailable) return
+        if (isSpeaking(target)) {
+            dictation.stop()
+            return
+        }
+        val begin: () -> Unit = { dictation.start(target, baseText, multiline, onText) }
+        val granted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            begin()
+        } else {
+            pendingDictation = begin
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     LaunchedEffect(taskId) {
         viewModel.loadTask(taskId)
@@ -153,12 +221,41 @@ fun AddEditTaskScreen(
                 )
             }
 
+            // Dictation's one line: which field is listening, or why it stopped.
+            val dictationNotice = dictationState.message
+            if (dictationState.isListening || dictationNotice != null) {
+                DictationStrip(
+                    listening = dictationState.isListening,
+                    label = dictationState.target?.label,
+                    message = dictationNotice,
+                    onDone = dictation::stop,
+                    onCancel = dictation::cancel,
+                    onDismiss = dictation::dismissMessage
+                )
+            }
+
             OutlinedTextField(
                 value = uiState.title,
                 onValueChange = viewModel::onTitleChange,
                 label = { Text("Title", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                 isError = uiState.titleError != null,
                 supportingText = { uiState.titleError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
+                leadingIcon = {
+                    if (recogniserAvailable) {
+                        DictationMic(
+                            listening = isSpeaking(DictationTarget.Title),
+                            description = "Dictate title",
+                            onClick = {
+                                dictate(
+                                    target = DictationTarget.Title,
+                                    baseText = uiState.title,
+                                    multiline = false,
+                                    onText = viewModel::onTitleChange
+                                )
+                            }
+                        )
+                    }
+                },
                 trailingIcon = {
                     if (uiState.isQuickAddBusy) {
                         CircularProgressIndicator(
@@ -205,6 +302,22 @@ fun AddEditTaskScreen(
                 onValueChange = viewModel::onDescriptionChange,
                 label = { Text("Description", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                 placeholder = { Text("Add details... Cybersecurity is What type of thing...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                trailingIcon = {
+                    if (recogniserAvailable) {
+                        DictationMic(
+                            listening = isSpeaking(DictationTarget.Description),
+                            description = "Dictate description",
+                            onClick = {
+                                dictate(
+                                    target = DictationTarget.Description,
+                                    baseText = uiState.description,
+                                    multiline = true,
+                                    onText = viewModel::onDescriptionChange
+                                )
+                            }
+                        )
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
                 minLines = 3,
@@ -423,6 +536,22 @@ fun AddEditTaskScreen(
                         OutlinedTextField(
                             value = editingSubText,
                             onValueChange = { editingSubText = it },
+                            trailingIcon = {
+                                if (recogniserAvailable) {
+                                    DictationMic(
+                                        listening = isSpeaking(DictationTarget.ExistingSubTask(sub.id)),
+                                        description = "Dictate sub-task",
+                                        onClick = {
+                                            dictate(
+                                                target = DictationTarget.ExistingSubTask(sub.id),
+                                                baseText = editingSubText,
+                                                multiline = false,
+                                                onText = { spoken -> editingSubText = spoken }
+                                            )
+                                        }
+                                    )
+                                }
+                            },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             shape = RoundedCornerShape(24.dp),
@@ -501,6 +630,22 @@ fun AddEditTaskScreen(
                     value = uiState.newSubTaskTitle,
                     onValueChange = viewModel::onNewSubTaskTitleChange,
                     label = { Text("New sub-task", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    trailingIcon = {
+                        if (recogniserAvailable) {
+                            DictationMic(
+                                listening = isSpeaking(DictationTarget.NewSubTask),
+                                description = "Dictate new sub-task",
+                                onClick = {
+                                    dictate(
+                                        target = DictationTarget.NewSubTask,
+                                        baseText = uiState.newSubTaskTitle,
+                                        multiline = false,
+                                        onText = viewModel::onNewSubTaskTitleChange
+                                    )
+                                }
+                            )
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     shape = RoundedCornerShape(24.dp),
@@ -732,6 +877,95 @@ private fun QuickAddStrip(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(15.dp)
             )
+        }
+    }
+}
+
+/**
+ * The microphone that lives in a text field.
+ *
+ * Nothing pulses. Listening is a colour change plus the strip's words, which is also
+ * why this needs no reduced-motion variant: there is no motion to suppress.
+ */
+@Composable
+private fun DictationMic(
+    listening: Boolean,
+    description: String,
+    onClick: () -> Unit
+) {
+    IconButton(onClick = onClick) {
+        Icon(
+            imageVector = Icons.Filled.Mic,
+            contentDescription = description,
+            tint = if (listening) MaterialTheme.colorScheme.error else AccentBlue,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+/**
+ * Dictation's one line, in the same strip quick add already uses.
+ *
+ * While listening it names the field and offers Done (keep what was heard) and Cancel
+ * (put the field back exactly as it was). Afterwards it carries the reason it stopped,
+ * which is never a dialog and never a toast.
+ */
+@Composable
+private fun DictationStrip(
+    listening: Boolean,
+    label: String?,
+    message: String?,
+    onDone: () -> Unit,
+    onCancel: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = if (listening) Icons.Filled.Mic else Icons.Filled.MicOff,
+            contentDescription = null,
+            tint = if (listening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(15.dp)
+        )
+        Spacer(Modifier.size(10.dp))
+        Text(
+            text = if (listening) "Listening for ${label ?: "title"}…" else message.orEmpty(),
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            modifier = Modifier.weight(1f)
+        )
+        if (listening) {
+            TextButton(onClick = onDone) {
+                Text(
+                    text = "Done",
+                    color = AccentBlue,
+                    style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp)
+                )
+            }
+            IconButton(onClick = onCancel, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Cancel dictation",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+        } else {
+            IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Dismiss",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
         }
     }
 }
