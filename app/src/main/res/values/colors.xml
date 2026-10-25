@@ -5,10 +5,16 @@
     <color name="daymark_navy">#243B71</color>
 
     <!--
-      System launch splash background. Deliberately equal to the Compose canvas this
-      hands off to (BgLight #FFFFFF / BgDark #121214), so the transition from splash
-      to first frame is invisible. Brand lavender would flash and then vanish, and a
-      lavender icon on a lavender field disappears. values-night overrides this.
+      System launch splash background.
+
+      Charcoal in both light and dark mode, because it hands over to the Compose
+      launch screen (`ui/launch/LaunchScreen.kt`), which is charcoal by design - the
+      reference art is a dark surface in either theme. This used to be white in light
+      mode so that the system splash handed over to a white canvas; with a branded
+      launch screen behind it, white would flash for one frame and then go dark.
+
+      Equal to BgDark, so the seam between the system splash and the first Compose
+      frame is one flat colour. There is deliberately no values-night override.
     -->
-    <color name="daymark_splash_background">#FFFFFF</color>
+    <color name="daymark_splash_background">#121214</color>
 </resources>
