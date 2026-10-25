@@ -1,5 +1,14 @@
 package com.sabihon.todo.ui.navigation
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
@@ -100,7 +109,26 @@ fun SabihonNavHost(
             )
         }
         // Main screens with bottom navigation – one pager hosts all four tabs.
-        composable<Route.Home> {
+        composable<Route.Home>(
+            // Search is presented as a panel that rises from the bottom edge, so Home
+            // holds still underneath instead of running the default fade - a fading
+            // background behind a sliding panel leaves a strip of nothing at the
+            // bottom as the panel climbs.
+            exitTransition = {
+                if (targetState.destination.route?.contains("Search") == true) {
+                    ExitTransition.None
+                } else {
+                    fadeOut(animationSpec = tween(NAV_FADE_MS))
+                }
+            },
+            popEnterTransition = {
+                if (initialState.destination.route?.contains("Search") == true) {
+                    EnterTransition.None
+                } else {
+                    fadeIn(animationSpec = tween(NAV_FADE_MS))
+                }
+            }
+        ) {
             MainTabsScreen(navController = navController)
         }
         composable<Route.Categories> {
@@ -136,12 +164,26 @@ fun SabihonNavHost(
                 onSaved = { navController.popBackStack() }
             )
         }
-        composable<Route.Search> {
+        composable<Route.Search>(
+            enterTransition = {
+                slideInVertically(
+                    initialOffsetY = { fullHeight -> fullHeight },
+                    animationSpec = tween(SEARCH_SLIDE_IN_MS, easing = FastOutSlowInEasing)
+                ) + fadeIn(animationSpec = tween(SEARCH_FADE_MS, delayMillis = SEARCH_SLIDE_IN_MS / 4))
+            },
+            popExitTransition = {
+                slideOutVertically(
+                    targetOffsetY = { fullHeight -> fullHeight },
+                    animationSpec = tween(SEARCH_SLIDE_OUT_MS, easing = FastOutLinearInEasing)
+                )
+            }
+        ) {
             MainScaffold(navController = navController) { _ ->
                 SearchScreen(
-                    onBack = { navController.navigate(Route.Home) {
-                        popUpTo(Route.Home) { inclusive = false }
-                    }},
+                    // popBackStack, not navigate(Home): going back has to run the pop
+                    // transitions above, and navigating would push a second Home entry
+                    // behind the one already on the stack.
+                    onBack = { navController.popBackStack() },
                     onTaskClick = { taskId -> navController.navigate(Route.AddEditTask(taskId)) }
                 )
             }
@@ -149,9 +191,10 @@ fun SabihonNavHost(
         composable<Route.Profile> {
             MainScaffold(navController = navController) { _ ->
                 ProfileScreen(
-                    onBack = { navController.navigate(Route.Home) {
-                        popUpTo(Route.Home) { inclusive = false }
-                    }},
+                    // Same reason as Search: pop, don't navigate. navigate(Home) after
+                    // popUpTo(Home) leaves two Home entries on the stack, so the next
+                    // system back press appears to do nothing.
+                    onBack = { navController.popBackStack() },
                     onSignOut = {
                         navController.navigate(Route.Login) {
                             popUpTo(Route.Home) { inclusive = true }
@@ -162,3 +205,22 @@ fun SabihonNavHost(
         }
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* Navigation motion                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Search slides up over Home rather than fading in. Full-height travel on purpose:
+ * it reads as a panel being pulled over the screen, which is the affordance the
+ * header's search button implies.
+ *
+ * In is slower than out - the panel arrives with some weight, and a dismissal that
+ * lingers feels sticky.
+ */
+private const val SEARCH_SLIDE_IN_MS = 320
+private const val SEARCH_SLIDE_OUT_MS = 260
+private const val SEARCH_FADE_MS = 140
+
+/** Every other transition on this NavHost stays a plain cross-fade. */
+private const val NAV_FADE_MS = 220
