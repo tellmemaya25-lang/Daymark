@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -45,6 +46,27 @@ object MainTabsRequest {
     }
 }
 
+/**
+ * Which tab was last shown, kept outside the composition.
+ *
+ * Profile is reachable from all four tabs, and it is a full navigation destination:
+ * coming back to Route.Home recomposes this screen. The pager's own saveable state
+ * usually restores the page, but "usually" is what made pressing back from Profile
+ * land on Home even when it was opened from Projects or Settings. This is the
+ * fallback, and it is authoritative because it is written on every page change.
+ */
+object MainTabsState {
+    // A delegated property cannot carry accessor visibility, so the setter is a
+    // function rather than `internal set`.
+    private var current by mutableIntStateOf(0)
+
+    val lastPage: Int get() = current
+
+    fun record(page: Int) {
+        current = page
+    }
+}
+
 /** The four top-level destinations, in swipe order. */
 private data class MainTab(
     val key: String,
@@ -73,15 +95,22 @@ private val MAIN_TABS = listOf(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MainTabsScreen(
-    navController: NavHostController,
-    initialPage: Int = 0
+    navController: NavHostController
 ) {
     val requestedPage = MainTabsRequest.pendingPage
-    val pagerState = rememberPagerState(initialPage = requestedPage ?: initialPage) {
+    // A pending request wins; otherwise come back to whichever tab was showing, so
+    // returning from Profile or Search restores the tab it was opened from.
+    val pagerState = rememberPagerState(initialPage = requestedPage ?: MainTabsState.lastPage) {
         MAIN_TABS.size
     }
     val scope = rememberCoroutineScope()
     val saveableStateHolder = rememberSaveableStateHolder()
+
+    // Remember the tab for the next time this screen is rebuilt - the trip to
+    // Profile and back goes through Route.Home, which recomposes everything here.
+    LaunchedEffect(pagerState.currentPage) {
+        MainTabsState.record(pagerState.currentPage)
+    }
 
     // A page request from another screen (or a repeat request while we're mounted).
     LaunchedEffect(requestedPage) {
