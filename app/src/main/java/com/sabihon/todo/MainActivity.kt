@@ -36,8 +36,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Must run before super.onCreate(). Android keeps this splash on screen only
-        // until the first Compose frame is ready, then dismisses it - we never hold it
-        // to play an animation, and there is no second Compose splash behind it.
+        // until the first Compose frame is ready, then dismisses it: the splash is
+        // never held to play an animation. What it hands over to is the branded launch
+        // screen, painted on the same charcoal (the theme's windowSplashScreenBackground
+        // and ui/launch/LaunchScreen.kt use the same value), so the two are
+        // one continuous surface rather than a duplicated splash.
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
