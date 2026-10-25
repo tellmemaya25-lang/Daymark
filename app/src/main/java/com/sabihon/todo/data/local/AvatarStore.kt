@@ -1,14 +1,17 @@
 package com.sabihon.todo.data.local
 
 import android.content.Context
+import android.util.Log
 import android.net.Uri
 import android.util.Base64
 import com.google.firebase.firestore.FirebaseFirestore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -84,6 +87,31 @@ class AvatarStore @Inject constructor(
         publishLocal(uid)
         if (_avatar.value == null && !remoteUrl.isNullOrBlank()) _avatar.value = remoteUrl
         Unit
+    }
+
+    /**
+     * Everything a screen needs, in one call: make sure the cache file exists for
+     * [uid] (rebuilding it from Firestore when the app was reinstalled or the photo
+     * came from another device), then emit the avatar and every later change.
+     *
+     * Cold-emitting rather than reading `.value` matters: a screen that mounts before
+     * anything has published still gets the first value.
+     *
+     * Callers collect this in their ViewModel; screens never touch FirebaseAuth's
+     * `photoUrl`, which is null whenever Storage is unavailable.
+     */
+    fun observe(uid: String?, remoteUrl: String? = null): Flow<String?> = flow {
+        refresh(uid, remoteUrl)
+        // "Photo saved but the header still shows initials" is the recurring bug here,
+        // so say out loud which of the three cases we are in.
+        val file = uid?.let { localFile(it) }
+        Log.d(
+            "AvatarStore",
+            "uid=$uid cache=${file?.exists() == true} size=${file?.length() ?: 0} " +
+                "published=${_avatar.value ?: "none"}"
+        )
+        // Flow.collect with a lambda: a member call, so it needs no extra import.
+        avatar.collect { current -> emit(current) }
     }
 
     /** Writes raw bytes (a picked or downloaded image) into the cache file. */
