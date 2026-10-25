@@ -112,8 +112,10 @@ class AddEditViewModel @Inject constructor(
                                     repeat = task.repeat,
                                     repeatDays = task.repeatDays
                                 )
-                                originalTask = task
                             }
+                            // Outside the update block: `update` needs the lambda to
+                            // return the new state, and an assignment returns Unit.
+                            originalTask = task
                         }
                         is Result.Error -> _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
                         is Result.Loading -> _uiState.update { it.copy(isLoading = true) }

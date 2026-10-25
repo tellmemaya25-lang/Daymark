@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Catch missing-import compile errors without a Gradle build.
+"""Catch two kinds of compile error that need no Gradle build to spot.
 
-Every so often an edit here lands a symbol that is used but never imported
-(`Modifier.clip`, `Icons.Filled.Edit`, `Arrangement`) and the only way to find
-out is a red build. This walks the Kotlin sources and reports references to a
-curated set of Compose/AndroidX symbols that have no matching import.
+1. A symbol that is used but never imported (`Modifier.clip`, `Icons.Filled.Edit`,
+   `Arrangement`). A curated Compose/AndroidX list is checked.
+2. A `StateFlow.update { }` lambda whose last statement is an assignment rather
+   than the new state. `update` requires `(T) -> T`, and an assignment returns
+   Unit, so this is a hard error:
+
+       _uiState.update {
+           it.copy(...)
+           originalTask = task      // <- lambda now returns Unit
+       }
 
 Usage:
     python3 tools/check_imports.py            # exit 1 on findings
@@ -82,6 +88,36 @@ def check_file(path: Path) -> list[str]:
     return problems
 
 
+def check_update_lambdas(path: Path) -> list[str]:
+    """Reports `update { }` lambdas whose last statement returns Unit."""
+    source = path.read_text(encoding="utf-8")
+    body = strip_comments_and_strings(source)
+    problems: list[str] = []
+
+    for match in re.finditer(r"\.update\s*\{", body):
+        start = match.end() - 1
+        depth = 0
+        end = start
+        while end < len(body):
+            if body[end] == "{":
+                depth += 1
+            elif body[end] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            end += 1
+
+        lines = [line.strip() for line in body[start + 1:end].splitlines() if line.strip()]
+        if not lines:
+            continue
+        last = lines[-1]
+        # A bare assignment (not ==, <=, >=, +=) as the final statement.
+        if re.match(r"^[A-Za-z_][\w.]*\s*=(?!=)", last):
+            problems.append(f"update {{ }} lambda ends with an assignment: {last!r}")
+
+    return problems
+
+
 def main() -> int:
     if not SOURCE_ROOT.exists():
         print(f"source root not found: {SOURCE_ROOT}", file=sys.stderr)
@@ -89,16 +125,16 @@ def main() -> int:
 
     findings = 0
     for path in sorted(SOURCE_ROOT.rglob("*.kt")):
-        for problem in check_file(path):
-            rel = path.relative_to(ROOT)
+        rel = path.relative_to(ROOT)
+        for problem in check_file(path) + check_update_lambdas(path):
             print(f"{rel}: {problem}")
             findings += 1
 
     if findings:
-        print(f"\n{findings} missing import(s).")
+        print(f"\n{findings} problem(s).")
         return 1
 
-    print("No missing imports found.")
+    print("No missing imports, no update-lambda return errors.")
     return 0
 
 
