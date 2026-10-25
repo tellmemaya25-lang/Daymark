@@ -953,6 +953,14 @@ private fun HomeTaskCard(
         onAddSubTask = { onAddSubTaskRequest(task) },
         onSubTaskChecked = { subId, done ->
             viewModel.onAction(HomeAction.ToggleSubTask(task.id, subId, done))
+            // The last sub-task tick is the moment a checklist task is actually
+            // finished - its own checkbox is refused until then - so that is where
+            // the celebration belongs, not on a tick the guard rejects. Asking the
+            // model the same question the ViewModel is about to write keeps the two
+            // from disagreeing.
+            if (!task.isCompleted && task.withSubTaskChecked(subId, done).isCompleted) {
+                onCompleted(task)
+            }
         },
         onClick = onOpen,
         onLongClick = { onLongPress(task) },

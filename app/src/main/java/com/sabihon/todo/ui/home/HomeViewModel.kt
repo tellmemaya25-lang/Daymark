@@ -376,12 +376,10 @@ class HomeViewModel @Inject constructor(
     private fun toggleSubTask(taskId: String, subTaskId: String, isDone: Boolean) {
         viewModelScope.launch {
             val task = _uiState.value.allTasks.find { it.id == taskId } ?: return@launch
-            val updatedSubs = task.subTasks.map { if (it.id == subTaskId) it.copy(isDone = isDone) else it }
-            // Dont mark as complete when all task are not done – auto-complete only if all sub-tasks done
-            val allDone = updatedSubs.isNotEmpty() && updatedSubs.all { it.isDone }
-            val shouldBeCompleted = if (updatedSubs.isEmpty()) task.isCompleted else allDone
-            val updated = task.copy(subTasks = updatedSubs, isCompleted = shouldBeCompleted)
-            updateTaskUseCase(updated)
+            // The rule lives on the model so Home can ask the same question before it
+            // plays the completion splash: ticking the last sub-task completes the
+            // task, unticking any of them reopens it.
+            updateTaskUseCase(task.withSubTaskChecked(subTaskId, isDone))
         }
     }
 

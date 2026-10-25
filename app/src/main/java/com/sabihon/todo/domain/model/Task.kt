@@ -49,4 +49,24 @@ data class Task(
      * celebration ended up firing on a tick that never happened.
      */
     val subTasksDone: Boolean get() = subTasks.all { it.isDone }
+
+    /**
+     * This task with [subTaskId] ticked or unticked, and the completion flag that
+     * follows from it.
+     *
+     * Ticking the last sub-task is how a task with a checklist actually gets finished -
+     * `ToggleCompleteUseCase` refuses the parent's own checkbox while anything is left -
+     * so this is the one place that decides what that does. The ViewModel writes the
+     * result and Home reads it to know whether to celebrate, rather than each of them
+     * re-deriving "are we done now?" and disagreeing later.
+     *
+     * Unticking always reopens: a task cannot be complete with an open sub-task.
+     */
+    fun withSubTaskChecked(subTaskId: String, isDone: Boolean): Task {
+        val updated = subTasks.map { if (it.id == subTaskId) it.copy(isDone = isDone) else it }
+        return copy(
+            subTasks = updated,
+            isCompleted = if (updated.isEmpty()) isCompleted else updated.all { it.isDone }
+        )
+    }
 }
