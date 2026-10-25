@@ -7,7 +7,9 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -39,7 +41,15 @@ fun SabihonNavHost(
     NavHost(
         navController = navController,
         startDestination = startDestination,
-        modifier = modifier
+        modifier = modifier,
+        // navigation-compose's own default here is a 700 ms cross-fade, which reads as
+        // the app hesitating on every push. Everything that does not set its own
+        // transition (auth, task editor, category pages) now uses the same short fade
+        // as the tabs.
+        enterTransition = { fadeIn(animationSpec = tween(NAV_FADE_MS)) },
+        exitTransition = { fadeOut(animationSpec = tween(NAV_FADE_MS)) },
+        popEnterTransition = { fadeIn(animationSpec = tween(NAV_FADE_MS)) },
+        popExitTransition = { fadeOut(animationSpec = tween(NAV_FADE_MS)) }
     ) {
         composable<Route.Splash> {
             SplashScreen(
@@ -110,19 +120,20 @@ fun SabihonNavHost(
         }
         // Main screens with bottom navigation – one pager hosts all four tabs.
         composable<Route.Home>(
-            // Search is presented as a panel that rises from the bottom edge, so Home
-            // holds still underneath instead of running the default fade - a fading
-            // background behind a sliding panel leaves a strip of nothing at the
-            // bottom as the panel climbs.
+            // Search and Profile are pushed *over* the tabs, so Home holds still
+            // underneath instead of running the default fade. A fading background
+            // behind a sliding panel (Search) leaves a strip of nothing at the bottom
+            // as the panel climbs, and behind a horizontally sliding page it dips
+            // towards the bare window colour halfway through the push.
             exitTransition = {
-                if (targetState.destination.route?.contains("Search") == true) {
+                if (targetState.destination.route.holdsStillUnder()) {
                     ExitTransition.None
                 } else {
                     fadeOut(animationSpec = tween(NAV_FADE_MS))
                 }
             },
             popEnterTransition = {
-                if (initialState.destination.route?.contains("Search") == true) {
+                if (initialState.destination.route.holdsStillUnder()) {
                     EnterTransition.None
                 } else {
                     fadeIn(animationSpec = tween(NAV_FADE_MS))
@@ -188,7 +199,23 @@ fun SabihonNavHost(
                 )
             }
         }
-        composable<Route.Profile> {
+        composable<Route.Profile>(
+            // A page pushed over the tabs, so it arrives from the right edge the way a
+            // platform push does, and leaves the same way on back. No fade: the screen
+            // is opaque and a fade would let the tabs show through while it travels.
+            enterTransition = {
+                slideInHorizontally(
+                    initialOffsetX = { fullWidth -> fullWidth },
+                    animationSpec = tween(PROFILE_IN_MS, easing = FastOutSlowInEasing)
+                )
+            },
+            popExitTransition = {
+                slideOutHorizontally(
+                    targetOffsetX = { fullWidth -> fullWidth },
+                    animationSpec = tween(PROFILE_OUT_MS, easing = FastOutLinearInEasing)
+                )
+            }
+        ) {
             MainScaffold(navController = navController) { _ ->
                 ProfileScreen(
                     // Same reason as Search: pop, don't navigate. navigate(Home) after
@@ -221,6 +248,18 @@ fun SabihonNavHost(
 private const val SEARCH_SLIDE_IN_MS = 320
 private const val SEARCH_SLIDE_OUT_MS = 260
 private const val SEARCH_FADE_MS = 140
+
+/**
+ * Routes that are presented *over* the tab host rather than replacing it. Home keeps
+ * still while one of these is on top, so nothing fades out from underneath a panel that
+ * is still travelling.
+ */
+private fun String?.holdsStillUnder(): Boolean =
+    this != null && (contains("Search") || contains("Profile"))
+
+/** Profile is a horizontal push - 280 ms in, a touch quicker on the way back. */
+private const val PROFILE_IN_MS = 280
+private const val PROFILE_OUT_MS = 240
 
 /** Every other transition on this NavHost stays a plain cross-fade. */
 private const val NAV_FADE_MS = 220

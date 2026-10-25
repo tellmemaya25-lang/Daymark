@@ -193,7 +193,6 @@ fun MainTabsScreen(
                     )
 
                     3 -> SettingsScreen(
-                        onBack = { goToPage(0) },
                         onNavigateToHistory = { goToPage(2) },
                         onNavigateToProfile = { navController.navigate(Route.Profile) }
                     )

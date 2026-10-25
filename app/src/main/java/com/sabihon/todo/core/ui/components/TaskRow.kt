@@ -54,9 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
 import com.sabihon.todo.core.ui.theme.AccentBlue
-import com.sabihon.todo.core.ui.theme.DaymarkDarkCard
-import com.sabihon.todo.core.ui.theme.DaymarkDarkCardFocus
-import com.sabihon.todo.core.ui.theme.DaymarkDarkHairline
+import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
 import com.sabihon.todo.domain.model.SubTask
 
 /**
@@ -110,22 +108,21 @@ fun TaskRow(
     val hasSubTasks = totalSubs > 0
     val effectiveCompleted = if (hasSubTasks) doneSubs == totalSubs else isCompleted
 
+    // Surfaces come from the animated token set rather than from `if (isDark)`, so the
+    // card fades with the canvas during a theme switch instead of snapping to near-black
+    // halfway through it.
+    val surfaces = LocalDaymarkSurfaces.current
+
     val cardColor by animateColorAsState(
-        targetValue = when {
-            isDark && isHighlighted -> DaymarkDarkCardFocus
-            isDark -> DaymarkDarkCard
-            isHighlighted -> Color(0xFFEDF2FF)
-            else -> MaterialTheme.colorScheme.surface
-        },
+        targetValue = if (isHighlighted) surfaces.cardHighlighted else surfaces.card,
         animationSpec = tween(260),
         label = "taskCardColor"
     )
 
-    val borderColor = when {
-        isHighlighted && !isDark -> AccentBlue.copy(alpha = 0.55f)
-        isHighlighted -> AccentBlue.copy(alpha = 0.65f)
-        isDark -> DaymarkDarkHairline
-        else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
+    val borderColor = if (isHighlighted) {
+        AccentBlue.copy(alpha = 0.6f)
+    } else {
+        surfaces.cardBorder
     }
 
     val titleColor = when {

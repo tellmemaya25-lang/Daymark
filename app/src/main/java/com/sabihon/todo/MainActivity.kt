@@ -18,6 +18,7 @@ import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.datastore.ThemePref
 import com.sabihon.todo.core.ui.theme.AppThemeViewModel
+import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
 import com.sabihon.todo.core.ui.theme.SabihonTheme
 import com.sabihon.todo.ui.navigation.SabihonNavHost
 import dagger.hilt.android.AndroidEntryPoint
@@ -62,19 +63,28 @@ class MainActivity : ComponentActivity() {
                 ThemePref.SYSTEM -> systemDark
             }
 
-            // enableEdgeToEdge() decides the status/nav bar icon colour from the *device*
-            // theme. When the app is forced to Light on a dark phone (or the other way
-            // round) the icons end up white-on-white and the clock/battery vanish.
-            // Icon appearance has to follow the app's own theme instead.
             val window = this@MainActivity.window
-            LaunchedEffect(darkTheme) {
-                WindowCompat.getInsetsController(window, window.decorView).apply {
-                    isAppearanceLightStatusBars = !darkTheme
-                    isAppearanceLightNavigationBars = !darkTheme
-                }
-            }
 
             SabihonTheme(darkTheme = darkTheme) {
+                // enableEdgeToEdge() decides the status/nav bar icon colour from the
+                // *device* theme. When the app is forced to Light on a dark phone (or the
+                // other way round) the icons end up white-on-white and the clock/battery
+                // vanish, so icon appearance follows the app's own theme instead.
+                //
+                // Driving it from [LocalIsDarkTheme] rather than from the target flag is
+                // what makes the switch look right: the bars are transparent, so the
+                // icons sit on the animated canvas. Flipping them when the target changes
+                // turns them black-on-black for the first half of the fade - here they
+                // cross over with the canvas at the midpoint, exactly when the scheme
+                // local flips.
+                val appIsDark = LocalIsDarkTheme.current
+                LaunchedEffect(appIsDark) {
+                    WindowCompat.getInsetsController(window, window.decorView).apply {
+                        isAppearanceLightStatusBars = !appIsDark
+                        isAppearanceLightNavigationBars = !appIsDark
+                    }
+                }
+
                 SabihonNavHost()
             }
         }

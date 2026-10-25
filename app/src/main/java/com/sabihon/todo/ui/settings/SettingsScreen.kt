@@ -1,429 +1,350 @@
 package com.sabihon.todo.ui.settings
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.SettingsBrightness
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.datastore.ThemePref
+import com.sabihon.todo.core.ui.components.BrandHeader
+import com.sabihon.todo.core.ui.components.GroupedCard
+import com.sabihon.todo.core.ui.components.GroupedRow
+import com.sabihon.todo.core.ui.components.ProfileAvatar
+import com.sabihon.todo.core.ui.components.SectionLabel
 import com.sabihon.todo.core.ui.theme.AccentBlue
+import com.sabihon.todo.core.ui.theme.DaymarkSheetShape
+import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
 import com.sabihon.todo.ui.profile.ProfileViewModel
 
+/**
+ * Settings.
+ *
+ * Rebuilt around what Android's own settings guidance asks for: a handful of groups
+ * with a heading each, one card per group, whitespace instead of dividers between
+ * groups, and the current value of every choice shown on its row. The previous version
+ * was four visually different card styles - a theme picker with three preview tiles, a
+ * second "live preview" card that repeated the same information, list cards with
+ * 40 dp icon chips, and an About card holding a tech-stack and feature dump. It also
+ * had a "More info" row wired to a callback nobody passed, so it did nothing.
+ *
+ * Concretely:
+ *  - the four theme tiles collapse to one row whose value reads System / Light / Dark;
+ *    tapping opens a short sheet so the page itself stays calm
+ *  - Profile and Activity become plain rows in grouped cards, with the account's name
+ *    and email carried on the row instead of a generic "Edit profile and picture"
+ *  - the version lives in one quiet row, and the tech stack is gone - it belongs on a
+ *    store listing, not in settings
+ *  - the back arrow is gone too: Settings is a top-level tab, the tab bar is the way out
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit = {},
     onNavigateToHistory: () -> Unit = {},
     onNavigateToProfile: () -> Unit = {},
-    onNavigateToAbout: () -> Unit = {},
     viewModel: ProfileViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showThemeSheet by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    androidx.compose.material3.IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                }
-            )
-        },
-        containerColor = MaterialTheme.colorScheme.background
-    ) { padding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Appearance – Light / Dark Mode UI
             item {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Appearance",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
+                BrandHeader(
+                    avatarInitials = uiState.displayName.take(2).uppercase().ifBlank { "DM" },
+                    avatarUrl = uiState.localPhotoUri?.toString() ?: uiState.photoUrl,
+                    onAvatarClick = onNavigateToProfile,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp)
                 )
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text("Theme", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
-                        Text(
-                            "Choose your preferred appearance. System follows your device setting.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+            }
+
+            item {
+                Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 28.dp)) {
+                    Text(
+                        text = "Your app, your way.",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Settings.",
+                        style = MaterialTheme.typography.headlineLarge.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 30.sp,
+                            lineHeight = 35.sp,
+                            letterSpacing = (-0.8).sp
+                        ),
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Spacer(Modifier.height(20.dp))
+                }
+            }
+
+            item {
+                Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    SectionLabel("APPEARANCE")
+                    GroupedCard {
+                        GroupedRow(
+                            label = "Theme",
+                            supporting = "System, light or dark",
+                            value = uiState.theme.label,
+                            onClick = { showThemeSheet = true }
                         )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            ThemeOptionCard(
-                                label = "System",
-                                icon = Icons.Filled.SettingsBrightness,
-                                isSelected = uiState.theme == ThemePref.SYSTEM,
-                                onClick = { viewModel.setTheme(ThemePref.SYSTEM) },
-                                modifier = Modifier.weight(1f),
-                                previewLight = false,
-                                isDarkPreview = false,
-                                isSystem = true
-                            )
-                            ThemeOptionCard(
-                                label = "Light",
-                                icon = Icons.Filled.LightMode,
-                                isSelected = uiState.theme == ThemePref.LIGHT,
-                                onClick = { viewModel.setTheme(ThemePref.LIGHT) },
-                                modifier = Modifier.weight(1f),
-                                previewLight = true
-                            )
-                            ThemeOptionCard(
-                                label = "Dark",
-                                icon = Icons.Filled.DarkMode,
-                                isSelected = uiState.theme == ThemePref.DARK,
-                                onClick = { viewModel.setTheme(ThemePref.DARK) },
-                                modifier = Modifier.weight(1f),
-                                previewLight = false,
-                                isDarkPreview = true
-                            )
-                        }
-
-                        // Live preview of current theme
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surface
-                            ),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(
-                                                if (uiState.theme == ThemePref.DARK) Color(0xFF121214)
-                                                else if (uiState.theme == ThemePref.LIGHT) Color.White
-                                                else MaterialTheme.colorScheme.surfaceVariant
-                                            )
-                                    )
-                                    Text(
-                                        "Current: ${uiState.theme.name.lowercase().replaceFirstChar { it.uppercase() }} mode",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                                        .padding(12.dp)
-                                ) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(
-                                            "Task preview",
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            "This is how tasks look in ${uiState.theme.name.lowercase()} mode",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
                     }
-                }
-            }
 
-            // Activity
-            item {
-                Text("Activity", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onNavigateToHistory() },
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    ListItem(
-                        headlineContent = { Text("Activity", style = MaterialTheme.typography.titleSmall) },
-                        supportingContent = { Text("View completed tasks and activity log", style = MaterialTheme.typography.bodySmall) },
-                        leadingContent = {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Filled.BarChart, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                    )
-                }
-            }
+                    Spacer(Modifier.height(12.dp))
 
-            // Account
-            item {
-                Text("Account", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onNavigateToProfile() },
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    ListItem(
-                        headlineContent = { Text("Profile", style = MaterialTheme.typography.titleSmall) },
-                        supportingContent = { Text("Edit profile and picture", style = MaterialTheme.typography.bodySmall) },
-                        leadingContent = {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Filled.Person, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                    )
-                }
-            }
-
-            // About
-            item {
-                Text("About", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("daymark . v1.0", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                        Text(
-                            "A clean, pastel, production-quality To-Do app built with Kotlin + Jetpack Compose + Firebase. Full light & dark mode support with Material 3 theming.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    SectionLabel("ACCOUNT")
+                    GroupedCard {
+                        GroupedRow(
+                            label = uiState.displayName.ifBlank { "Profile" },
+                            supporting = uiState.email.ifBlank { "Not signed in" },
+                            leading = {
+                                ProfileAvatar(
+                                    initials = uiState.displayName.take(2).uppercase()
+                                        .ifBlank { "DM" },
+                                    photoUrl = uiState.localPhotoUri?.toString() ?: uiState.photoUrl
+                                )
+                            },
+                            onClick = onNavigateToProfile
                         )
-                        Spacer(Modifier.height(8.dp))
-                        Text("Tech Stack", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
-                        Text(
-                            "• Kotlin 2.x + Compose BOM + Material 3\n" +
-                            "• MVVM + Hilt + Coroutines Flow\n" +
-                            "• Firebase Auth (Email + Google OAuth)\n" +
-                            "• Firestore offline + WorkManager reminders\n" +
-                            "• DataStore for theme preferences\n" +
-                            "• Light/Dark/System theme with dynamic switching",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    SectionLabel("ACTIVITY")
+                    GroupedCard {
+                        GroupedRow(
+                            label = "Activity",
+                            supporting = "Completed tasks and your log",
+                            onClick = onNavigateToHistory
                         )
-                        Spacer(Modifier.height(8.dp))
-                        Text("Features", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
-                        Text(
-                            "• 5 filter chips: All (default), Today, Pending, Completed, Overdue\n" +
-                            "• Task submenu: Edit, Delete, Mark Done\n" +
-                            "• History shows title, description, status\n" +
-                            "• Profile picture editing + change password\n" +
-                            "• Light/Dark/System theme – edge-to-edge bottom nav 5dp shadow",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    SectionLabel("ABOUT")
+                    GroupedCard {
+                        // Read-only on purpose: no chevron, because there is nowhere to go
+                        // and a dead arrow is worse than no arrow.
+                        GroupedRow(
+                            label = "daymark .",
+                            supporting = "A quiet place for what matters",
+                            value = "v1.0",
+                            onClick = null
+                        )
+                    }
+
+                    Spacer(Modifier.height(110.dp))
+                }
+            }
+        }
+    }
+
+    if (showThemeSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showThemeSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            shape = DaymarkSheetShape,
+            containerColor = LocalDaymarkSurfaces.current.card,
+            tonalElevation = 0.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
+            ) {
+                Text(
+                    "Theme",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "System follows your device. The choice applies straight away.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(16.dp))
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ThemePref.entries.forEach { pref ->
+                        ThemeOptionRow(
+                            pref = pref,
+                            selected = uiState.theme == pref,
+                            onSelect = {
+                                viewModel.setTheme(pref)
+                                showThemeSheet = false
+                            }
                         )
                     }
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Card(
+
+                // Selecting applies immediately, so this is a "close", not a "cancel" -
+                // and it keeps the sheet dismissible without a gesture.
+                TextButton(
+                    onClick = { showThemeSheet = false },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onNavigateToAbout() },
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        .heightIn(min = 48.dp)
                 ) {
-                    ListItem(
-                        headlineContent = { Text("More Info", style = MaterialTheme.typography.titleSmall) },
-                        supportingContent = { Text("Version, licenses, privacy", style = MaterialTheme.typography.bodySmall) },
-                        leadingContent = {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Filled.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                    )
+                    Text("Close", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
-
-            item {
-                Spacer(Modifier.height(100.dp))
             }
         }
     }
 }
 
-@Composable
-private fun ThemeOptionCard(
-    label: String,
-    icon: ImageVector,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    previewLight: Boolean = false,
-    isDarkPreview: Boolean = false,
-    isSystem: Boolean = false
-) {
-    Card(
-        modifier = modifier.clickable { onClick() },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
-        ),
-        border = if (isSelected) BorderStroke(2.dp, AccentBlue) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Mini preview
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        when {
-                            isSystem -> MaterialTheme.colorScheme.surfaceVariant
-                            previewLight -> Color.White
-                            isDarkPreview -> Color(0xFF121214)
-                            else -> MaterialTheme.colorScheme.surfaceVariant
-                        }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                if (isSystem) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Box(modifier = Modifier.size(12.dp).clip(RoundedCornerShape(2.dp)).background(Color.White))
-                        Box(modifier = Modifier.size(12.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF121214)))
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .background(if (previewLight) Color(0xFFF5F6FA) else Color(0xFF2A2B33))
-                    )
-                }
-                if (isSelected) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(2.dp)
-                            .size(16.dp)
-                            .clip(CircleShape)
-                            .background(AccentBlue),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(10.dp))
-                    }
-                }
-            }
+/** The value shown on the Theme row. */
+private val ThemePref.label: String
+    get() = when (this) {
+        ThemePref.SYSTEM -> "System"
+        ThemePref.LIGHT -> "Light"
+        ThemePref.DARK -> "Dark"
+    }
 
+private val ThemePref.supporting: String
+    get() = when (this) {
+        ThemePref.SYSTEM -> "Following your device"
+        ThemePref.LIGHT -> "Always light"
+        ThemePref.DARK -> "Always dark"
+    }
+
+/**
+ * One choice in the theme sheet.
+ *
+ * The swatch is the preview the old three-tile picker was trying to give - as a 32 dp
+ * chip inside the row rather than as a card the size of a business card. "System" is
+ * split light/dark because that is literally what it does.
+ */
+@Composable
+private fun ThemeOptionRow(
+    pref: ThemePref,
+    selected: Boolean,
+    onSelect: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .selectable(
+                selected = selected,
+                role = Role.RadioButton,
+                onClick = onSelect
+            )
+            .background(
+                if (selected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+                else Color.Transparent
+            )
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ThemeSwatch(pref)
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = pref.label,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                ),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = pref.supporting,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (selected) {
             Icon(
-                imageVector = icon,
+                Icons.Filled.Check,
                 contentDescription = null,
-                tint = if (isSelected) AccentBlue else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = AccentBlue,
                 modifier = Modifier.size(20.dp)
             )
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium.copy(
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                ),
-                color = if (isSelected) AccentBlue else MaterialTheme.colorScheme.onSurface
+        }
+    }
+}
+
+@Composable
+private fun ThemeSwatch(pref: ThemePref) {
+    val outline = MaterialTheme.colorScheme.outlineVariant
+    val shape = RoundedCornerShape(9.dp)
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(shape)
+            .border(1.dp, outline, shape)
+    ) {
+        when (pref) {
+            ThemePref.SYSTEM -> Row(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .background(Color(0xFFF5F6FA))
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .background(Color(0xFF121214))
+                )
+            }
+            ThemePref.LIGHT -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFFF5F6FA))
+            )
+            ThemePref.DARK -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF121214))
             )
         }
     }
