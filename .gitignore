@@ -43,3 +43,7 @@ out/
 # Secrets
 secrets.properties
 keystore.properties
+
+# Python bytecode from tools/ scripts
+__pycache__/
+*.pyc

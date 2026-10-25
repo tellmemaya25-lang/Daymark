@@ -44,6 +44,9 @@ data class ProfileUiState(
     val successMessage: String? = null,
     val showDeleteConfirm: Boolean = false,
     val showChangePasswordDialog: Boolean = false,
+    /** Name editor sheet. Edits a draft so cancelling leaves the saved name alone. */
+    val showNameEditor: Boolean = false,
+    val nameDraft: String = "",
     val isUploadingPhoto: Boolean = false,
     val currentPassword: String = "",
     val newPassword: String = "",
@@ -363,6 +366,27 @@ class ProfileViewModel @Inject constructor(
             }
         }
 
+    fun openNameEditor() {
+        _uiState.update { it.copy(showNameEditor = true, nameDraft = it.displayName, error = null) }
+    }
+
+    fun onNameDraftChange(value: String) {
+        _uiState.update { it.copy(nameDraft = value) }
+    }
+
+    /** Closes without touching the saved name - the draft was never applied. */
+    fun cancelNameEditor() {
+        _uiState.update { it.copy(showNameEditor = false, nameDraft = it.displayName) }
+    }
+
+    /** Applies the draft, then saves it. The sheet closes only once the save succeeds. */
+    fun saveNameDraft() {
+        val draft = _uiState.value.nameDraft.trim()
+        if (draft.isBlank()) return
+        _uiState.update { it.copy(displayName = draft) }
+        saveDisplayName()
+    }
+
     fun saveDisplayName() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
@@ -374,7 +398,13 @@ class ProfileViewModel @Inject constructor(
                 user.updateProfile(update).await()
                 firestore.collection("users").document(user.uid)
                     .update("displayName", _uiState.value.displayName).await()
-                _uiState.update { it.copy(isLoading = false, successMessage = "Display name saved") }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        showNameEditor = false,
+                        successMessage = "Display name saved"
+                    )
+                }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, error = e.message) }
             }
