@@ -14,9 +14,10 @@ data class ActivityFeedItem(
     val action: ActivityAction,
     val timestamp: Long,
     /**
-     * True only for the *newest* event of a task that is currently deleted. Restoring
-     * twice from an older "Deleted" row would write a second RESTORED entry, so the
-     * decision is made once, in [HistoryViewModel.buildFeed], against the whole feed.
+     * True for the newest "Deleted" event of a task whose document is *currently*
+     * flagged deleted. Decided in [HistoryViewModel.buildFeed] from the task documents,
+     * not from log ordering: entries written in the same minute tie on timestamp, and
+     * that is exactly when a restore was being offered - or not - by accident.
      */
     val restorable: Boolean = false,
     /**
@@ -76,6 +77,14 @@ data class HistoryUiState(
     val completedTasks: List<Task> = emptyList(),
     val grouped: Map<String, List<Task>> = emptyMap(), // Today, Yesterday, Earlier
     val activityLogs: List<ActivityLog> = emptyList(),
+    /**
+     * Ids whose task document currently has `deleted = true`.
+     *
+     * This, not the order of the activity log, decides whether a "Deleted" row can be
+     * brought back: two entries written in the same minute tie on timestamp, so
+     * "is this the newest event?" was guessing at exactly the moment it mattered.
+     */
+    val deletedTaskIds: Set<String> = emptySet(),
     val feed: List<ActivityFeedItem> = emptyList(),
     val stats: HistoryStats = HistoryStats(),
     /** One-shot snackbar text for restore / reopen / delete-for-good. */
