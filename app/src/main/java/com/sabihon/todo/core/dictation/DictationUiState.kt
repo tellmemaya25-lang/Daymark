@@ -1,4 +1,4 @@
-package com.sabihon.todo.ui.addedit.speech
+package com.sabihon.todo.core.dictation
 
 /**
  * The state the dictation strip reads.

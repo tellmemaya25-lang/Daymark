@@ -1,6 +1,6 @@
 package com.sabihon.todo
 
-import com.sabihon.todo.ui.addedit.speech.DictationBuffer
+import com.sabihon.todo.core.dictation.DictationBuffer
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -33,7 +33,7 @@ class DictationBufferTest {
 
     @Test
     fun `a field holding only spaces counts as empty`() {
-        assertEquals("Call mom", DictationBuffer("   ").render("call mom"))
+        assertEquals("Call mom", DictationBuffer("   ").render("Call mom"))
     }
 
     @Test
@@ -77,6 +77,30 @@ class DictationBufferTest {
     fun `hearing nothing leaves the field exactly as it was`() {
         assertEquals("Buy milk", DictationBuffer("Buy milk").render(""))
         assertEquals("", DictationBuffer("").render("   "))
+    }
+
+    // ---- search: replace, not append ----
+
+    @Test
+    fun `a spoken search query replaces what was in the box`() {
+        assertEquals(
+            "dentist appointment",
+            DictationBuffer("groceries", replace = true).render("dentist appointment")
+        )
+    }
+
+    @Test
+    fun `a silent search leaves the old query alone`() {
+        assertEquals("groceries", DictationBuffer("groceries", replace = true).render(""))
+    }
+
+    @Test
+    fun `cancel has the old query to put back`() {
+        val buffer = DictationBuffer("groceries", replace = true)
+
+        buffer.render("dentist")
+
+        assertEquals("groceries", buffer.originalText)
     }
 
     @Test

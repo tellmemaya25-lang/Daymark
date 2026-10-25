@@ -1,4 +1,4 @@
-package com.sabihon.todo.ui.addedit.speech
+package com.sabihon.todo.core.dictation
 
 /**
  * Puts a dictated phrase into a field without destroying what was already there.
@@ -14,7 +14,13 @@ package com.sabihon.todo.ui.addedit.speech
 class DictationBuffer(
     private val original: String,
     /** Descriptions grow down the page; titles grow along one line. */
-    private val multiline: Boolean = false
+    private val multiline: Boolean = false,
+    /**
+     * A form appends to what is there; a search box does not. Saying "groceries" and
+     * then "dentist" is a new search, not a longer one - but Cancel still has to put
+     * the old query back, which is why [originalText] survives either way.
+     */
+    private val replace: Boolean = false
 ) {
 
     /** Exactly what the field held before dictation started. Cancel puts this back. */
@@ -24,6 +30,7 @@ class DictationBuffer(
         // Speech services like to hand back leading, trailing and doubled spaces.
         val spoken = phrase.trim().replace(WHITESPACE, " ")
         if (spoken.isEmpty()) return original
+        if (replace) return spoken
         if (original.isBlank()) return spoken
 
         val separator = if (multiline) "\n" else " "

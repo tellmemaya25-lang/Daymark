@@ -1,5 +1,10 @@
 package com.sabihon.todo.ui.search
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.speech.SpeechRecognizer
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -50,6 +55,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -66,6 +73,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.R
+import com.sabihon.todo.core.dictation.DictationController
+import com.sabihon.todo.core.dictation.DictationTarget
+import com.sabihon.todo.core.dictation.label
+import com.sabihon.todo.core.ui.components.DictationMic
+import com.sabihon.todo.core.ui.components.DictationStrip
 import com.sabihon.todo.core.ui.components.TaskRow
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.domain.model.Priority
@@ -83,6 +95,57 @@ fun SearchScreen(
     var showFilterSheet by remember { mutableStateOf(false) }
     val filterSheetState = rememberModalBottomSheetState()
     val isDark = com.sabihon.todo.core.ui.theme.LocalIsDarkTheme.current
+
+    // ---- voice search ----
+    // The same recogniser as Add Task, with one different rule: a spoken query replaces
+    // the box rather than appending to it. Saying "groceries" and then "dentist" is a new
+    // search, not a longer one - and Cancel still puts the old query back.
+    val context = LocalContext.current
+    val recogniserAvailable = remember(context) { SpeechRecognizer.isRecognitionAvailable(context) }
+    val dictation = remember(context) { DictationController(context) }
+    val dictationState by dictation.state.collectAsState()
+
+    // A start waiting on the permission dialog; the query it captured is kept meanwhile.
+    var pendingDictation by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val microphonePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val next = pendingDictation
+        pendingDictation = null
+        if (granted) next?.invoke() else dictation.permissionDenied()
+    }
+
+    DisposableEffect(dictation) {
+        onDispose { dictation.release() }
+    }
+
+    fun isListeningForSearch(): Boolean =
+        dictationState.isListening && dictationState.target == DictationTarget.SearchQuery
+
+    fun startVoiceSearch() {
+        if (!recogniserAvailable) return
+        if (isListeningForSearch()) {
+            dictation.stop()
+            return
+        }
+        val begin: () -> Unit = {
+            dictation.start(
+                target = DictationTarget.SearchQuery,
+                baseText = uiState.query,
+                multiline = false,
+                onText = viewModel::onQueryChange,
+                replace = true
+            )
+        }
+        val granted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            begin()
+        } else {
+            pendingDictation = begin
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     val hasActiveFilters = uiState.filter.status != TaskStatusFilter.ALL ||
             uiState.filter.priority != null ||
@@ -131,13 +194,22 @@ fun SearchScreen(
                         )
                     },
                     trailingIcon = {
-                        if (uiState.query.isNotBlank()) {
-                            IconButton(onClick = { viewModel.onQueryChange("") }) {
-                                Icon(
-                                    Icons.Filled.Clear,
-                                    contentDescription = "Clear",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (recogniserAvailable) {
+                                DictationMic(
+                                    listening = isListeningForSearch(),
+                                    description = "Search by voice",
+                                    onClick = { startVoiceSearch() }
                                 )
+                            }
+                            if (uiState.query.isNotBlank()) {
+                                IconButton(onClick = { viewModel.onQueryChange("") }) {
+                                    Icon(
+                                        Icons.Filled.Clear,
+                                        contentDescription = "Clear",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     },
@@ -188,6 +260,20 @@ fun SearchScreen(
                 }
             }
             Spacer(Modifier.height(12.dp))
+
+            // Voice search's one line: that it is listening, or why it stopped.
+            val dictationNotice = dictationState.message
+            if (dictationState.isListening || dictationNotice != null) {
+                DictationStrip(
+                    listening = dictationState.isListening,
+                    label = dictationState.target?.label,
+                    message = dictationNotice,
+                    onDone = dictation::stop,
+                    onCancel = dictation::cancel,
+                    onDismiss = dictation::dismissMessage
+                )
+                Spacer(Modifier.height(12.dp))
+            }
 
             // DONT SHOW ANY SEARCHES FIRST AND SHOW RECENT SEARCHES per request – image shows 4 results with empty query, should be 0 results first
             // When query blank, show only recent searches, no task results
