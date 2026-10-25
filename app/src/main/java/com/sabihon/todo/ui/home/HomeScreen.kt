@@ -469,7 +469,12 @@ fun HomeScreen(
                                 showActionSheet = false
                                 selectedTask?.let { task ->
                                     viewModel.onAction(HomeAction.ToggleComplete(task.id, !task.isCompleted))
-                                    if (!task.isCompleted) splashTaskTitle = task.title
+                                    // Same rule as the checkbox: same guard, same
+                                    // reason. Mark as Done on a task with sub-tasks
+                                    // left is rejected by the use case.
+                                    if (!task.isCompleted && task.subTasksDone) {
+                                        splashTaskTitle = task.title
+                                    }
                                 }
                             }
                             .padding(horizontal = 20.dp, vertical = 16.dp),
@@ -939,7 +944,11 @@ private fun HomeTaskCard(
         isHighlighted = isHighlighted,
         onCheckedChange = { checked ->
             viewModel.onAction(HomeAction.ToggleComplete(task.id, checked))
-            if (checked && !task.isCompleted) onCompleted(task)
+            // Only celebrate a tick that will actually land. ToggleCompleteUseCase
+            // refuses to finish a task with unfinished sub-tasks (and Home shows why),
+            // so firing the splash here unconditionally meant the confetti played for
+            // a completion the app had just rejected.
+            if (checked && !task.isCompleted && task.subTasksDone) onCompleted(task)
         },
         onAddSubTask = { onAddSubTaskRequest(task) },
         onSubTaskChecked = { subId, done ->
