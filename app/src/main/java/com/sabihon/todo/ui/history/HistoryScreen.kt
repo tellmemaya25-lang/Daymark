@@ -178,7 +178,7 @@ fun HistoryScreen(
                 )
                 if (item != null) {
                     Text(
-                        text = "${item.statusLabel} \u00B7 ${feedDate(item.timestamp)} \u00B7 ${feedTime(item.timestamp)}",
+                        text = "${item.chipLabel} \u00B7 ${feedDate(item.timestamp)} \u00B7 ${feedTime(item.timestamp)}",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 20.dp)
@@ -270,7 +270,8 @@ private fun FeedRow(
                         modifier = Modifier.weight(1f, fill = false)
                     )
                     Spacer(Modifier.width(8.dp))
-                    StatusChip(label = item.statusLabel, color = statusColor)
+                    // "Reopened x5" rather than five identical rows.
+                    StatusChip(label = item.chipLabel, color = statusColor)
                 }
 
                 Spacer(Modifier.height(4.dp))

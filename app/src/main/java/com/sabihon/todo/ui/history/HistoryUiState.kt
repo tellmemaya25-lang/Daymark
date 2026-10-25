@@ -24,7 +24,15 @@ data class ActivityFeedItem(
      * The newest event of this task is a permanent delete, so there is no document left
      * to open.
      */
-    val gone: Boolean = false
+    val gone: Boolean = false,
+    /**
+     * How many consecutive identical events this row stands for.
+     *
+     * The feed is a log, but five "Reopened" rows for one task in one minute is not a
+     * log, it is noise - and it was real: each tap of the sheet action wrote an entry.
+     * Consecutive same-task, same-action entries collapse into one row that says ×N.
+     */
+    val count: Int = 1
 ) {
     /** "Completed", "Created", "Reopened"… */
     val verb: String
@@ -53,6 +61,10 @@ data class ActivityFeedItem(
             ActivityAction.RESTORED -> "Restored"
             ActivityAction.PURGED -> "Deleted for good"
         }
+
+    /** Status with the repeat count folded in: "Reopened \u00D75". */
+    val chipLabel: String
+        get() = if (count > 1) "$statusLabel \u00D7$count" else statusLabel
 
     /** Deleted rows have no task to open any more. */
     val isDeleted: Boolean

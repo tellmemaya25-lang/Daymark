@@ -103,27 +103,19 @@ class HistoryViewModel @Inject constructor(
     private fun buildFeed(): List<ActivityFeedItem> {
         val state = _uiState.value
         if (state.activityLogs.isNotEmpty()) {
-            val logs = state.activityLogs.sortedByDescending { it.timestamp }
+            // Timestamp first, document id second: same-minute entries are common
+            // (delete, restore, delete again in a session) and an arbitrary tie order
+            // made the list reshuffle between snapshots.
+            val logs = state.activityLogs.sortedWith(
+                compareByDescending<ActivityLog> { it.timestamp }.thenByDescending { it.id }
+            )
             // Newest event per task, used only for the tap behaviour of rows whose
             // document has been purged. Restorability comes from the task documents.
             val latestActionByTask = logs
                 .groupBy { it.taskId }
                 .mapValues { (_, entries) -> entries.first().action }
 
-            // Newest "Deleted" entry per task, tie-broken by document id. Same-minute
-            // entries are common (delete, restore, delete again in one session), and a
-            // bare timestamp comparison left the order down to whatever Firestore
-            // returned - which is how a live delete ended up with no Restore button.
-            val newestDeletedLogId = logs
-                .filter { it.action == ActivityAction.DELETED }
-                .groupBy { it.taskId }
-                .mapValues { (_, entries) ->
-                    entries.sortedWith(
-                        compareByDescending<ActivityLog> { it.timestamp }.thenByDescending { it.id }
-                    ).first().id
-                }
-
-            return logs.map { log ->
+            val rows = logs.map { log ->
                 ActivityFeedItem(
                     id = log.id,
                     taskId = log.taskId,
@@ -131,15 +123,19 @@ class HistoryViewModel @Inject constructor(
                     taskTitle = log.taskTitle.ifBlank { "Untitled task" },
                     action = log.action,
                     timestamp = log.timestamp,
-                    // The document is the truth: it exists, it is flagged deleted, and
-                    // this is the delete event we would be undoing.
+                    // Every "Deleted" row of a task that is *currently* deleted offers
+                    // Restore, not just one of them. Picking a single row meant picking
+                    // an ordering, and delete/restore/delete entries share a timestamp to
+                    // the minute - which is how the deleted row the user was looking at
+                    // ended up without the button. Restoring is idempotent in the
+                    // repository, so two candidates cannot do damage.
                     restorable = log.action == ActivityAction.DELETED &&
                         log.taskId.isNotBlank() &&
-                        log.taskId in state.deletedTaskIds &&
-                        newestDeletedLogId[log.taskId] == log.id,
+                        log.taskId in state.deletedTaskIds,
                     gone = latestActionByTask[log.taskId] == ActivityAction.PURGED
                 )
-            }.sortedByDescending { it.timestamp }
+            }
+            return collapseRepeats(rows)
         }
         return state.completedTasks.map { task ->
             ActivityFeedItem(
@@ -150,6 +146,29 @@ class HistoryViewModel @Inject constructor(
                 timestamp = task.completedAt ?: task.updatedAt
             )
         }.sortedByDescending { it.timestamp }
+    }
+
+    /**
+     * Folds runs of the same event on the same task into one row.
+     *
+     * Only *consecutive* events, and only when the action matches: reopening, editing,
+     * reopening is three different things and stays three rows. The list is already
+     * newest-first, so the surviving row keeps the latest timestamp and its own log id.
+     */
+    private fun collapseRepeats(rows: List<ActivityFeedItem>): List<ActivityFeedItem> {
+        val collapsed = mutableListOf<ActivityFeedItem>()
+        for (row in rows) {
+            val previous = collapsed.lastOrNull()
+            if (previous != null &&
+                previous.action == row.action &&
+                previous.taskId == row.taskId
+            ) {
+                collapsed[collapsed.lastIndex] = previous.copy(count = previous.count + 1)
+            } else {
+                collapsed.add(row)
+            }
+        }
+        return collapsed
     }
 
     private fun observeCompletedTasks() {
