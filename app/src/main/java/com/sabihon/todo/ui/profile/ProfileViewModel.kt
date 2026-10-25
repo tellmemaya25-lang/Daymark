@@ -91,9 +91,7 @@ class ProfileViewModel @Inject constructor(
                         null
                     }
                     val effectivePath = localPath ?: restored
-                    val effectiveUri = effectivePath
-                        ?.let { File(it).takeIf { f -> f.exists() } }
-                        ?.let { Uri.fromFile(it) }
+                    val effectiveUri = localPhotoUri(uid)
 
                     _uiState.update {
                         it.copy(
@@ -107,9 +105,7 @@ class ProfileViewModel @Inject constructor(
                     // Home reads the same cache file through AvatarStore.
                     avatarStore.publishLocal(uid)
                 } else {
-                    val localUri = localPath
-                        ?.let { File(it).takeIf { f -> f.exists() } }
-                        ?.let { Uri.fromFile(it) }
+                    val localUri = localPhotoUri(uid)
                     _uiState.update {
                         it.copy(
                             displayName = user?.displayName ?: "",
@@ -145,6 +141,26 @@ class ProfileViewModel @Inject constructor(
         } catch (_: Exception) { null }
     }
 
+    /**
+     * `file://` URI for the cached avatar, versioned by the file's modified time.
+     *
+     * The cache path never changes when a new photo replaces the old one, so Coil
+     * would otherwise keep serving the stale bitmap from its memory cache. The same
+     * `?v=` trick is used by [AvatarStore.publishLocal].
+     */
+    private fun localPhotoUri(uid: String?): Uri? {
+        return try {
+            val file = getLocalPhotoFile(uid)
+            if (!file.exists() || file.length() == 0L) return null
+            Uri.fromFile(file)
+                .buildUpon()
+                .appendQueryParameter("v", file.lastModified().toString())
+                .build()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private suspend fun saveImageLocally(uri: Uri, uid: String?): String? = withContext(Dispatchers.IO) {
         try {
             val input = appContext.contentResolver.openInputStream(uri) ?: return@withContext null
@@ -178,7 +194,7 @@ class ProfileViewModel @Inject constructor(
             val uid = auth.currentUser?.uid
             val localPath = saveImageLocally(uri, uid)
             if (localPath != null) {
-                _uiState.update { it.copy(localPhotoPath = localPath, localPhotoUri = Uri.fromFile(File(localPath))) }
+                _uiState.update { it.copy(localPhotoPath = localPath, localPhotoUri = localPhotoUri(uid)) }
             }
         }
         uploadPhoto(uri)
@@ -227,7 +243,9 @@ class ProfileViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         photoUrl = downloadUrl,
-                        localPhotoUri = null,
+                        // The cache file is authoritative for display; nulling this out
+                        // left the avatar as initials with no Storage bucket present.
+                        localPhotoUri = localPhotoUri(uid),
                         isUploadingPhoto = false,
                         successMessage = "Profile photo updated"
                     )
@@ -258,7 +276,7 @@ class ProfileViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         photoUrl = null,
-                        localPhotoUri = null,
+                        localPhotoUri = localPhotoUri(uid),
                         isUploadingPhoto = false,
                         successMessage = "Profile photo updated"
                     )
