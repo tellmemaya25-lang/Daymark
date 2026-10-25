@@ -23,9 +23,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +46,8 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.ui.components.BrandHeader
 import com.sabihon.todo.core.ui.theme.AccentBlue
+import com.sabihon.todo.core.ui.theme.DaymarkSheetShape
+import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -64,8 +69,22 @@ fun HistoryScreen(
     val uiState by viewModel.uiState.collectAsState()
     var sheetItem by remember { mutableStateOf<ActivityFeedItem?>(null) }
     val sheetState = rememberModalBottomSheetState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
+    // Restore / reopen / delete-for-good all report here. Restoring is silent otherwise:
+    // the deleted row stays in the feed (it is the record of what happened), so without
+    // a word from the app it is not obvious the task came back.
+    LaunchedEffect(uiState.message) {
+        uiState.message?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearMessage()
+        }
+    }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -117,8 +136,18 @@ fun HistoryScreen(
                     FeedRow(
                         item = item,
                         showDivider = index < uiState.feed.lastIndex,
-                        onClick = { if (item.taskId.isNotBlank()) onTaskClick(item.taskId) },
-                        onLongClick = { sheetItem = item }
+                        // A deleted row has no task to open, so a tap opens the action
+                        // sheet instead of doing nothing - restore must never be
+                        // long-press-only.
+                        onClick = {
+                            when {
+                                item.canRestore -> sheetItem = item
+                                // Nothing left to open: the document was purged.
+                                item.gone -> Unit
+                                item.taskId.isNotBlank() -> onTaskClick(item.taskId)
+                            }
+                        },
+                        onLongClick = { if (!item.gone) sheetItem = item }
                     )
                 }
             }
@@ -127,46 +156,58 @@ fun HistoryScreen(
         }
     }
 
-    // Long-press actions: restore or delete for good
+    // Row actions. Deleted rows offer Restore; completed rows offer Reopen; anything
+    // with a live task document can still be deleted for good.
     if (sheetItem != null) {
+        val item = sheetItem
         ModalBottomSheet(
             onDismissRequest = { sheetItem = null },
             sheetState = sheetState,
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
+            shape = DaymarkSheetShape,
+            containerColor = LocalDaymarkSurfaces.current.card,
             tonalElevation = 0.dp
         ) {
             Column(modifier = Modifier.padding(bottom = 28.dp)) {
                 Text(
-                    text = sheetItem?.taskTitle.orEmpty(),
+                    text = item?.taskTitle.orEmpty(),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                sheetItem?.let { item ->
+                if (item != null) {
                     Text(
                         text = "${item.statusLabel} \u00B7 ${feedDate(item.timestamp)} \u00B7 ${feedTime(item.timestamp)}",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 20.dp)
                     )
-                }
-                if (sheetItem?.isDeleted != true) {
-                    SheetAction(
-                        label = "Reopen task",
-                        onClick = {
-                            sheetItem?.taskId?.let { viewModel.restoreTask(it) }
-                            sheetItem = null
-                        }
-                    )
+
+                    if (item.canRestore) {
+                        SheetAction(
+                            label = "Restore task",
+                            onClick = {
+                                viewModel.restoreTask(item.taskId)
+                                sheetItem = null
+                            }
+                        )
+                    }
+                    if (item.canReopen) {
+                        SheetAction(
+                            label = "Reopen task",
+                            onClick = {
+                                viewModel.reopenTask(item.taskId)
+                                sheetItem = null
+                            }
+                        )
+                    }
                 }
                 SheetAction(
                     label = "Delete forever",
                     destructive = true,
                     onClick = {
-                        sheetItem?.taskId?.let { viewModel.permanentlyDelete(it) }
+                        item?.taskId?.let { viewModel.permanentlyDelete(it) }
                         sheetItem = null
                     }
                 )
@@ -188,6 +229,8 @@ private fun FeedRow(
         ActivityAction.COMPLETED -> Color(0xFF4CAF50)
         ActivityAction.DELETED -> Color(0xFFE57373)
         ActivityAction.REOPENED -> Color(0xFFF2994A)
+        ActivityAction.RESTORED -> AccentBlue
+        ActivityAction.PURGED -> Color(0xFFE57373)
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
@@ -197,7 +240,7 @@ private fun FeedRow(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .combinedClickable(
-                    onClick = { if (!item.isDeleted) onClick() },
+                    onClick = onClick,
                     onLongClick = onLongClick
                 )
                 .padding(vertical = 14.dp),
