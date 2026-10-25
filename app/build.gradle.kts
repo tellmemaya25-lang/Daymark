@@ -65,6 +65,15 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // Firebase BoM 35 is built with Kotlin 2.4 metadata; this module compiles with
+        // Kotlin 2.2.10 and the compiler refuses to read anything past 2.2.0
+        // ("Module was compiled with an incompatible version of Kotlin").
+        //
+        // This flag relaxes the version *gate* only - a genuinely unresolvable symbol
+        // still fails the build. Remove it once the toolchain moves to Kotlin 2.4,
+        // which is the real fix: the Compose plugin, KSP and Hilt all have to move
+        // together, so that is its own change and its own test run.
+        freeCompilerArgs += "-Xskip-metadata-version-check"
     }
 
     buildFeatures {
