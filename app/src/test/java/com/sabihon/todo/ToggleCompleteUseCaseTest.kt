@@ -99,6 +99,8 @@ class ToggleCompleteUseCaseTest {
         val today = LocalDate.now()
         emitting(Result.Success(task(id = "habit", repeat = RepeatRule.DAILY)))
         coEvery { repo.toggleComplete("habit", true) } returns Result.Success(Unit)
+        coEvery { repo.updateStreak(any(), any(), any()) } returns Result.Success(Unit)
+        coEvery { repo.spawnOccurrence(any()) } returns Result.Success("next")
 
         useCase("habit", true)
 
@@ -145,6 +147,8 @@ class ToggleCompleteUseCaseTest {
             )
         )
         coEvery { repo.toggleComplete("habit", true) } returns Result.Success(Unit)
+        coEvery { repo.updateStreak(any(), any(), any()) } returns Result.Success(Unit)
+        coEvery { repo.spawnOccurrence(any()) } returns Result.Success("next")
 
         useCase("habit", true)
 

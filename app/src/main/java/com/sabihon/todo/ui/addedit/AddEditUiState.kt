@@ -2,6 +2,7 @@ package com.sabihon.todo.ui.addedit
 
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
+import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.SubTask
 
 /**
@@ -26,5 +27,10 @@ data class AddEditUiState(
     val titleError: String? = null,
     val categories: List<Category> = emptyList(),
     val isEditMode: Boolean = false,
-    val showDeleteConfirm: Boolean = false
+    val showDeleteConfirm: Boolean = false,
+
+    // ---- repeating task ----
+    val repeat: RepeatRule = RepeatRule.NONE,
+    /** Selected weekdays, 1 = Monday … 7 = Sunday. Only meaningful for WEEKLY. */
+    val repeatDays: List<Int> = emptyList()
 )

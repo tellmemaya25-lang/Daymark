@@ -77,6 +77,7 @@ import com.sabihon.todo.core.ui.components.SwipeableTaskRow
 import com.sabihon.todo.core.ui.components.TabItem
 import com.sabihon.todo.core.ui.components.WeekStrip
 import com.sabihon.todo.domain.model.Priority
+import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.Task
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -843,6 +844,7 @@ private fun HomeTaskCard(
         description = task.description.takeIf { it.isNotBlank() },
         subTasks = task.subTasks,
         categoryLabel = categoryName,
+        repeatLabel = repeatChipText(task),
         priorityLabel = priorityChipLabel(task.priority),
         priorityDotColor = priorityDotColor(task.priority),
         isHighlighted = isHighlighted,
@@ -871,6 +873,17 @@ private fun HomeTaskCard(
 private fun formatLocalDate(date: java.time.LocalDate, pattern: String): String =
     SimpleDateFormat(pattern, Locale.getDefault())
         .format(Date.from(date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant()))
+
+/**
+ * Habit marker for a card: the streak once there is one to be proud of, otherwise
+ * just the cadence. Null for ordinary one-off tasks.
+ */
+private fun repeatChipText(task: Task): String? = when {
+    !task.repeat.isRecurring -> null
+    task.streak > 1 -> "${task.streak} in a row"
+    task.repeat == RepeatRule.DAILY -> "Daily"
+    else -> "Weekly"
+}
 
 /** Compact chip label for the card – "Today", "Tomorrow", "Oct 27". */
 private fun dueChipLabel(dueAt: Long?): String {

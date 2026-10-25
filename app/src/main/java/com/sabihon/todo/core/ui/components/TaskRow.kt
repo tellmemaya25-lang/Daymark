@@ -79,6 +79,11 @@ fun TaskRow(
     subTasks: List<SubTask> = emptyList(),
     categoryLabel: String? = null,
     priorityLabel: String? = null,
+    /**
+     * Habit marker, e.g. "Daily" or "4 in a row". Rendered after the priority chip
+     * so the calendar icon's positional check below stays valid.
+     */
+    repeatLabel: String? = null,
     priorityDotColor: Color? = null,
     isHighlighted: Boolean = false,
     hasOuterPadding: Boolean = true,
@@ -181,6 +186,8 @@ fun TaskRow(
                     categoryLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
                     timeLabel.takeIf { it.isNotBlank() }?.let { add(it) }
                     priorityLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
+                    // Appended last: the chip row keys the calendar icon off index 1.
+                    repeatLabel?.takeIf { it.isNotBlank() }?.let { add(it) }
                 }
 
                 if (chips.isNotEmpty()) {

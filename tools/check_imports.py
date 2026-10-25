@@ -26,6 +26,11 @@ REQUIRED = [
     # layout / drawing
     "Arrangement", "Alignment", "RoundedCornerShape", "CircleShape",
     "WindowInsets", "fontScale",
+    # Modifier extensions that resolve only via an import, and whose names are not
+    # also common parameter names. "clip" is here because it has already caused a
+    # red build once; "alpha"/"offset"/"padding" are deliberately absent because
+    # they appear as arguments (`copy(alpha = 0.6f)`) and would cry wolf.
+    "clip", "graphicsLayer",
     # text / graphics
     "Color", "FontWeight", "TextOverflow", "TextAlign", "TextDecoration",
     "ContentScale", "ImageVector", "Stroke", "StrokeCap",
