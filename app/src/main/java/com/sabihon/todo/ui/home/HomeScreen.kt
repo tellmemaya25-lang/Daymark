@@ -77,6 +77,7 @@ import com.sabihon.todo.core.ui.components.SwipeableTaskRow
 import com.sabihon.todo.core.ui.components.TabItem
 import com.sabihon.todo.core.ui.components.WeekStrip
 import com.sabihon.todo.domain.model.Priority
+import com.sabihon.todo.core.ui.util.isCompactHeight
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.Task
 import java.text.SimpleDateFormat
@@ -145,10 +146,21 @@ fun HomeScreen(
             LoadingShimmer(modifier = Modifier.padding(innerPadding))
         } else {
             val listState = rememberLazyListState()
+            // Landscape (or any short window) cannot spare ~165 dp of pinned header,
+            // so there the header becomes the first list item and scrolls away.
+            val compactHeader = isCompactHeight()
+            LaunchedEffect(compactHeader) {
+                // Inserting the header moves every item by one, and listState survives
+                // the rotation; start both layouts from the top rather than mid-list.
+                listState.scrollToItem(0)
+            }
             // Header stays put; a hairline fades in as soon as the list moves under it.
+            // In compact mode the header is an item, so index > 0 is true immediately
+            // and the divider would fire before the user has scrolled at all.
             val isScrolled by remember {
                 derivedStateOf {
-                    listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+                    !compactHeader &&
+                        (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0)
                 }
             }
             LaunchedEffect(listState.isScrollInProgress) {
@@ -168,28 +180,30 @@ fun HomeScreen(
                     .padding(innerPadding)
             ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.background)
-                ) {
-                    HomeHeader(
-                        greetingName = uiState.greetingName,
-                        avatarInitials = uiState.avatarInitials,
-                        avatarUrl = uiState.avatarUrl,
-                        onSearchClick = onNavigateToSearch,
-                        onAvatarClick = onNavigateToProfile
-                    )
-                    Box(
+                if (!compactHeader) {
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(1.dp)
-                            .background(
-                                MaterialTheme.colorScheme.onSurface.copy(
-                                    alpha = 0.10f * headerDividerAlpha
+                            .background(MaterialTheme.colorScheme.background)
+                    ) {
+                        HomeHeader(
+                            greetingName = uiState.greetingName,
+                            avatarInitials = uiState.avatarInitials,
+                            avatarUrl = uiState.avatarUrl,
+                            onSearchClick = onNavigateToSearch,
+                            onAvatarClick = onNavigateToProfile
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.onSurface.copy(
+                                        alpha = 0.10f * headerDividerAlpha
+                                    )
                                 )
-                            )
-                    )
+                        )
+                    }
                 }
 
                 LazyColumn(
@@ -198,6 +212,18 @@ fun HomeScreen(
                         .fillMaxWidth()
                         .weight(1f)
                 ) {
+                if (compactHeader) {
+                    item {
+                        HomeHeaderCompact(
+                            avatarInitials = uiState.avatarInitials,
+                            avatarUrl = uiState.avatarUrl,
+                            onSearchClick = onNavigateToSearch,
+                            onAvatarClick = onNavigateToProfile,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
+                }
+
                 item {
                     MomentumCard(
                         total = uiState.momentum.total,
@@ -613,9 +639,7 @@ private fun HomeHeader(
     onSearchClick: () -> Unit,
     onAvatarClick: () -> Unit
 ) {
-    val today = remember {
-        SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(Date())
-    }
+    val today = rememberTodayLabel()
 
     Column(
         modifier = Modifier
@@ -657,27 +681,84 @@ private fun HomeHeader(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.weight(1f))
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .border(
-                        1.dp,
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                        CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                IconButton(onClick = onSearchClick, modifier = Modifier.size(40.dp)) {
-                    Icon(
-                        Icons.Filled.Search,
-                        contentDescription = "Search",
-                        tint = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+            SearchCircleButton(onClick = onSearchClick)
+        }
+    }
+}
+
+/**
+ * One-row header for landscape and other short windows.
+ *
+ * Portraits keep the greeting and the "Make today count." headline; here there is no
+ * vertical room for either, so the row carries only what is still reachable
+ * everywhere else: the brand, today's date, search, and the avatar.
+ *
+ * Reuses [BrandHeader]'s `actions` slot instead of rebuilding the lockup, so the mark
+ * and wordmark cannot drift from the portrait version.
+ */
+@Composable
+private fun HomeHeaderCompact(
+    avatarInitials: String,
+    avatarUrl: String?,
+    onSearchClick: () -> Unit,
+    onAvatarClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BrandHeader(
+        modifier = modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),
+        markSize = 22,
+        fontSize = 17,
+        avatarInitials = avatarInitials,
+        avatarUrl = avatarUrl,
+        onAvatarClick = onAvatarClick,
+        actions = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = rememberTodayLabel(),
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(6.dp))
+                SearchCircleButton(onClick = onSearchClick, size = 32, iconSize = 16)
             }
+        }
+    )
+}
+
+/** Today's date line. Shared so the two header sizes can never disagree. */
+@Composable
+private fun rememberTodayLabel(): String = remember {
+    SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(Date())
+}
+
+/**
+ * The circular search affordance, in the two sizes the headers need.
+ */
+@Composable
+private fun SearchCircleButton(
+    onClick: () -> Unit,
+    size: Int = 40,
+    iconSize: Int = 18
+) {
+    Box(
+        modifier = Modifier
+            .size(size.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                CircleShape
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        IconButton(onClick = onClick, modifier = Modifier.size(size.dp)) {
+            Icon(
+                Icons.Filled.Search,
+                contentDescription = "Search",
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(iconSize.dp)
+            )
         }
     }
 }
