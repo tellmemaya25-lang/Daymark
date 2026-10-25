@@ -6,7 +6,6 @@ import com.sabihon.todo.domain.model.SubTask
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.repository.TaskRepository
 import com.sabihon.todo.domain.usecase.ToggleCompleteUseCase
-import io.mockk.capture
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk

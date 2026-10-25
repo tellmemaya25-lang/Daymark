@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -140,12 +141,52 @@ fun AddEditTaskScreen(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Quick add fills the fields below from the sentence typed above. The
+            // strip only appears once there is something to say.
+            val quickAddMessage = uiState.quickAddSummary ?: uiState.quickAddError
+            if (quickAddMessage != null) {
+                QuickAddStrip(
+                    message = quickAddMessage,
+                    canUndo = uiState.quickAddSummary != null,
+                    onUndo = viewModel::onUndoQuickAdd,
+                    onDismiss = viewModel::onDismissQuickAdd
+                )
+            }
+
             OutlinedTextField(
                 value = uiState.title,
                 onValueChange = viewModel::onTitleChange,
                 label = { Text("Title", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                 isError = uiState.titleError != null,
                 supportingText = { uiState.titleError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
+                trailingIcon = {
+                    if (uiState.isQuickAddBusy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = AccentBlue
+                        )
+                    } else {
+                        // Enabled only with text in the box: there is nothing to parse
+                        // in an empty sentence, and a dead button is better than a
+                        // button that answers "nothing found".
+                        IconButton(
+                            onClick = viewModel::onQuickAdd,
+                            enabled = uiState.title.isNotBlank()
+                        ) {
+                            Icon(
+                                Icons.Filled.AutoAwesome,
+                                contentDescription = "Fill the form from this sentence",
+                                tint = if (uiState.title.isNotBlank()) {
+                                    AccentBlue
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                },
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(24.dp),
@@ -635,5 +676,62 @@ private fun DayChip(
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
             color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/**
+ * The quick-add feedback line.
+ *
+ * Deliberately not a snackbar and not a dialog: the fields it changed are on screen,
+ * so the message belongs next to them, and Undo has to stay reachable while the user
+ * looks at what changed. "AI filled" vs "Filled offline" is the honest half - a cloud
+ * parse and an on-device one are not the same promise.
+ */
+@Composable
+private fun QuickAddStrip(
+    message: String,
+    canUndo: Boolean,
+    onUndo: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.AutoAwesome,
+            contentDescription = null,
+            tint = AccentBlue,
+            modifier = Modifier.size(15.dp)
+        )
+        Spacer(Modifier.size(10.dp))
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            modifier = Modifier.weight(1f)
+        )
+        if (canUndo) {
+            TextButton(onClick = onUndo) {
+                Text(
+                    text = "Undo",
+                    color = AccentBlue,
+                    style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp)
+                )
+            }
+        }
+        IconButton(onClick = onDismiss, modifier = Modifier.size(34.dp)) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = "Dismiss",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(15.dp)
+            )
+        }
     }
 }

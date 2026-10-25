@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.sabihon.todo.core.util.Result
+import com.sabihon.todo.domain.ai.AiTaskDraft
+import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.SubTask
@@ -12,6 +14,8 @@ import com.sabihon.todo.domain.repository.CategoryRepository
 import com.sabihon.todo.domain.repository.TaskRepository
 import com.sabihon.todo.domain.usecase.AddTaskUseCase
 import com.sabihon.todo.domain.usecase.DeleteTaskUseCase
+import com.sabihon.todo.domain.usecase.ParseQuickAddUseCase
+import com.sabihon.todo.domain.usecase.QuickAddResult
 import com.sabihon.todo.domain.usecase.RepeatScheduler
 import com.sabihon.todo.domain.usecase.UpdateTaskUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,7 +27,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 
 /**
@@ -36,6 +43,7 @@ class AddEditViewModel @Inject constructor(
     private val deleteTaskUseCase: DeleteTaskUseCase,
     private val taskRepository: TaskRepository,
     private val categoryRepository: CategoryRepository,
+    private val parseQuickAddUseCase: ParseQuickAddUseCase,
     private val auth: FirebaseAuth
 ) : ViewModel() {
 
@@ -46,6 +54,23 @@ class AddEditViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(AddEditUiState())
     val uiState: StateFlow<AddEditUiState> = _uiState.asStateFlow()
+
+    /**
+     * The fields a quick-add is allowed to touch, captured before it runs so the strip's
+     * Undo can put them back exactly.
+     */
+    private data class QuickAddSnapshot(
+        val title: String,
+        val dueAt: Long?,
+        val dueDateMillis: Long?,
+        val dueTimeMillis: Long?,
+        val priority: Priority,
+        val categoryId: String?,
+        val repeat: RepeatRule,
+        val repeatDays: List<Int>
+    )
+
+    private var quickAddUndo: QuickAddSnapshot? = null
 
     /**
      * The form is seeded from Firestore exactly once. Later emissions (including the
@@ -292,6 +317,132 @@ class AddEditViewModel @Inject constructor(
                 android.util.Log.w("AddEditVM", "sub-task save skipped: ${e.message}")
             }
         }
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Quick add                                                        */
+    /* ---------------------------------------------------------------- */
+
+    /**
+     * Reads the title box as a sentence and fills in what it can.
+     *
+     * It fills, it never saves: the user still presses Save, and the strip above the
+     * title offers Undo for the fields this changed. A failure is a one-line message -
+     * the form is untouched and the offline parser has already had its turn.
+     */
+    fun onQuickAdd() {
+        val snapshot = _uiState.value
+        val sentence = snapshot.title.trim()
+        if (sentence.isEmpty() || snapshot.isQuickAddBusy) return
+
+        quickAddUndo = null
+        _uiState.update {
+            it.copy(isQuickAddBusy = true, quickAddSummary = null, quickAddError = null)
+        }
+
+        viewModelScope.launch {
+            val result = parseQuickAddUseCase(sentence, snapshot.categories)
+            val draft = result.draft
+
+            if (!draft.hasDetails) {
+                _uiState.update {
+                    it.copy(
+                        isQuickAddBusy = false,
+                        quickAddError = "Couldn't find a date, priority or list in that"
+                    )
+                }
+                return@launch
+            }
+
+            quickAddUndo = QuickAddSnapshot(
+                title = snapshot.title,
+                dueAt = snapshot.dueAt,
+                dueDateMillis = snapshot.dueDateMillis,
+                dueTimeMillis = snapshot.dueTimeMillis,
+                priority = snapshot.priority,
+                categoryId = snapshot.categoryId,
+                repeat = snapshot.repeat,
+                repeatDays = snapshot.repeatDays
+            )
+
+            val dueMillis = draft.dueAt
+            _uiState.update { current ->
+                current.copy(
+                    title = draft.title.ifBlank { current.title },
+                    // All three date fields move together: dueAt is what is saved,
+                    // the other two are what the pickers reopen on.
+                    dueAt = dueMillis ?: current.dueAt,
+                    dueDateMillis = dueMillis ?: current.dueDateMillis,
+                    dueTimeMillis = dueMillis ?: current.dueTimeMillis,
+                    priority = draft.priority ?: current.priority,
+                    categoryId = draft.categoryId ?: current.categoryId,
+                    repeat = if (draft.repeat != RepeatRule.NONE) draft.repeat else current.repeat,
+                    repeatDays = draft.repeatDays.ifEmpty { current.repeatDays },
+                    isQuickAddBusy = false,
+                    quickAddSummary = summaryOf(draft, result.source, snapshot.categories),
+                    quickAddError = null
+                )
+            }
+        }
+    }
+
+    /** Puts back exactly the fields the last quick add changed. */
+    fun onUndoQuickAdd() {
+        val previous = quickAddUndo ?: return
+        quickAddUndo = null
+        _uiState.update { current ->
+            current.copy(
+                title = previous.title,
+                dueAt = previous.dueAt,
+                dueDateMillis = previous.dueDateMillis,
+                dueTimeMillis = previous.dueTimeMillis,
+                priority = previous.priority,
+                categoryId = previous.categoryId,
+                repeat = previous.repeat,
+                repeatDays = previous.repeatDays,
+                isQuickAddBusy = false,
+                quickAddSummary = null,
+                quickAddError = null
+            )
+        }
+    }
+
+    fun onDismissQuickAdd() {
+        quickAddUndo = null
+        _uiState.update { it.copy(quickAddSummary = null, quickAddError = null) }
+    }
+
+    /**
+     * "AI filled: Fri 30 Oct, 17:00 · High · Work".
+     *
+     * Says which half did the work, because a cloud parse and an offline one are not
+     * the same promise - and because the user deserves to know a sentence left the
+     * device at all.
+     */
+    private fun summaryOf(
+        draft: AiTaskDraft,
+        source: QuickAddResult.Source,
+        categories: List<Category>
+    ): String {
+        val parts = mutableListOf<String>()
+
+        draft.dueAt?.let { millis ->
+            parts += SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault()).format(Date(millis))
+        }
+        draft.priority?.let { priority ->
+            parts += priority.name.lowercase().replaceFirstChar { it.uppercase() }
+        }
+        draft.categoryId?.let { id ->
+            categories.firstOrNull { it.id == id }?.name?.let { parts += it }
+        }
+        when (draft.repeat) {
+            RepeatRule.DAILY -> parts += "Daily"
+            RepeatRule.WEEKLY -> parts += "Weekly"
+            RepeatRule.NONE -> Unit
+        }
+
+        val label = if (source == QuickAddResult.Source.CLOUD) "AI filled" else "Filled offline"
+        return if (parts.isEmpty()) label else "$label: ${parts.joinToString(" · ")}"
     }
 
     fun saveTask(onSuccess: () -> Unit) {
