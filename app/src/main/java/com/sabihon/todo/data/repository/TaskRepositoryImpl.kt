@@ -2,6 +2,7 @@ package com.sabihon.todo.data.repository
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentReference
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
@@ -319,8 +320,14 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun deleteTask(taskId: String, softDelete: Boolean): Result<Unit> = withContext(ioDispatcher) {
         try {
-            // Grab the title before the document goes away – the feed shows it.
-            val title = readTaskTitle(taskId)
+            // One read: the title (the feed shows it) and whether this delete is a repeat.
+            val snapshot = readTaskDocument(taskId)
+            if (softDelete && snapshot != null && snapshot.getBoolean("deleted") == true) {
+                // Already deleted - a second soft delete would log a second DELETED row
+                // for the same event.
+                return@withContext Result.Success(Unit)
+            }
+            val title = snapshot?.getString("title")?.trim().orEmpty()
             val outcome = boundedWrite {
                 if (softDelete) {
                     tasksCollection().document(taskId)
@@ -344,15 +351,14 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun restoreTask(taskId: String): Result<Unit> = withContext(ioDispatcher) {
         try {
-            // One read up front, for three things: the title the activity entry shows,
-            // the reminder that delete cancelled (so restoring does not quietly lose the
-            // notification), and whether the task was completed when it was deleted.
-            val snapshot = try {
-                withTimeoutOrNull(ACTIVITY_TIMEOUT_MS) {
-                    tasksCollection().document(taskId).get().await()
-                }
-            } catch (_: Exception) {
-                null
+            // One read up front, for four things: whether there is anything to restore,
+            // the title the activity entry shows, the reminder that delete cancelled (so
+            // restoring does not quietly lose the notification), and whether the task was
+            // completed when it was deleted.
+            val snapshot = readTaskDocument(taskId)
+            if (snapshot != null && snapshot.getBoolean("deleted") != true) {
+                // Already restored - restoring again would only add a duplicate entry.
+                return@withContext Result.Success(Unit)
             }
             val title = snapshot?.getString("title")?.trim().orEmpty()
             val description = snapshot?.getString("description").orEmpty()
@@ -376,7 +382,16 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun toggleComplete(taskId: String, isCompleted: Boolean): Result<Unit> = withContext(ioDispatcher) {
         try {
-            val title = readTaskTitle(taskId)
+            val snapshot = readTaskDocument(taskId)
+            val title = snapshot?.getString("title")?.trim().orEmpty()
+
+            // Nothing to do, and nothing to log. Reopening a task that is already open
+            // used to write another REOPENED entry and another `updatedAt`, so the
+            // Activity feed filled with five identical rows for one tap-happy minute.
+            if (snapshot != null && snapshot.getBoolean("completed") == isCompleted) {
+                return@withContext Result.Success(Unit)
+            }
+
             val updates = mutableMapOf<String, Any?>("completed" to isCompleted, "updatedAt" to Timestamp(Date()))
             if (isCompleted) updates["completedAt"] = Timestamp(Date()) else updates["completedAt"] = null
             val outcome = boundedWrite {
@@ -457,16 +472,23 @@ class TaskRepositoryImpl @Inject constructor(
      * Best-effort title lookup for log entries that only carry a task id.
      * Bounded and swallowing failures – a missing title must never fail a write.
      */
-    private suspend fun readTaskTitle(taskId: String): String = try {
+    /**
+     * One bounded read of a task document, used to decide whether an action would
+     * actually change anything and to get the title the activity entry needs.
+     *
+     * Null means "could not find out" (offline, permissions, timeout), never "no change" -
+     * callers let the write go ahead in that case rather than silently dropping it.
+     */
+    private suspend fun readTaskDocument(taskId: String): DocumentSnapshot? = try {
         withTimeoutOrNull(ACTIVITY_TIMEOUT_MS) {
             tasksCollection().document(taskId).get().await()
-                .getString("title")
-                ?.trim()
-                .orEmpty()
-        }.orEmpty()
+        }
     } catch (_: Exception) {
-        ""
+        null
     }
+
+    private suspend fun readTaskTitle(taskId: String): String =
+        readTaskDocument(taskId)?.getString("title")?.trim().orEmpty()
 
     private suspend fun logActivity(taskId: String, taskTitle: String, action: String) {
         try {
