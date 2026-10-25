@@ -1,6 +1,5 @@
 package com.sabihon.todo.core.ui.components
 
-import android.provider.Settings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -42,11 +41,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sabihon.todo.core.ui.util.rememberSystemAnimationsEnabled
 import com.sabihon.todo.core.ui.theme.DaymarkLavender
 import com.sabihon.todo.core.ui.theme.DaymarkLavenderDeep
 import com.sabihon.todo.core.ui.theme.DaymarkNavy
@@ -266,19 +265,3 @@ private fun SparkleBadge(
     }
 }
 
-/**
- * Reads the system-wide animator duration scale. Users who pick "Remove
- * animations" in accessibility settings get 0 here, and the badge stays still.
- */
-@Composable
-private fun rememberSystemAnimationsEnabled(): Boolean {
-    val context = LocalContext.current
-    return remember(context) {
-        runCatching {
-            Settings.Global.getFloat(
-                context.contentResolver,
-                Settings.Global.ANIMATOR_DURATION_SCALE
-            )
-        }.getOrDefault(1f) > 0f
-    }
-}

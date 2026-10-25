@@ -18,11 +18,16 @@
         android:theme="@style/Theme.Sabihon"
         tools:targetApi="31">
 
+        <!--
+          The launcher activity opens on the system splash theme; core-splashscreen
+          swaps in Theme.Sabihon (postSplashScreenTheme) as soon as the first frame
+          is ready, so there is exactly one launch screen.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.Sabihon">
+            android:theme="@style/Theme.Sabihon.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

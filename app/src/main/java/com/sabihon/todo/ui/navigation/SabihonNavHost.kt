@@ -67,6 +67,10 @@ fun SabihonNavHost(
                         popUpTo(Route.Onboarding) { inclusive = true }
                     }
                 }
+                // onExploreDemo is intentionally not supplied: the app has no
+                // anonymous/demo destination (Home needs a Firebase user), so the
+                // tertiary action stays hidden rather than pointing at a dead end.
+                // WelcomeScreen only renders it when a callback is passed.
             )
         }
         composable<Route.Login> {

@@ -1,3 +1,19 @@
 <resources>
     <style name="Theme.Sabihon" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!--
+      Android 12+ system splash (and the androidx compat shim below 12).
+
+      Deliberately static: no icon animation timer, no spinner, no second screen
+      imitating it. Android dismisses this when the first Compose frame is ready to
+      draw, which is the only "hold" logic we want.
+
+      The icon is the launcher icon itself, so the splash is the same mark the user
+      just tapped - not a second, slightly different logo.
+    -->
+    <style name="Theme.Sabihon.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/daymark_splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.Sabihon</item>
+    </style>
 </resources>
