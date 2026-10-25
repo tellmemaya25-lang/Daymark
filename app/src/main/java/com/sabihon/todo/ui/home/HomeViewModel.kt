@@ -23,10 +23,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 
 @HiltViewModel
@@ -254,6 +257,7 @@ class HomeViewModel @Inject constructor(
             is HomeAction.DeleteTask -> deleteTask(action.task)
             is HomeAction.UndoDelete -> undoDelete()
             is HomeAction.ClearError -> _uiState.update { it.copy(errorMessage = null) }
+            is HomeAction.ClearHabitLabel -> _uiState.update { it.copy(habitNextLabel = null) }
             is HomeAction.AddSubTask -> addSubTask(action.taskId, action.subTaskTitle)
             is HomeAction.ToggleSubTask -> toggleSubTask(action.taskId, action.subTaskId, action.isDone)
             is HomeAction.SetFilter -> {
@@ -320,9 +324,24 @@ class HomeViewModel @Inject constructor(
                 // refuses to check off with no explanation.
                 is Result.Error ->
                     _uiState.update { it.copy(errorMessage = result.message) }
+                is Result.Success -> {
+                    // Finishing a habit removes it from Today and puts the next copy
+                    // under Upcoming, which looks like nothing happened. Say where it
+                    // went instead of leaving the user to find it.
+                    val next = result.data.nextDueAt
+                    if (next != null) {
+                        _uiState.update { it.copy(habitNextLabel = habitNextLabel(next)) }
+                    }
+                }
                 else -> Unit
             }
         }
+    }
+
+    /** "Next: Tue, Oct 27" in the device's locale and time zone. */
+    private fun habitNextLabel(nextDueAt: Long): String {
+        val formatted = SimpleDateFormat("EEE, MMM d", Locale.getDefault()).format(Date(nextDueAt))
+        return "Next: $formatted"
     }
 
     private fun deleteTask(task: Task) {

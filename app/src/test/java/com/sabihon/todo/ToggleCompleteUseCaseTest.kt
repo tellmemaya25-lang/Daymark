@@ -119,6 +119,37 @@ class ToggleCompleteUseCaseTest {
     }
 
     @Test
+    fun `completing a habit reports where the next occurrence landed`() = runTest {
+        val today = LocalDate.now()
+        emitting(Result.Success(task(id = "habit", repeat = RepeatRule.DAILY)))
+        coEvery { repo.toggleComplete("habit", true) } returns Result.Success(Unit)
+        coEvery { repo.updateStreak(any(), any(), any()) } returns Result.Success(Unit)
+        coEvery { repo.spawnOccurrence(any()) } returns Result.Success("next")
+
+        val result = useCase("habit", true)
+
+        val advance = (result as Result.Success).data
+        assertEquals(1, advance.streak)
+        assertNotNull(advance.nextDueAt)
+        // Tomorrow, not today: the confirmation message is built from this.
+        assertEquals(
+            today.plusDays(1).toEpochDay(),
+            java.time.Instant.ofEpochMilli(advance.nextDueAt!!)
+                .atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay()
+        )
+    }
+
+    @Test
+    fun `a one-off task reports no next occurrence`() = runTest {
+        emitting(Result.Success(task()))
+        coEvery { repo.toggleComplete("1", true) } returns Result.Success(Unit)
+
+        val advance = (useCase("1", true) as Result.Success).data
+
+        org.junit.Assert.assertNull(advance.nextDueAt)
+    }
+
+    @Test
     fun `reopening a habit does not advance the series`() = runTest {
         coEvery { repo.toggleComplete("habit", false) } returns Result.Success(Unit)
         useCase("habit", false)
