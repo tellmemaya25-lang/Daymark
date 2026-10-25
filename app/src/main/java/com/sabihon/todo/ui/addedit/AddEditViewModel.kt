@@ -5,12 +5,14 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.model.Priority
+import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.SubTask
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.repository.CategoryRepository
 import com.sabihon.todo.domain.repository.TaskRepository
 import com.sabihon.todo.domain.usecase.AddTaskUseCase
 import com.sabihon.todo.domain.usecase.DeleteTaskUseCase
+import com.sabihon.todo.domain.usecase.RepeatScheduler
 import com.sabihon.todo.domain.usecase.UpdateTaskUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,6 +52,15 @@ class AddEditViewModel @Inject constructor(
      * echo of our own sub-task writes) must not overwrite what the user is typing.
      */
     private var seededTaskId: String? = null
+
+    /**
+     * The document this form was opened on.
+     *
+     * Saving rebuilds a whole [Task], so anything the form does not edit - streak,
+     * series id, completion state - has to be carried over from here or an edit
+     * would quietly reset it.
+     */
+    private var originalTask: Task? = null
 
     init {
         observeCategories()
@@ -97,8 +108,11 @@ class AddEditViewModel @Inject constructor(
                                     dueTimeMillis = task.dueAt,
                                     reminderEnabled = task.reminderAt != null,
                                     reminderAt = task.reminderAt,
-                                    subTasks = task.subTasks
+                                    subTasks = task.subTasks,
+                                    repeat = task.repeat,
+                                    repeatDays = task.repeatDays
                                 )
+                                originalTask = task
                             }
                         }
                         is Result.Error -> _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
@@ -125,6 +139,32 @@ class AddEditViewModel @Inject constructor(
 
     fun onPrioritySelected(priority: Priority) {
         _uiState.update { it.copy(priority = priority) }
+    }
+
+    /** Repeat choice. Weekly with no days picked falls back to a sensible default. */
+    fun onRepeatSelected(rule: RepeatRule) {
+        _uiState.update { state ->
+            val days = when {
+                rule != RepeatRule.WEEKLY -> emptyList()
+                state.repeatDays.isNotEmpty() -> state.repeatDays
+                // Re-selecting Weekly keeps the previous days; a first switch seeds today.
+                else -> listOf(java.time.LocalDate.now().dayOfWeek.value)
+            }
+            state.copy(repeat = rule, repeatDays = days)
+        }
+    }
+
+    /** Adds or removes one weekday from a weekly schedule. */
+    fun onRepeatDayToggled(day: Int) {
+        _uiState.update { state ->
+            val days = state.repeatDays.toMutableList()
+            if (!days.remove(day)) days.add(day)
+            days.sort()
+            state.copy(
+                repeat = if (days.isEmpty()) RepeatRule.NONE else RepeatRule.WEEKLY,
+                repeatDays = days
+            )
+        }
     }
 
     fun onDueDateSelected(millis: Long?) {
@@ -275,16 +315,31 @@ class AddEditViewModel @Inject constructor(
                     "Saving task: title=${state.title} uid=${currentUser.uid} dueAt=${state.dueAt} cat=${state.categoryId}"
                 )
 
+                val original = originalTask
+                // A repeating task needs a date to count occurrences from; without one
+                // it can never be scheduled, so default to today at 09:00.
+                val dueAt = state.dueAt ?: if (state.repeat.isRecurring) {
+                    RepeatScheduler.dueAtMillis(java.time.LocalDate.now())
+                } else {
+                    null
+                }
+
                 val task = Task(
                     id = state.taskId ?: "",
                     title = state.title.trim(),
                     description = state.description.trim(),
                     categoryId = state.categoryId,
                     priority = state.priority,
-                    dueAt = state.dueAt,
-                    reminderAt = if (state.reminderEnabled) state.reminderAt ?: state.dueAt else null,
+                    dueAt = dueAt,
+                    reminderAt = if (state.reminderEnabled) state.reminderAt ?: dueAt else null,
                     subTasks = state.subTasks,
-                    isCompleted = false
+                    isCompleted = original?.isCompleted ?: false,
+                    completedAt = original?.completedAt,
+                    repeat = state.repeat,
+                    repeatDays = if (state.repeat == RepeatRule.WEEKLY) state.repeatDays else emptyList(),
+                    streak = original?.streak ?: 0,
+                    lastCompletedDay = original?.lastCompletedDay,
+                    seriesId = original?.seriesId
                 )
 
                 // Bounded so a missing Firestore ack can never leave the button spinning.

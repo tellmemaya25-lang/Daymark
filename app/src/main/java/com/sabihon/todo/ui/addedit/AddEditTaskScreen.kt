@@ -1,6 +1,9 @@
 package com.sabihon.todo.ui.addedit
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -54,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -63,6 +68,8 @@ import com.sabihon.todo.core.ui.components.ConfirmDialog
 import com.sabihon.todo.core.ui.components.SubTaskRoundedCheckbox
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.domain.model.Priority
+import com.sabihon.todo.domain.model.RepeatRule
+import com.sabihon.todo.domain.usecase.RepeatScheduler
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -290,6 +297,49 @@ fun AddEditTaskScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+
+            Text("Repeat", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurface)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RepeatRule.entries.forEach { rule ->
+                    RepeatChip(
+                        label = when (rule) {
+                            RepeatRule.NONE -> "None"
+                            RepeatRule.DAILY -> "Daily"
+                            RepeatRule.WEEKLY -> "Weekly"
+                        },
+                        selected = uiState.repeat == rule,
+                        onClick = { viewModel.onRepeatSelected(rule) }
+                    )
+                }
+            }
+            if (uiState.repeat == RepeatRule.WEEKLY) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    RepeatScheduler.weekdayLabels.forEachIndexed { index, label ->
+                        val day = index + 1
+                        DayChip(
+                            label = label,
+                            selected = day in uiState.repeatDays,
+                            onClick = { viewModel.onRepeatDayToggled(day) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(36.dp)
+                        )
+                    }
+                }
+            }
+            Text(
+                text = if (uiState.repeat.isRecurring) {
+                    "${RepeatScheduler.describe(uiState.repeat, uiState.repeatDays)}  ·  " +
+                        "finishing it schedules the next one"
+                } else {
+                    "One-off task"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -528,5 +578,62 @@ private fun safeFormatTime(millis: Long): String {
         fmt.format(Date(millis))
     } catch (e: Exception) {
         "Invalid time"
+    }
+}
+
+/**
+ * Pill used for the None / Daily / Weekly choice.
+ */
+@Composable
+private fun RepeatChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(
+                if (selected) AccentBlue
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/**
+ * One weekday toggle for a weekly repeat. Kept square so the seven fit a phone
+ * width without wrapping.
+ */
+@Composable
+private fun DayChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(
+                if (selected) AccentBlue
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
