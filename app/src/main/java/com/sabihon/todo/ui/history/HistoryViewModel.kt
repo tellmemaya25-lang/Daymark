@@ -49,7 +49,30 @@ class HistoryViewModel @Inject constructor(
         _uiState.update { it.copy(userInitials = initialsOf(displayName)) }
         observeAvatar()
         observeCompletedTasks()
+        observeDeletedTasks()
         observeActivity()
+    }
+
+    /**
+     * Which tasks are deleted *right now*.
+     *
+     * A second listener on purpose, with `includeDeleted = true`: the feed's own query
+     * filters deleted documents out, and the activity log only says what happened, not
+     * what the state is. Restoring is offered off this set, so a row stops offering it
+     * the moment the document comes back - regardless of how the log sorted.
+     */
+    private fun observeDeletedTasks() {
+        viewModelScope.launch {
+            taskRepository.observeTasks(TaskFilter(includeDeleted = true)).collectLatest { result ->
+                if (result is Result.Success) {
+                    val deletedIds = result.data.filter { it.isDeleted }.map { it.id }.toSet()
+                    if (deletedIds != _uiState.value.deletedTaskIds) {
+                        _uiState.update { it.copy(deletedTaskIds = deletedIds) }
+                        _uiState.update { it.copy(feed = buildFeed()) }
+                    }
+                }
+            }
+        }
     }
 
     /** Same shared source as Home and Projects; see [AvatarStore.observe]. */
@@ -81,12 +104,24 @@ class HistoryViewModel @Inject constructor(
         val state = _uiState.value
         if (state.activityLogs.isNotEmpty()) {
             val logs = state.activityLogs.sortedByDescending { it.timestamp }
-            // Newest event per task. A "Deleted" row is only restorable while it is the
-            // last thing that happened to that task - once a RESTORED entry exists, the
-            // older delete rows are history, not a button.
+            // Newest event per task, used only for the tap behaviour of rows whose
+            // document has been purged. Restorability comes from the task documents.
             val latestActionByTask = logs
                 .groupBy { it.taskId }
                 .mapValues { (_, entries) -> entries.first().action }
+
+            // Newest "Deleted" entry per task, tie-broken by document id. Same-minute
+            // entries are common (delete, restore, delete again in one session), and a
+            // bare timestamp comparison left the order down to whatever Firestore
+            // returned - which is how a live delete ended up with no Restore button.
+            val newestDeletedLogId = logs
+                .filter { it.action == ActivityAction.DELETED }
+                .groupBy { it.taskId }
+                .mapValues { (_, entries) ->
+                    entries.sortedWith(
+                        compareByDescending<ActivityLog> { it.timestamp }.thenByDescending { it.id }
+                    ).first().id
+                }
 
             return logs.map { log ->
                 ActivityFeedItem(
@@ -96,9 +131,12 @@ class HistoryViewModel @Inject constructor(
                     taskTitle = log.taskTitle.ifBlank { "Untitled task" },
                     action = log.action,
                     timestamp = log.timestamp,
+                    // The document is the truth: it exists, it is flagged deleted, and
+                    // this is the delete event we would be undoing.
                     restorable = log.action == ActivityAction.DELETED &&
-                        latestActionByTask[log.taskId] == ActivityAction.DELETED &&
-                        log.taskId.isNotBlank(),
+                        log.taskId.isNotBlank() &&
+                        log.taskId in state.deletedTaskIds &&
+                        newestDeletedLogId[log.taskId] == log.id,
                     gone = latestActionByTask[log.taskId] == ActivityAction.PURGED
                 )
             }.sortedByDescending { it.timestamp }
