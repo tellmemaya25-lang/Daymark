@@ -1,7 +1,14 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- daymark brand palette -->
     <color name="ic_launcher_background">#C4D2FF</color>
     <color name="daymark_lavender">#C4D2FF</color>
     <color name="daymark_navy">#243B71</color>
+
+    <!--
+      System launch splash background. Deliberately equal to the Compose canvas this
+      hands off to (BgLight #FFFFFF / BgDark #121214), so the transition from splash
+      to first frame is invisible. Brand lavender would flash and then vanish, and a
+      lavender icon on a lavender field disappears. values-night overrides this.
+    -->
+    <color name="daymark_splash_background">#FFFFFF</color>
 </resources>
