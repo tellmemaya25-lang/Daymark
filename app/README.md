@@ -39,6 +39,21 @@
 - WorkManager + NotificationCompat, java.time with desugaring, kotlinx-datetime
 - JUnit + MockK + Turbine + Compose UI tests, Gradle Kotlin DSL + version catalog
 
+## Troubleshooting
+
+**`Missing default_web_client_id` snackbar, Google button greyed out.**
+`app/google-services.json` has no `"client_type": 3` entry. Enable Google in
+Authentication, download the config again, rebuild. Verify with:
+
+```bash
+grep -A2 '"oauth_client"' app/google-services.json   # expect a client_type 3 block
+./gradlew signingReport                             # SHA-1 for the API-console step
+```
+
+**Google sign-in opens then fails with code 10 / DEVELOPER_ERROR.**
+The signing key's SHA-1 isn't registered for the `com.sabihon.todo` Android app in
+Firebase project settings. `./gradlew signingReport` prints the debug SHA-1 to add.
+
 ## Project Structure
 ```
 com.sabihon.todo
@@ -71,6 +86,18 @@ com.sabihon.todo
 1. Firebase Console → Build → Authentication → Get started.
 2. Sign-in method → Enable Email/Password.
 3. Enable Google → add support email → Save.
+
+> **Re-download `google-services.json` after step 3.** Enabling the Google provider is
+> what makes Firebase create the *Web* OAuth client, and the Google Services Gradle
+> plugin only generates `default_web_client_id` from an entry with
+> `"client_type": 3`. A file downloaded in step 2 therefore works for Firestore and
+> email/password but leaves Google sign-in unconfigured. Replace `app/google-services.json`
+> with a fresh download, then rebuild (`./gradlew clean :app:assembleDebug` is the sure way
+> to re-run `processDebugGoogleServices`).
+>
+> Note `app/cls` is a committed copy used to bootstrap a missing config on a fresh clone.
+> It has an empty `oauth_client` array, so it can never enable Google sign-in - replace it
+> too if you want clones to work out of the box, or leave it and treat it as offline-only.
 
 ### 4. Create Firestore (Production Mode)
 1. Build → Firestore Database → Create database.
