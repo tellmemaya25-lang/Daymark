@@ -41,6 +41,16 @@
 
 ## Troubleshooting
 
+**Run the config check first:** `powershell -File tools\check-firebase-config.ps1`
+It prints the project the file belongs to, every app package inside it, whether the
+package matches `com.sabihon.todo`, and whether a Web OAuth client exists.
+
+**`No matching client found for package name 'com.sabihon.todo'` (build fails).**
+The file has no Android app for that package - almost always downloaded from a
+different Firebase project. Your existing tasks and accounts live in one project
+only; add the Android app *there* with package `com.sabihon.todo`, then download
+the config for that app.
+
 **`Missing default_web_client_id` snackbar, Google button greyed out.**
 `app/google-services.json` has no `"client_type": 3` entry. Enable Google in
 Authentication, download the config again, rebuild. Verify with:
