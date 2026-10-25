@@ -5,7 +5,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -13,17 +12,21 @@ import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,14 +39,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import com.sabihon.todo.core.ui.theme.AccentBlue
-import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
+import androidx.compose.ui.unit.sp
+import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
 import com.sabihon.todo.domain.model.SubTask
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -51,15 +56,31 @@ import kotlin.math.roundToInt
 import kotlin.math.sign
 
 /**
- * Swipeable task row – reveal Edit / Delete behind the card.
+ * Swipeable task row.
  *
- * Motion rules (see docs/swipe-motion-plan.md):
- * - reveal anchors at ±160 dp, commit threshold at 50% of that
- * - release commits on position **or** velocity (800 dp/s), so a quick flick works
- * - dragging past the anchor rubber-bands at 35% instead of hitting a wall
- * - a full swipe (75% of the row) runs the primary action: delete, with undo
+ * ### Shape of the gesture (see docs/swipe-motion-plan.md for the research)
+ *
+ * **Edge means something.** Swiping right reveals **Delete** — it is the end-aligned,
+ * destructive action, so a full swipe right runs it (with the undo snackbar behind).
+ * Swiping left reveals **Edit**, a safe action that cannot be triggered by accident.
+ * The previous version revealed the same two actions on both sides, which is the
+ * ambiguity the platform guidance warns about: the same gesture meant two things.
+ *
+ * ### Shape of the reveal
+ *
+ * The actions are **full-height tinted slabs**, not circles parked in a gutter. A slab
+ * carries an icon over an 11 sp label, so the action names itself instead of relying on
+ * a glyph; it is a 48 dp+ target the moment it is visible; and because it fills the
+ * row's height the reveal reads as the row *peeling* rather than as a second container
+ * appearing underneath a rounded card.
+ *
+ * Motion:
+ * - reveal anchors at one 76 dp slab; open threshold at 50% of that
+ * - release opens on position **or** velocity (800 dp/s), so a flick works
+ * - dragging past the anchor rubber-bands at 35% instead of stopping dead
+ * - a full swipe (132 dp) commits that edge's action outright
  * - one row open per list via [RevealCoordinator]; scrolling folds everything back
- * - the reveal colours up and rings its icons once it will commit, and ticks haptically
+ * - one haptic tick when the 50% threshold is crossed, not per frame
  */
 @Composable
 fun SwipeableTaskRow(
@@ -85,14 +106,13 @@ fun SwipeableTaskRow(
     coordinator: RevealCoordinator? = null
 ) {
     val density = LocalDensity.current
-    // The two actions stack, so the panel only needs one button's width.
-    val revealPx = with(density) { 68.dp.toPx() }
+    // One slab's width - the whole reveal for that edge.
+    val revealPx = with(density) { SlabWidth.toPx() }
     val commitPx = revealPx / 2f                                  // 50% of travel
     val velocityCommit = with(density) { 800.dp.toPx() }          // px/s
     val overscrollMax = with(density) { 28.dp.toPx() }
     val rubberBand = 0.35f
-    // Deep swipe that commits the primary action outright. Expressed against the
-    // reveal distance rather than the row width so it behaves the same on any screen.
+    // Deep swipe that commits that edge's action outright.
     val fullSwipePx = with(density) { 132.dp.toPx() }
     // Furthest the finger can take the card, allowing for the damped overscroll.
     val rawMax = fullSwipePx + overscrollMax / rubberBand
@@ -106,7 +126,10 @@ fun SwipeableTaskRow(
     val haptics = LocalHapticFeedback.current
 
     val settleSpec = spring<Float>(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
-    val closeSpec = spring<Float>(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+    val closeSpec = spring<Float>(
+        dampingRatio = Spring.DampingRatioMediumBouncy,
+        stiffness = Spring.StiffnessMedium
+    )
     val visual = damp(raw.value, revealPx, rubberBand, overscrollMax)
 
     fun close() {
@@ -136,10 +159,8 @@ fun SwipeableTaskRow(
         }
     }
 
-    // 0 → 1 across the reveal distance; drives icon fade/scale.
-    val revealFraction = (abs(visual) / commitPx).coerceIn(0f, 1f)
-    // 0 → 1 between "will commit" and "fully revealed"; drives the ring + colour.
-    val commitFraction = ((abs(visual) - commitPx) / (revealPx - commitPx)).coerceIn(0f, 1f)
+    // 0 → 1 across the reveal distance; fades the slab in.
+    val revealFraction = (abs(visual) / revealPx).coerceIn(0f, 1f)
 
     val cardScale by animateFloatAsState(
         targetValue = if (isDragging) 0.985f else 1f,
@@ -147,59 +168,32 @@ fun SwipeableTaskRow(
         label = "swipeCardScale"
     )
 
-    val isDark = LocalIsDarkTheme.current
-    val swipeBg = if (isDark) Color(0xFF23262F) else Color(0xFFE7EDFB)
-    val ringColor = if (isDark) Color.White.copy(alpha = 0.55f) else AccentBlue.copy(alpha = 0.65f)
+    val surfaces = LocalDaymarkSurfaces.current
+    val shape = RoundedCornerShape(20.dp)
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp, vertical = 5.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .background(swipeBg)
+            .clip(shape)
+            .background(surfaces.card)
     ) {
-        val bgAlignment = when {
-            visual > 10f -> Alignment.CenterStart
-            visual < -10f -> Alignment.CenterEnd
-            else -> Alignment.Center
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(20.dp))
-                .background(swipeBg)
-                .padding(horizontal = 20.dp, vertical = 4.dp),
-            contentAlignment = bgAlignment
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.graphicsLayer {
-                    alpha = 0.1f + 0.9f * revealFraction
-                    val s = 0.78f + 0.22f * revealFraction + 0.06f * commitFraction
-                    scaleX = s
-                    scaleY = s
-                }
+        // --- the slabs, one per edge ---------------------------------------
+        // Right swipe reveals Delete on the START edge - the gesture uncovers what sits
+        // under the card's leading edge. Left swipe reveals Edit on the end edge. One
+        // action per direction, and the destructive one is the one a full swing runs.
+        if (visual > 0f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
             ) {
-                SwipeAction(
-                    icon = Icons.Filled.Edit,
-                    label = "Edit",
-                    tint = AccentBlue,
-                    revealFraction = revealFraction,
-                    commitFraction = commitFraction,
-                    ringColor = ringColor,
-                    onClick = {
-                        close()
-                        onEdit?.invoke()
-                    }
-                )
-                SwipeAction(
+                SwipeActionSlab(
                     icon = Icons.Filled.Delete,
                     label = "Delete",
-                    tint = Color(0xFFE57373),
+                    tint = MaterialTheme.colorScheme.error,
+                    background = surfaces.cardHighlighted,
                     revealFraction = revealFraction,
-                    commitFraction = commitFraction,
-                    ringColor = ringColor,
                     onClick = {
                         close()
                         onDelete?.invoke()
@@ -207,7 +201,27 @@ fun SwipeableTaskRow(
                 )
             }
         }
+        if (visual < 0f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+            ) {
+                SwipeActionSlab(
+                    icon = Icons.Filled.Edit,
+                    label = "Edit",
+                    tint = surfaces.action,
+                    background = surfaces.cardHighlighted,
+                    revealFraction = revealFraction,
+                    onClick = {
+                        close()
+                        onEdit?.invoke()
+                    }
+                )
+            }
+        }
 
+        // --- the card -------------------------------------------------------
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -228,13 +242,14 @@ fun SwipeableTaskRow(
                         scope.launch {
                             val travelled = raw.value
 
-                            // Deep swipe runs the primary action outright.
+                            // Deep swipe runs this edge's action outright - delete to
+                            // the right, edit to the left. Never both.
                             if (abs(travelled) >= fullSwipePx) {
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 isOpen = false
                                 rowId?.let { coordinator?.onClosed(it) }
                                 raw.snapTo(0f)
-                                onDelete?.invoke()
+                                if (travelled > 0f) onDelete?.invoke() else onEdit?.invoke()
                                 return@launch
                             }
 
@@ -294,47 +309,69 @@ fun SwipeableTaskRow(
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Reveal                                                              */
+/* ------------------------------------------------------------------ */
+
+/** Width of a single revealed action. iOS anchors 80 dp; 76 keeps two rows' worth of
+ *  lift on a 360 dp screen while still fitting "Delete" at 11 sp. */
+private val SlabWidth = 76.dp
+
 /**
- * One revealed action. Grows and brightens with the drag, then draws a ring the
- * moment the row will actually commit on release.
+ * One revealed action: a full-height slab with the icon over its name.
+ *
+ * The label is the point. An icon-only circle has to be recognised; a slab that says
+ * "Delete" only has to be read. It is a real target from the moment it is visible -
+ * the row has already been dragged to reveal it, so there is no reason to make the
+ * first tap a no-op.
  */
 @Composable
-private fun SwipeAction(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+private fun SwipeActionSlab(
+    icon: ImageVector,
     label: String,
     tint: Color,
+    background: Color,
     revealFraction: Float,
-    commitFraction: Float,
-    ringColor: Color,
     onClick: () -> Unit
 ) {
-    // Two stacked circles: the ring is always drawn (as in the reference) and
-    // thickens with the commit progress so the threshold is still legible.
-    Box(
+    Column(
         modifier = Modifier
-            .size(38.dp)
-            .clip(CircleShape)
-            .border(
-                width = if (commitFraction > 0f) 2.dp else 1.2.dp,
-                color = if (commitFraction > 0f) {
-                    ringColor.copy(alpha = 0.45f + 0.55f * commitFraction)
-                } else {
-                    ringColor.copy(alpha = 0.35f + 0.3f * revealFraction)
-                },
-                shape = CircleShape
-            )
-            .clickable(
-                enabled = revealFraction > 0.35f,
-                role = Role.Button,
-                onClick = onClick
-            ),
-        contentAlignment = Alignment.Center
+            .width(SlabWidth)
+            .fillMaxHeight()
+            .background(background)
+            .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
+            .padding(horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = tint.copy(alpha = 0.45f + 0.55f * revealFraction),
-            modifier = Modifier.size((16 + 3 * commitFraction).dp)
+        Box(
+            modifier = Modifier.graphicsLayer {
+                // Fades and settles rather than growing from nothing: the slab is
+                // already the right size by the time the label is legible.
+                alpha = 0.35f + 0.65f * revealFraction
+                scaleX = 0.9f + 0.1f * revealFraction
+                scaleY = scaleX
+            },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                // The whole row already carries a semantic click action for the task;
+                // the slab's label below names this action, so the glyph is decorative.
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
+            color = tint,
+            maxLines = 1
         )
     }
 }
