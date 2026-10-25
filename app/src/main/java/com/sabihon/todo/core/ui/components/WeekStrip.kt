@@ -29,9 +29,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
-import com.sabihon.todo.core.ui.theme.DaymarkDarkCardFocus
-import com.sabihon.todo.core.ui.theme.DaymarkNavy
+import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
 import com.sabihon.todo.ui.home.WeekDay
 import java.time.LocalDate
 
@@ -48,8 +46,11 @@ fun WeekStrip(
 ) {
     if (days.isEmpty()) return
 
-    val isDark = LocalIsDarkTheme.current
-    val selectedSurface = if (isDark) Color(0xFF232B45) else Color(0xFFE8EDFF)
+    // Selected pill + its label colour come from the animated token set: an
+    // `if (isDark)` pair here snapped to its other value mid-fade.
+    val surfaces = LocalDaymarkSurfaces.current
+    val selectedSurface = surfaces.accentSurface
+    val onSelectedSurface = surfaces.onAccentSurface
 
     Row(
         modifier = modifier
@@ -63,8 +64,8 @@ fun WeekStrip(
             DayCell(
                 day = day,
                 isSelected = isSelected,
-                isDark = isDark,
                 selectedSurface = selectedSurface,
+                onSelectedSurface = onSelectedSurface,
                 onClick = { onSelect(day.date) }
             )
         }
@@ -75,8 +76,8 @@ fun WeekStrip(
 private fun DayCell(
     day: WeekDay,
     isSelected: Boolean,
-    isDark: Boolean,
     selectedSurface: Color,
+    onSelectedSurface: Color,
     onClick: () -> Unit
 ) {
     val background by animateColorAsState(
@@ -85,21 +86,15 @@ private fun DayCell(
         label = "dayBackground"
     )
     val labelColor by animateColorAsState(
-        targetValue = when {
-            isSelected && isDark -> Color.White
-            isSelected -> DaymarkNavy
-            else -> MaterialTheme.colorScheme.onSurfaceVariant
-        },
+        targetValue = if (isSelected) onSelectedSurface
+        else MaterialTheme.colorScheme.onSurfaceVariant,
         animationSpec = tween(200),
         label = "dayLabel"
     )
     val numberColor by animateColorAsState(
-        targetValue = when {
-            isSelected && isDark -> Color.White
-            isSelected -> DaymarkNavy
-            // Unselected days stay muted in both themes (matches the reference)
-            else -> MaterialTheme.colorScheme.onSurfaceVariant
-        },
+        targetValue = if (isSelected) onSelectedSurface
+        // Unselected days stay muted in both themes (matches the reference)
+        else MaterialTheme.colorScheme.onSurfaceVariant,
         animationSpec = tween(200),
         label = "dayNumber"
     )
@@ -148,7 +143,7 @@ private fun DayCell(
                 .clip(CircleShape)
                 .background(
                     if (day.isToday) {
-                        if (isSelected && !isDark) DaymarkNavy else Color(0xFF8FA6F0)
+                        if (isSelected) onSelectedSurface else Color(0xFF8FA6F0)
                     } else {
                         Color.Transparent
                     }

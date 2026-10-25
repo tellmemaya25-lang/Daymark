@@ -66,7 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sabihon.todo.core.ui.components.DaymarkMark
 import com.sabihon.todo.core.ui.components.DaymarkWordmark
-import com.sabihon.todo.core.ui.theme.DaymarkEyebrow
+import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
 import com.sabihon.todo.core.ui.theme.DaymarkLavender
 import com.sabihon.todo.core.ui.theme.DaymarkNavy
 import com.sabihon.todo.core.ui.util.rememberSystemAnimationsEnabled
@@ -164,7 +164,7 @@ fun OnboardingScreen(
                 fontSize = 11.sp,
                 letterSpacing = 1.6.sp
             ),
-            color = if (isDark) DaymarkEyebrow else DaymarkNavy.copy(alpha = 0.75f),
+            color = LocalDaymarkSurfaces.current.eyebrow,
             modifier = Modifier.entrance(eyebrow)
         )
 
@@ -190,7 +190,7 @@ fun OnboardingScreen(
                     lineHeight = 43.sp,
                     letterSpacing = (-1).sp
                 ),
-                color = if (isDark) DaymarkLavender else DaymarkNavy
+                color = LocalDaymarkSurfaces.current.action
             )
         }
 

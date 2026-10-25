@@ -10,6 +10,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
@@ -26,6 +27,7 @@ private val LightColorScheme = lightColorScheme(
     onPrimary = Color.White,
     primaryContainer = SoftBlue,
     onPrimaryContainer = TextPrimaryLight,
+    inversePrimary = Color(0xFFAFC0F5),
     secondary = DeepGreen,
     onSecondary = Color.White,
     secondaryContainer = SoftMint,
@@ -40,8 +42,18 @@ private val LightColorScheme = lightColorScheme(
     onSurface = TextPrimaryLight,
     surfaceVariant = SurfaceVariantLight,
     onSurfaceVariant = TextSecondaryLight,
+    surfaceTint = AccentBlue,
+    inverseSurface = Color(0xFF2A2B33),
+    inverseOnSurface = Color(0xFFF5F5F5),
+    // Neutral surface scale. The M3 baseline values are purple-tinted, which reads
+    // off-brand next to the navy/lavender palette, so all five steps are set here.
+    surfaceBright = Color(0xFFFFFFFF),
+    surfaceDim = Color(0xFFE8E9ED),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFFAFAFC),
     surfaceContainer = Color(0xFFF0F1F5),
     surfaceContainerHigh = Color(0xFFE8E9ED),
+    surfaceContainerHighest = Color(0xFFE2E4E9),
     outline = Color(0xFFD1D5DB),
     outlineVariant = DividerLight,
     scrim = Scrim,
@@ -56,6 +68,7 @@ private val DarkColorScheme = darkColorScheme(
     onPrimary = Color.White,
     primaryContainer = SoftBlueDark,
     onPrimaryContainer = Color(0xFFD6E4FF),
+    inversePrimary = DaymarkNavy,
     secondary = SoftMint,
     onSecondary = Color(0xFF0A1F16),
     secondaryContainer = DeepGreenDark,
@@ -70,6 +83,13 @@ private val DarkColorScheme = darkColorScheme(
     onSurface = TextPrimaryDark,
     surfaceVariant = SurfaceVariantDark,
     onSurfaceVariant = TextSecondaryDark,
+    surfaceTint = AccentBlue,
+    inverseSurface = Color(0xFFF5F5F5),
+    inverseOnSurface = Color(0xFF1E1F25),
+    surfaceBright = Color(0xFF35363F),
+    surfaceDim = BgDark,
+    surfaceContainerLowest = Color(0xFF0E0E10),
+    surfaceContainerLow = Color(0xFF17181C),
     surfaceContainer = Color(0xFF1E1F25),
     surfaceContainerHigh = Color(0xFF2A2B33),
     surfaceContainerHighest = Color(0xFF35363F),
@@ -91,6 +111,62 @@ private val DarkColorScheme = darkColorScheme(
  * black selected pill. Read this local instead.
  */
 val LocalIsDarkTheme = staticCompositionLocalOf { false }
+
+/**
+ * Brand surfaces that the Material scheme has no role for.
+ *
+ * These used to be `if (isDark) DaymarkDarkCard else Color(0xFFF5F6FA)` at the call
+ * site. That was the visible defect in the light/dark switch: [LocalIsDarkTheme] flips
+ * at the 50 % mark, so every hard-coded card, hairline and eyebrow *snapped* to its
+ * other value halfway through an otherwise smooth 280 ms fade — a near-black card
+ * landing on a half-faded grey canvas. Supplying the same pair of values already
+ * interpolated by the theme removes the jump and removes the branching from screens.
+ */
+@Immutable
+data class DaymarkSurfaces(
+    /** Task rows, grouped cards' neighbours and sheet containers. */
+    val card: Color,
+    /** Grouped settings/profile cards — a touch softer than a task row in light. */
+    val groupedCard: Color,
+    /** Highlighted / freshly-completed task row. */
+    val cardHighlighted: Color,
+    /** 1 dp edge. Dark cards are only ~2 values away from #121214 without it. */
+    val cardBorder: Color,
+    /** Selected day pill in the week strip. */
+    val accentSurface: Color,
+    val onAccentSurface: Color,
+    /** Small all-caps section labels. */
+    val eyebrow: Color,
+    /** Filled primary action inside a sheet (Save / Change password). */
+    val action: Color,
+    val onAction: Color
+)
+
+private val LightDaymarkSurfaces = DaymarkSurfaces(
+    card = Color.White,
+    groupedCard = SurfaceVariantLight,
+    cardHighlighted = Color(0xFFEDF2FF),
+    cardBorder = DividerLight,
+    accentSurface = Color(0xFFE8EDFF),
+    onAccentSurface = DaymarkNavy,
+    eyebrow = DaymarkNavy.copy(alpha = 0.7f),
+    action = DaymarkNavy,
+    onAction = Color.White
+)
+
+private val DarkDaymarkSurfaces = DaymarkSurfaces(
+    card = DaymarkDarkCard,
+    groupedCard = DaymarkDarkCard,
+    cardHighlighted = DaymarkDarkCardFocus,
+    cardBorder = DaymarkDarkHairline,
+    accentSurface = DaymarkDarkCardFocus,
+    onAccentSurface = Color.White,
+    eyebrow = DaymarkEyebrow,
+    action = DaymarkLavender,
+    onAction = DaymarkNavy
+)
+
+val LocalDaymarkSurfaces = staticCompositionLocalOf { LightDaymarkSurfaces }
 
 /**
  * How long the light/dark switch takes.
@@ -115,13 +191,38 @@ private fun blend(start: Color, stop: Color, fraction: Float): Color = Color(
     alpha = start.alpha + (stop.alpha - start.alpha) * fraction
 )
 
+private fun blendSurfaces(
+    start: DaymarkSurfaces,
+    stop: DaymarkSurfaces,
+    fraction: Float
+): DaymarkSurfaces {
+    if (fraction <= 0f) return start
+    if (fraction >= 1f) return stop
+    return DaymarkSurfaces(
+        card = blend(start.card, stop.card, fraction),
+        groupedCard = blend(start.groupedCard, stop.groupedCard, fraction),
+        cardHighlighted = blend(start.cardHighlighted, stop.cardHighlighted, fraction),
+        cardBorder = blend(start.cardBorder, stop.cardBorder, fraction),
+        accentSurface = blend(start.accentSurface, stop.accentSurface, fraction),
+        onAccentSurface = blend(start.onAccentSurface, stop.onAccentSurface, fraction),
+        eyebrow = blend(start.eyebrow, stop.eyebrow, fraction),
+        action = blend(start.action, stop.action, fraction),
+        onAction = blend(start.onAction, stop.onAction, fraction)
+    )
+}
+
 /**
  * Blends the two schemes for the duration of the switch.
  *
- * Only the roles the app actually reads are interpolated - everything else would be
- * recomputed 60 times a second for no visible gain. The order matters: the start is
- * always the light scheme, so going dark is progress 0 -> 1 and coming back is 1 -> 0,
- * with no state to keep.
+ * Every role is interpolated, not just the handful the app reads by name: Material
+ * components resolve their own defaults (`Card` reads `surfaceContainerHighest`, a
+ * bottom sheet reads `surfaceContainerLow`, an outlined button reads `outline`), so a
+ * partial list is exactly what produces the "most of the screen fades, a few parts
+ * jump" effect at the end of the transition. The `*Fixed` roles are left to the
+ * defaults on purpose - by definition they are the same in both schemes.
+ *
+ * The order matters: the start is always the light scheme, so going dark is progress
+ * 0 -> 1 and coming back is 1 -> 0, with no state to keep.
  */
 private fun lerpScheme(start: ColorScheme, stop: ColorScheme, fraction: Float): ColorScheme {
     if (fraction <= 0f) return start
@@ -131,22 +232,38 @@ private fun lerpScheme(start: ColorScheme, stop: ColorScheme, fraction: Float): 
         onPrimary = blend(start.onPrimary, stop.onPrimary, fraction),
         primaryContainer = blend(start.primaryContainer, stop.primaryContainer, fraction),
         onPrimaryContainer = blend(start.onPrimaryContainer, stop.onPrimaryContainer, fraction),
+        inversePrimary = blend(start.inversePrimary, stop.inversePrimary, fraction),
+        secondary = blend(start.secondary, stop.secondary, fraction),
+        onSecondary = blend(start.onSecondary, stop.onSecondary, fraction),
         secondaryContainer = blend(start.secondaryContainer, stop.secondaryContainer, fraction),
         onSecondaryContainer = blend(start.onSecondaryContainer, stop.onSecondaryContainer, fraction),
+        tertiary = blend(start.tertiary, stop.tertiary, fraction),
+        onTertiary = blend(start.onTertiary, stop.onTertiary, fraction),
+        tertiaryContainer = blend(start.tertiaryContainer, stop.tertiaryContainer, fraction),
+        onTertiaryContainer = blend(start.onTertiaryContainer, stop.onTertiaryContainer, fraction),
         background = blend(start.background, stop.background, fraction),
         onBackground = blend(start.onBackground, stop.onBackground, fraction),
         surface = blend(start.surface, stop.surface, fraction),
         onSurface = blend(start.onSurface, stop.onSurface, fraction),
         surfaceVariant = blend(start.surfaceVariant, stop.surfaceVariant, fraction),
         onSurfaceVariant = blend(start.onSurfaceVariant, stop.onSurfaceVariant, fraction),
-        surfaceContainer = blend(start.surfaceContainer, stop.surfaceContainer, fraction),
-        surfaceContainerHigh = blend(start.surfaceContainerHigh, stop.surfaceContainerHigh, fraction),
-        surfaceContainerHighest =
-            blend(start.surfaceContainerHighest, stop.surfaceContainerHighest, fraction),
+        surfaceTint = blend(start.surfaceTint, stop.surfaceTint, fraction),
+        inverseSurface = blend(start.inverseSurface, stop.inverseSurface, fraction),
+        inverseOnSurface = blend(start.inverseOnSurface, stop.inverseOnSurface, fraction),
+        error = blend(start.error, stop.error, fraction),
+        onError = blend(start.onError, stop.onError, fraction),
+        errorContainer = blend(start.errorContainer, stop.errorContainer, fraction),
+        onErrorContainer = blend(start.onErrorContainer, stop.onErrorContainer, fraction),
         outline = blend(start.outline, stop.outline, fraction),
         outlineVariant = blend(start.outlineVariant, stop.outlineVariant, fraction),
-        error = blend(start.error, stop.error, fraction),
-        onError = blend(start.onError, stop.onError, fraction)
+        scrim = blend(start.scrim, stop.scrim, fraction),
+        surfaceBright = blend(start.surfaceBright, stop.surfaceBright, fraction),
+        surfaceDim = blend(start.surfaceDim, stop.surfaceDim, fraction),
+        surfaceContainerLowest = blend(start.surfaceContainerLowest, stop.surfaceContainerLowest, fraction),
+        surfaceContainerLow = blend(start.surfaceContainerLow, stop.surfaceContainerLow, fraction),
+        surfaceContainer = blend(start.surfaceContainer, stop.surfaceContainer, fraction),
+        surfaceContainerHigh = blend(start.surfaceContainerHigh, stop.surfaceContainerHigh, fraction),
+        surfaceContainerHighest = blend(start.surfaceContainerHighest, stop.surfaceContainerHighest, fraction)
     )
 }
 
@@ -158,6 +275,10 @@ private fun lerpScheme(start: ColorScheme, stop: ColorScheme, fraction: Float): 
  * graph alive mid-transition, and Material's guidance warns against leaving
  * half-transparent layers of old and new content overlapping. Animating the scheme
  * means every surface, border and label moves together and the layout never changes.
+ *
+ * Both locals flip together, so a component that asks "am I dark?" and one that asks
+ * "give me a card colour" never disagree mid-switch. Discrete values (the dark flag)
+ * change at the midpoint, where the canvas is closest to them.
  *
  * The first frame is already correct - `animateFloatAsState` starts at its target, so
  * launching the app in dark mode does not fade in from light.
@@ -178,9 +299,12 @@ fun SabihonTheme(
     )
 
     val colorScheme = lerpScheme(LightColorScheme, DarkColorScheme, progress)
-    // Discrete choices (hand-picked dark cards, pill colours) flip at the midpoint,
-    // where the background is closest to them, instead of at the start of the fade.
-    CompositionLocalProvider(LocalIsDarkTheme provides (progress >= 0.5f)) {
+    val surfaces = blendSurfaces(LightDaymarkSurfaces, DarkDaymarkSurfaces, progress)
+
+    CompositionLocalProvider(
+        LocalIsDarkTheme provides (progress >= 0.5f),
+        LocalDaymarkSurfaces provides surfaces
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = SabihonTypography,

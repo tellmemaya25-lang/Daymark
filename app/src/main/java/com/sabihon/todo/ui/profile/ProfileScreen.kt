@@ -5,29 +5,26 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,6 +37,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SheetState
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -65,14 +63,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
+import com.sabihon.todo.core.ui.components.GroupedCard
+import com.sabihon.todo.core.ui.components.GroupedDivider
+import com.sabihon.todo.core.ui.components.GroupedRow
+import com.sabihon.todo.core.ui.components.SectionLabel
 import com.sabihon.todo.core.ui.components.ConfirmDialog
 import com.sabihon.todo.core.ui.theme.AccentBlue
-import com.sabihon.todo.core.ui.theme.DaymarkDarkCard
-import com.sabihon.todo.core.ui.theme.DaymarkDarkHairline
-import com.sabihon.todo.core.ui.theme.DaymarkEyebrow
-import com.sabihon.todo.core.ui.theme.DaymarkLavender
-import com.sabihon.todo.core.ui.theme.DaymarkNavy
-import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
+import com.sabihon.todo.core.ui.theme.DaymarkSheetShape
+import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
 
 /**
  * Profile, laid out as an identity block plus grouped settings rows.
@@ -84,10 +82,12 @@ import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
  *
  * What changed and why:
  *  - identity first: photo, name and email read as one block, no card
- *  - name editing moved into a sheet, which removes the standing primary button and
- *    means the saved name is never half-edited on screen
- *  - email is a plain row with no field outline, so it stops inviting typing
- *  - grouped cards carry a 1 dp hairline in dark; without it they have no edge at all
+ *  - name and password edits both happen in the same bottom sheet, which removes the
+ *    standing primary button and means the saved values are never half-edited on screen
+ *  - email is a plain row with no chevron, so it stops inviting typing
+ *  - rows, dividers and labels come from the shared grouped-list components, and every
+ *    colour comes from the animated token set - so nothing on this screen jumps when
+ *    the theme changes
  *  - destructive actions are separated and demoted below the account rows
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -99,7 +99,6 @@ fun ProfileScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val isDark = LocalIsDarkTheme.current
     val context = LocalContext.current
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -192,32 +191,32 @@ fun ProfileScreen(
                 onPickPhoto = pickPhoto
             )
 
-            SectionLabel("ACCOUNT", isDark)
-            GroupedCard(isDark) {
-                ProfileRow(
+            SectionLabel("ACCOUNT")
+            GroupedCard {
+                GroupedRow(
                     label = "Display name",
                     value = uiState.displayName.ifBlank { "Not set" },
                     onClick = viewModel::openNameEditor
                 )
-                RowDivider(isDark)
-                ProfileRow(
+                GroupedDivider()
+                GroupedRow(
                     label = "Email",
                     value = uiState.email.ifBlank { "—" },
                     // No chevron: there is nothing to open, and the arrow is what made
                     // people try to edit it.
                     onClick = null
                 )
-                RowDivider(isDark)
-                ProfileRow(
+                GroupedDivider()
+                GroupedRow(
                     label = "Password",
                     value = "••••••••",
-                    onClick = { viewModel.setShowChangePassword(true) }
+                    onClick = viewModel::openPasswordSheet
                 )
             }
 
             Spacer(Modifier.height(24.dp))
 
-            SectionLabel("ACCOUNT ACTIONS", isDark)
+            SectionLabel("ACCOUNT ACTIONS")
             OutlinedButton(
                 onClick = { viewModel.signOut(onSignOut) },
                 modifier = Modifier
@@ -254,18 +253,13 @@ fun ProfileScreen(
     }
 
     if (uiState.showNameEditor) {
-        ModalBottomSheet(
-            onDismissRequest = viewModel::cancelNameEditor,
-            sheetState = rememberModalBottomSheetState(),
-            containerColor = if (isDark) DaymarkDarkCard else MaterialTheme.colorScheme.surface
-        ) {
+        DaymarkSheet(onDismiss = viewModel::cancelNameEditor) {
             NameEditorSheet(
                 draft = uiState.nameDraft,
                 isSaving = uiState.isLoading,
                 onDraftChange = viewModel::onNameDraftChange,
                 onSave = viewModel::saveNameDraft,
-                onCancel = viewModel::cancelNameEditor,
-                isDark = isDark
+                onCancel = viewModel::cancelNameEditor
             )
         }
     }
@@ -283,69 +277,21 @@ fun ProfileScreen(
         )
     }
 
-    if (uiState.showChangePasswordDialog) {
-        AlertDialog(
-            onDismissRequest = { viewModel.setShowChangePassword(false) },
-            title = {
-                Text(
-                    "Change password",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            },
-            shape = RoundedCornerShape(24.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            textContentColor = MaterialTheme.colorScheme.onSurface,
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    PasswordField(
-                        value = uiState.currentPassword,
-                        onValueChange = viewModel::onCurrentPasswordChange,
-                        label = "Current password"
-                    )
-                    PasswordField(
-                        value = uiState.newPassword,
-                        onValueChange = viewModel::onNewPasswordChange,
-                        label = "New password"
-                    )
-                    PasswordField(
-                        value = uiState.confirmNewPassword,
-                        onValueChange = viewModel::onConfirmNewPasswordChange,
-                        label = "Confirm new password"
-                    )
-                    uiState.passwordError?.let {
-                        Text(
-                            it,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { viewModel.changePassword() },
-                    enabled = !uiState.isLoading,
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = AccentBlue,
-                        contentColor = Color.White
-                    )
-                ) {
-                    if (uiState.isLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White)
-                    } else {
-                        Text("Change", fontWeight = FontWeight.Bold)
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.setShowChangePassword(false) }) {
-                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        )
+    if (uiState.showPasswordSheet) {
+        DaymarkSheet(onDismiss = { viewModel.setShowPasswordSheet(false) }) {
+            PasswordSheet(
+                currentPassword = uiState.currentPassword,
+                newPassword = uiState.newPassword,
+                confirmNewPassword = uiState.confirmNewPassword,
+                passwordError = uiState.passwordError,
+                isSaving = uiState.isLoading,
+                onCurrentPasswordChange = viewModel::onCurrentPasswordChange,
+                onNewPasswordChange = viewModel::onNewPasswordChange,
+                onConfirmNewPasswordChange = viewModel::onConfirmNewPasswordChange,
+                onSubmit = { viewModel.changePassword() },
+                onCancel = { viewModel.setShowPasswordSheet(false) }
+            )
+        }
     }
 }
 
@@ -449,112 +395,47 @@ private fun ProfileHero(
 }
 
 /* ------------------------------------------------------------------ */
-/* Grouped rows                                                        */
+/* Sheets                                                              */
 /* ------------------------------------------------------------------ */
-
-@Composable
-private fun SectionLabel(text: String, isDark: Boolean) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall.copy(
-            fontWeight = FontWeight.Bold,
-            fontSize = 11.sp,
-            letterSpacing = 1.4.sp
-        ),
-        color = if (isDark) DaymarkEyebrow else DaymarkNavy.copy(alpha = 0.65f),
-        modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 10.dp)
-    )
-}
 
 /**
- * Card for related rows.
+ * The one sheet shell used by Profile.
  *
- * In dark mode it also gets a hairline: #1A1C22 on a #121214 canvas is a difference of
- * about two values, which the eye does not resolve as an edge.
+ * Shape and container colour are set once here, which is how both sheets ended up with
+ * the same 20 dp top corners instead of inheriting Material's 28 dp default.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GroupedCard(
-    isDark: Boolean,
-    content: @Composable () -> Unit
+private fun DaymarkSheet(
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(if (isDark) DaymarkDarkCard else Color(0xFFF5F6FA))
-            .then(
-                if (isDark) {
-                    Modifier.border(1.dp, DaymarkDarkHairline, RoundedCornerShape(18.dp))
-                } else {
-                    Modifier
-                }
-            )
-    ) {
-        content()
-    }
-}
-
-/** One setting: label on the left, current value plus chevron on the right. */
-@Composable
-private fun ProfileRow(
-    label: String,
-    value: String,
-    onClick: (() -> Unit)?
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .heightIn(min = 56.dp)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium
-            ),
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 12.dp)
-        )
-        if (onClick != null) {
-            Spacer(Modifier.width(4.dp))
-            Icon(
-                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                modifier = Modifier.size(18.dp)
-            )
-        }
-    }
-}
-
-/** Inset divider, so the row's left edge stays clean. */
-@Composable
-private fun RowDivider(isDark: Boolean) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp)
-            .height(1.dp)
-            .background(
-                if (isDark) DaymarkDarkHairline else MaterialTheme.colorScheme.outlineVariant
-            )
+    val sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = DaymarkSheetShape,
+        containerColor = LocalDaymarkSurfaces.current.card,
+        tonalElevation = 0.dp,
+        content = content
     )
 }
 
-/* ------------------------------------------------------------------ */
-/* Sheets and dialogs                                                  */
-/* ------------------------------------------------------------------ */
+/** Title + one line of supporting text, shared by both sheets. */
+@Composable
+private fun SheetHeading(title: String, supporting: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Spacer(Modifier.height(6.dp))
+    Text(
+        supporting,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
 
 @Composable
 private fun NameEditorSheet(
@@ -562,24 +443,17 @@ private fun NameEditorSheet(
     isSaving: Boolean,
     onDraftChange: (String) -> Unit,
     onSave: () -> Unit,
-    onCancel: () -> Unit,
-    isDark: Boolean
+    onCancel: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .imePadding()
             .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
     ) {
-        Text(
-            "Display name",
-            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "This is the name shown on your Home and Activity headers.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+        SheetHeading(
+            title = "Display name",
+            supporting = "This is the name shown on your Home and Activity headers."
         )
         Spacer(Modifier.height(20.dp))
 
@@ -602,37 +476,141 @@ private fun NameEditorSheet(
 
         Spacer(Modifier.height(20.dp))
 
-        Button(
-            onClick = onSave,
-            // Saving a blank name would leave every header falling back to initials.
+        SheetPrimaryAction(
+            text = "Save",
             enabled = draft.isNotBlank() && !isSaving,
+            isLoading = isSaving,
+            onClick = onSave
+        )
+
+        SheetCancelAction(onCancel)
+    }
+}
+
+@Composable
+private fun PasswordSheet(
+    currentPassword: String,
+    newPassword: String,
+    confirmNewPassword: String,
+    passwordError: String?,
+    isSaving: Boolean,
+    onCurrentPasswordChange: (String) -> Unit,
+    onNewPasswordChange: (String) -> Unit,
+    onConfirmNewPasswordChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val surfaces = LocalDaymarkSurfaces.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .imePadding()
+            .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
+    ) {
+        SheetHeading(
+            title = "Change password",
+            supporting = "Use at least 6 characters. You stay signed in on this device."
+        )
+        Spacer(Modifier.height(20.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            PasswordField(
+                value = currentPassword,
+                onValueChange = onCurrentPasswordChange,
+                label = "Current password"
+            )
+            PasswordField(
+                value = newPassword,
+                onValueChange = onNewPasswordChange,
+                label = "New password"
+            )
+            PasswordField(
+                value = confirmNewPassword,
+                onValueChange = onConfirmNewPasswordChange,
+                label = "Confirm new password"
+            )
+            passwordError?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // The button stays clickable with empty fields - the ViewModel owns the
+        // validation messages ("Current password required", length, mismatch) and a
+        // disabled button would hide the reason nothing happened.
+        Button(
+            onClick = onSubmit,
+            enabled = !isSaving,
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 52.dp),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (isDark) DaymarkLavender else DaymarkNavy,
-                contentColor = if (isDark) DaymarkNavy else Color.White
+                containerColor = surfaces.action,
+                contentColor = surfaces.onAction
             )
         ) {
             if (isSaving) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(18.dp),
-                    color = if (isDark) DaymarkNavy else Color.White
+                    color = surfaces.onAction
                 )
             } else {
-                Text("Save", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("Change password", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         }
 
-        TextButton(
-            onClick = onCancel,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp)
-        ) {
-            Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SheetCancelAction(onCancel)
+    }
+}
+
+/** Filled action at the bottom of a sheet. */
+@Composable
+private fun SheetPrimaryAction(
+    text: String,
+    enabled: Boolean,
+    isLoading: Boolean,
+    onClick: () -> Unit
+) {
+    val surfaces = LocalDaymarkSurfaces.current
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = surfaces.action,
+            contentColor = surfaces.onAction
+        )
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                color = surfaces.onAction
+            )
+        } else {
+            Text(text, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
+    }
+}
+
+@Composable
+private fun SheetCancelAction(onCancel: () -> Unit) {
+    TextButton(
+        onClick = onCancel,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+    ) {
+        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -653,8 +631,8 @@ private fun PasswordField(
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = AccentBlue,
             unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-            focusedContainerColor = MaterialTheme.colorScheme.surface,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent
         )
     )
 }

@@ -43,7 +43,8 @@ data class ProfileUiState(
     val error: String? = null,
     val successMessage: String? = null,
     val showDeleteConfirm: Boolean = false,
-    val showChangePasswordDialog: Boolean = false,
+    /** Password sheet - same bottom-sheet format as the name editor. */
+    val showPasswordSheet: Boolean = false,
     /** Name editor sheet. Edits a draft so cancelling leaves the saved name alone. */
     val showNameEditor: Boolean = false,
     val nameDraft: String = "",
@@ -423,8 +424,10 @@ class ProfileViewModel @Inject constructor(
     }
 
     // Change password
-    fun setShowChangePassword(show: Boolean) {
-        _uiState.update { it.copy(showChangePasswordDialog = show, passwordError = null, currentPassword = "", newPassword = "", confirmNewPassword = "") }
+    fun openPasswordSheet() = setShowPasswordSheet(true)
+
+    fun setShowPasswordSheet(show: Boolean) {
+        _uiState.update { it.copy(showPasswordSheet = show, passwordError = null, currentPassword = "", newPassword = "", confirmNewPassword = "") }
     }
 
     fun onCurrentPasswordChange(pwd: String) {
@@ -470,7 +473,7 @@ class ProfileViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        showChangePasswordDialog = false,
+                        showPasswordSheet = false,
                         successMessage = "Password changed successfully",
                         currentPassword = "",
                         newPassword = "",
