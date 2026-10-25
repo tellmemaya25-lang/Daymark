@@ -123,6 +123,14 @@ fun HomeScreen(
         }
     }
 
+    LaunchedEffect(uiState.habitNextLabel) {
+        val label = uiState.habitNextLabel
+        if (label != null) {
+            snackbarHostState.showSnackbar(message = label, duration = SnackbarDuration.Short)
+            viewModel.onAction(HomeAction.ClearHabitLabel)
+        }
+    }
+
     LaunchedEffect(uiState.showUndo) {
         if (uiState.showUndo) {
             val result = snackbarHostState.showSnackbar(

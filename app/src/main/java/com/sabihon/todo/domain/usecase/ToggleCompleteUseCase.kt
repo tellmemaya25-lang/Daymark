@@ -9,6 +9,17 @@ import java.time.LocalDate
 import javax.inject.Inject
 
 /**
+ * What completing a task did to its series.
+ *
+ * Carried back to the caller so the UI can say where the next occurrence landed;
+ * null [nextDueAt] means the task does not repeat (or was reopened).
+ */
+data class HabitAdvance(
+    val nextDueAt: Long? = null,
+    val streak: Int = 0
+)
+
+/**
  * Toggle task completion.
  *
  * Guards:
@@ -18,7 +29,7 @@ import javax.inject.Inject
 class ToggleCompleteUseCase @Inject constructor(
     private val repository: TaskRepository
 ) {
-    suspend operator fun invoke(taskId: String, isCompleted: Boolean): Result<Unit> {
+    suspend operator fun invoke(taskId: String, isCompleted: Boolean): Result<HabitAdvance> {
         var task: Task? = null
 
         if (isCompleted) {
@@ -39,10 +50,8 @@ class ToggleCompleteUseCase @Inject constructor(
         val result = repository.toggleComplete(taskId, isCompleted)
         if (result is Result.Error) return result
 
-        if (isCompleted && task != null) {
-            advanceSeries(task)
-        }
-        return Result.Success(Unit)
+        val advance = if (isCompleted && task != null) advanceSeries(task) else HabitAdvance()
+        return Result.Success(advance)
     }
 
     /**
@@ -69,8 +78,8 @@ class ToggleCompleteUseCase @Inject constructor(
      * Every step is best-effort: the task is already completed at this point and a
      * failure to schedule the next copy must not report the completion as failed.
      */
-    private suspend fun advanceSeries(task: Task) {
-        if (!task.repeat.isRecurring) return
+    private suspend fun advanceSeries(task: Task): HabitAdvance {
+        if (!task.repeat.isRecurring) return HabitAdvance()
         try {
             val today = LocalDate.now()
             val lastCompleted = task.lastCompletedDay?.let { LocalDate.ofEpochDay(it) }
@@ -89,7 +98,7 @@ class ToggleCompleteUseCase @Inject constructor(
                 repeatDays = task.repeatDays,
                 dueDay = dueDay,
                 today = today
-            ) ?: return
+            ) ?: return HabitAdvance(streak = streak)
 
             val timeOfDay = RepeatScheduler.timeOfDayOf(task.dueAt)
             val nextDueAt = RepeatScheduler.dueAtMillis(nextDay, timeOfDay)
@@ -114,8 +123,10 @@ class ToggleCompleteUseCase @Inject constructor(
                     seriesId = seriesId
                 )
             )
+            return HabitAdvance(nextDueAt = nextDueAt, streak = streak)
         } catch (_: Exception) {
             // A habit that fails to reschedule is still a completed task.
+            return HabitAdvance()
         }
     }
 

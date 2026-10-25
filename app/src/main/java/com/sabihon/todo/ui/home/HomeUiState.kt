@@ -59,7 +59,12 @@ data class HomeUiState(
     val momentum: Momentum = Momentum(),
     val errorMessage: String? = null,
     val showUndo: Boolean = false,
-    val lastDeletedTask: Task? = null
+    val lastDeletedTask: Task? = null,
+    /**
+     * One-shot line confirming where a completed habit rescheduled to, e.g.
+     * "Next: Tue, Oct 27". Null when nothing is pending.
+     */
+    val habitNextLabel: String? = null
 )
 
 sealed interface HomeAction {
@@ -69,6 +74,9 @@ sealed interface HomeAction {
 
     /** Clears a one-shot error once it has been shown. */
     data object ClearError : HomeAction
+
+    /** Clears the habit reschedule confirmation once it has been shown. */
+    data object ClearHabitLabel : HomeAction
     data class AddSubTask(val taskId: String, val subTaskTitle: String) : HomeAction
     data class ToggleSubTask(val taskId: String, val subTaskId: String, val isDone: Boolean) : HomeAction
     data class SetFilter(val filter: HomeFilter) : HomeAction
