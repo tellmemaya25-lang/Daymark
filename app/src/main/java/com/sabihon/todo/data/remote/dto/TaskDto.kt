@@ -42,7 +42,15 @@ data class TaskDto(
     @PropertyName("deleted")
     var isDeleted: Boolean = false,
 
-    val searchKeywords: List<String> = emptyList()
+    val searchKeywords: List<String> = emptyList(),
+
+    // Repeating tasks. Defaults keep documents written before this existed readable:
+    // a missing `repeat` reads back as NONE, i.e. an ordinary one-off task.
+    val repeat: String = "NONE",
+    val repeatDays: List<Int> = emptyList(),
+    val streak: Int = 0,
+    val lastCompletedDay: Long? = null,
+    val seriesId: String? = null
 )
 
 data class SubTaskDto(

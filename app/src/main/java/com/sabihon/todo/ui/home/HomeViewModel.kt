@@ -253,6 +253,7 @@ class HomeViewModel @Inject constructor(
             is HomeAction.ToggleComplete -> toggleComplete(action.taskId, action.isCompleted)
             is HomeAction.DeleteTask -> deleteTask(action.task)
             is HomeAction.UndoDelete -> undoDelete()
+            is HomeAction.ClearError -> _uiState.update { it.copy(errorMessage = null) }
             is HomeAction.AddSubTask -> addSubTask(action.taskId, action.subTaskTitle)
             is HomeAction.ToggleSubTask -> toggleSubTask(action.taskId, action.subTaskId, action.isDone)
             is HomeAction.SetFilter -> {
@@ -313,7 +314,15 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun toggleComplete(taskId: String, isCompleted: Boolean) {
-        viewModelScope.launch { toggleCompleteUseCase(taskId, isCompleted) }
+        viewModelScope.launch {
+            when (val result = toggleCompleteUseCase(taskId, isCompleted)) {
+                // The sub-task guard rejects the tick; without this the row simply
+                // refuses to check off with no explanation.
+                is Result.Error ->
+                    _uiState.update { it.copy(errorMessage = result.message) }
+                else -> Unit
+            }
+        }
     }
 
     private fun deleteTask(task: Task) {

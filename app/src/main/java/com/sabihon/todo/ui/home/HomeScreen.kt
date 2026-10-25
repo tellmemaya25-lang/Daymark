@@ -113,6 +113,14 @@ fun HomeScreen(
     val bottomSheetState = rememberModalBottomSheetState()
     val addSheetState = rememberModalBottomSheetState()
 
+    LaunchedEffect(uiState.errorMessage) {
+        val message = uiState.errorMessage
+        if (message != null) {
+            snackbarHostState.showSnackbar(message = message, duration = SnackbarDuration.Short)
+            viewModel.onAction(HomeAction.ClearError)
+        }
+    }
+
     LaunchedEffect(uiState.showUndo) {
         if (uiState.showUndo) {
             val result = snackbarHostState.showSnackbar(

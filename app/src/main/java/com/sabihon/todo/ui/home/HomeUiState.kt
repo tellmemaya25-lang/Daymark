@@ -66,6 +66,9 @@ sealed interface HomeAction {
     data class ToggleComplete(val taskId: String, val isCompleted: Boolean) : HomeAction
     data class DeleteTask(val task: Task) : HomeAction
     data object UndoDelete : HomeAction
+
+    /** Clears a one-shot error once it has been shown. */
+    data object ClearError : HomeAction
     data class AddSubTask(val taskId: String, val subTaskTitle: String) : HomeAction
     data class ToggleSubTask(val taskId: String, val subTaskId: String, val isDone: Boolean) : HomeAction
     data class SetFilter(val filter: HomeFilter) : HomeAction

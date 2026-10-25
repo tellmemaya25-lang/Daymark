@@ -17,4 +17,20 @@ interface TaskRepository {
     suspend fun restoreTask(taskId: String): Result<Unit>
     suspend fun toggleComplete(taskId: String, isCompleted: Boolean): Result<Unit>
     suspend fun searchTasks(query: String): Flow<Result<List<Task>>>
+
+    /**
+     * Writes streak bookkeeping without touching any other field and without
+     * logging an activity entry – a habit ticking over must not fill the feed with
+     * "Updated" rows.
+     */
+    suspend fun updateStreak(taskId: String, streak: Int, lastCompletedDay: Long): Result<Unit>
+
+    /**
+     * Creates the next occurrence of a repeating task.
+     *
+     * Separate from [addTask] because this must stay silent: the activity feed
+     * records what the user did, and a daily habit spawning its next copy is not
+     * something the user did.
+     */
+    suspend fun spawnOccurrence(task: Task): Result<String>
 }

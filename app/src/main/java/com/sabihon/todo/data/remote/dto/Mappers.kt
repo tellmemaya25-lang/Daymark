@@ -3,6 +3,7 @@ package com.sabihon.todo.data.remote.dto
 import com.google.firebase.Timestamp
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
+import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.SubTask
 import com.sabihon.todo.domain.model.Task
 import java.util.Date
@@ -26,7 +27,12 @@ fun TaskDto.toDomain(): Task {
         createdAt = createdAt?.toDate()?.time ?: System.currentTimeMillis(),
         updatedAt = updatedAt?.toDate()?.time ?: System.currentTimeMillis(),
         isDeleted = isDeleted,
-        searchKeywords = searchKeywords
+        searchKeywords = searchKeywords,
+        repeat = RepeatRule.fromString(repeat),
+        repeatDays = repeatDays,
+        streak = streak,
+        lastCompletedDay = lastCompletedDay,
+        seriesId = seriesId
     )
 }
 
@@ -45,7 +51,12 @@ fun Task.toDto(): TaskDto {
         createdAt = Timestamp(Date(createdAt)),
         updatedAt = Timestamp(Date(updatedAt)),
         isDeleted = isDeleted,
-        searchKeywords = searchKeywords.ifEmpty { generateSearchKeywords(title) }
+        searchKeywords = searchKeywords.ifEmpty { generateSearchKeywords(title) },
+        repeat = repeat.name,
+        repeatDays = repeatDays,
+        streak = streak,
+        lastCompletedDay = lastCompletedDay,
+        seriesId = seriesId
     )
 }
 

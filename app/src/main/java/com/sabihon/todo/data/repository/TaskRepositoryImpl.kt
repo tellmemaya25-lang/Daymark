@@ -361,6 +361,56 @@ class TaskRepositoryImpl @Inject constructor(
         } catch (e: Exception) { Result.Error(e) }
     }
 
+    override suspend fun updateStreak(
+        taskId: String,
+        streak: Int,
+        lastCompletedDay: Long
+    ): Result<Unit> = withContext(ioDispatcher) {
+        try {
+            val outcome = boundedWrite {
+                tasksCollection().document(taskId).update(
+                    mapOf(
+                        "streak" to streak,
+                        "lastCompletedDay" to lastCompletedDay,
+                        "updatedAt" to Timestamp(Date())
+                    )
+                ).await()
+            }
+            if (outcome is WriteOutcome.Failed) Result.Error(outcome.error) else Result.Success(Unit)
+        } catch (e: Exception) {
+            Result.Error(e)
+        }
+    }
+
+    override suspend fun spawnOccurrence(task: Task): Result<String> = withContext(ioDispatcher) {
+        try {
+            userIdOrThrow()
+            val dto = task.copy(
+                searchKeywords = if (task.searchKeywords.isEmpty()) generateSearchKeywords(task.title) else task.searchKeywords,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis()
+            ).toDto()
+            // The caller supplies a deterministic id per scheduled day, so a repeat
+            // completion rewrites the same document instead of stacking duplicates.
+            val docRef = tasksCollection().document(task.id)
+            val outcome = writeDocument(docRef, dto.copy(id = docRef.id))
+            if (outcome is WriteOutcome.Failed) {
+                Result.Error(outcome.error, outcome.error.message ?: "Failed to schedule next occurrence")
+            } else {
+                // Schedule the reminder, but deliberately skip the CREATED log entry.
+                try {
+                    task.reminderAt?.let {
+                        reminderScheduler.scheduleReminder(docRef.id, task.title, task.description, it)
+                    }
+                } catch (_: Exception) {
+                }
+                Result.Success(docRef.id)
+            }
+        } catch (e: Exception) {
+            Result.Error(e)
+        }
+    }
+
     override suspend fun searchTasks(query: String): Flow<Result<List<Task>>> = flow {
         emit(Result.Loading)
         try {
