@@ -66,7 +66,12 @@ class AuthViewModel @Inject constructor(
             _uiState.update { it.copy(passwordError = "Password must be at least 6 characters") }
             valid = false
         }
-        if (_uiState.value.confirmPassword != _uiState.value.password) {
+        // The sign-up form has a single password field (the reference's layout, and the
+        // Show toggle covers what a second hidden field was catching), so this only runs
+        // when a confirm value is actually present.
+        if (_uiState.value.confirmPassword.isNotEmpty() &&
+            _uiState.value.confirmPassword != _uiState.value.password
+        ) {
             _uiState.update { it.copy(confirmPasswordError = "Passwords do not match") }
             valid = false
         }
