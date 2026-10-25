@@ -1,13 +1,19 @@
 package com.sabihon.todo.core.ui.theme
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import com.sabihon.todo.core.ui.util.rememberSystemAnimationsEnabled
 
 /**
  * Sabihon theme with Material 3 – full light & dark mode UI support
@@ -86,13 +92,95 @@ private val DarkColorScheme = darkColorScheme(
  */
 val LocalIsDarkTheme = staticCompositionLocalOf { false }
 
+/**
+ * How long the light/dark switch takes.
+ *
+ * Short on purpose. Material's motion guidance is explicit that theme changes should
+ * be brief and colour-driven rather than a slow dissolve, and anything longer starts
+ * to feel like the app is thinking rather than responding.
+ */
+private const val THEME_SWITCH_MS = 280
+
+/**
+ * Channel-wise interpolation between two sRGB colours.
+ *
+ * Written out rather than using the graphics `lerp` helper so this file depends on
+ * nothing beyond `Color` itself - both schemes are sRGB, so the per-channel result is
+ * exact.
+ */
+private fun blend(start: Color, stop: Color, fraction: Float): Color = Color(
+    red = start.red + (stop.red - start.red) * fraction,
+    green = start.green + (stop.green - start.green) * fraction,
+    blue = start.blue + (stop.blue - start.blue) * fraction,
+    alpha = start.alpha + (stop.alpha - start.alpha) * fraction
+)
+
+/**
+ * Blends the two schemes for the duration of the switch.
+ *
+ * Only the roles the app actually reads are interpolated - everything else would be
+ * recomputed 60 times a second for no visible gain. The order matters: the start is
+ * always the light scheme, so going dark is progress 0 -> 1 and coming back is 1 -> 0,
+ * with no state to keep.
+ */
+private fun lerpScheme(start: ColorScheme, stop: ColorScheme, fraction: Float): ColorScheme {
+    if (fraction <= 0f) return start
+    if (fraction >= 1f) return stop
+    return start.copy(
+        primary = blend(start.primary, stop.primary, fraction),
+        onPrimary = blend(start.onPrimary, stop.onPrimary, fraction),
+        primaryContainer = blend(start.primaryContainer, stop.primaryContainer, fraction),
+        onPrimaryContainer = blend(start.onPrimaryContainer, stop.onPrimaryContainer, fraction),
+        secondaryContainer = blend(start.secondaryContainer, stop.secondaryContainer, fraction),
+        onSecondaryContainer = blend(start.onSecondaryContainer, stop.onSecondaryContainer, fraction),
+        background = blend(start.background, stop.background, fraction),
+        onBackground = blend(start.onBackground, stop.onBackground, fraction),
+        surface = blend(start.surface, stop.surface, fraction),
+        onSurface = blend(start.onSurface, stop.onSurface, fraction),
+        surfaceVariant = blend(start.surfaceVariant, stop.surfaceVariant, fraction),
+        onSurfaceVariant = blend(start.onSurfaceVariant, stop.onSurfaceVariant, fraction),
+        surfaceContainer = blend(start.surfaceContainer, stop.surfaceContainer, fraction),
+        surfaceContainerHigh = blend(start.surfaceContainerHigh, stop.surfaceContainerHigh, fraction),
+        surfaceContainerHighest =
+            blend(start.surfaceContainerHighest, stop.surfaceContainerHighest, fraction),
+        outline = blend(start.outline, stop.outline, fraction),
+        outlineVariant = blend(start.outlineVariant, stop.outlineVariant, fraction),
+        error = blend(start.error, stop.error, fraction),
+        onError = blend(start.onError, stop.onError, fraction)
+    )
+}
+
+/**
+ * Theme, with an animated light/dark switch.
+ *
+ * The colours themselves are interpolated rather than crossfading two composited
+ * trees: a `Crossfade` around the NavHost would keep two copies of the navigation
+ * graph alive mid-transition, and Material's guidance warns against leaving
+ * half-transparent layers of old and new content overlapping. Animating the scheme
+ * means every surface, border and label moves together and the layout never changes.
+ *
+ * The first frame is already correct - `animateFloatAsState` starts at its target, so
+ * launching the app in dark mode does not fade in from light.
+ */
 @Composable
 fun SabihonTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-    CompositionLocalProvider(LocalIsDarkTheme provides darkTheme) {
+    val animationsEnabled = rememberSystemAnimationsEnabled()
+    val progress by animateFloatAsState(
+        targetValue = if (darkTheme) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = if (animationsEnabled) THEME_SWITCH_MS else 0,
+            easing = FastOutSlowInEasing
+        ),
+        label = "themeSwitch"
+    )
+
+    val colorScheme = lerpScheme(LightColorScheme, DarkColorScheme, progress)
+    // Discrete choices (hand-picked dark cards, pill colours) flip at the midpoint,
+    // where the background is closest to them, instead of at the start of the fade.
+    CompositionLocalProvider(LocalIsDarkTheme provides (progress >= 0.5f)) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = SabihonTypography,
