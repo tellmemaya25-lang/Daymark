@@ -356,7 +356,7 @@ class PrioritizeTasksUseCase internal constructor(
                 "not been enabled" in lower ->
                 "Enable 'Firebase AI Logic' (Gemini Developer API) in Firebase Console > Build > AI Logic for project sabihon-todo, then tap ↻."
             "app check" in lower || "appcheck" in lower || "attestation" in lower ->
-                "Firebase App Check blocked this debug build — leave AI Logic unenforced in Firebase Console > App Check, then tap ↻."
+                "App Check debug token needed — go to Settings > AI > tap 'App Check debug token' to copy it, add it in Firebase Console > App Check > Apps > Manage debug tokens, then tap ↻."
             "api_key_service_blocked" in lower ||
                 "api_key_android_app_blocked" in lower ||
                 "requests to this api" in lower ||

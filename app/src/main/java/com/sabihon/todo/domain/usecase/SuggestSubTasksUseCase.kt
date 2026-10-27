@@ -195,7 +195,7 @@ class SuggestSubTasksUseCase private constructor(
                     "not been enabled" in errMsg ->
                     "Suggested offline — enable 'Firebase AI Logic' in Firebase Console > Build > AI Logic"
                 "app check" in errMsg || "appcheck" in errMsg || "attestation" in errMsg ->
-                    "Suggested offline — leave AI Logic unenforced in Firebase Console > App Check"
+                    "Suggested offline — copy 'App Check debug token' from Settings > AI into Firebase Console > App Check"
                 "api_key_service_blocked" in errMsg ||
                     "api_key_android_app_blocked" in errMsg ||
                     "are blocked" in errMsg ->

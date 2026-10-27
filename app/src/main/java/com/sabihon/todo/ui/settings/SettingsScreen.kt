@@ -1,5 +1,9 @@
 package com.sabihon.todo.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.pm.ApplicationInfo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -39,16 +43,19 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.sabihon.todo.SabihonApp
 import com.sabihon.todo.core.datastore.AiPreferences
 import com.sabihon.todo.core.datastore.ThemePref
 import com.sabihon.todo.core.ui.components.BrandHeader
@@ -61,6 +68,8 @@ import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.core.ui.theme.DaymarkSheetShape
 import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
 import com.sabihon.todo.ui.profile.ProfileViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Settings.
@@ -92,6 +101,22 @@ fun SettingsScreen(
     val uiState by viewModel.uiState.collectAsState()
     var showThemeSheet by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val isDebugBuild = remember(context) {
+        (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+    val firebaseProjectId = remember(context) { SabihonApp.firebaseProjectId(context) }
+    var debugAppCheckToken by remember(context) {
+        mutableStateOf(if (isDebugBuild) SabihonApp.readAppCheckDebugToken(context) else null)
+    }
+
+    LaunchedEffect(isDebugBuild) {
+        if (isDebugBuild && debugAppCheckToken == null) {
+            delay(600L)
+            debugAppCheckToken = SabihonApp.readAppCheckDebugToken(context)
+        }
+    }
 
     LaunchedEffect(uiState.successMessage) {
         val message = uiState.successMessage
@@ -199,6 +224,41 @@ fun SettingsScreen(
                             value = "${uiState.aiDailyCalls} / ${AiPreferences.MAX_DAILY_CLOUD_CALLS}",
                             onClick = { viewModel.clearAiCache() }
                         )
+                        if (isDebugBuild) {
+                            GroupedDivider()
+                            val shortToken = debugAppCheckToken?.let { token ->
+                                if (token.length > 12) "${token.take(8)}…${token.takeLast(4)}" else token
+                            } ?: "Copy"
+                            val projectLine = firebaseProjectId?.let { "Project: $it · " }.orEmpty()
+                            GroupedRow(
+                                label = "App Check debug token",
+                                supporting = "${projectLine}Tap to copy for Firebase Console > App Check",
+                                value = shortToken,
+                                onClick = {
+                                    scope.launch {
+                                        val token = SabihonApp.readAppCheckDebugToken(context)
+                                            ?: run {
+                                                delay(500L)
+                                                SabihonApp.readAppCheckDebugToken(context)
+                                            }
+                                        debugAppCheckToken = token
+                                        if (!token.isNullOrBlank()) {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                            clipboard?.setPrimaryClip(ClipData.newPlainText("App Check Debug Token", token))
+                                            snackbarHostState.showSnackbar(
+                                                message = "Copied App Check debug token ($token)",
+                                                duration = SnackbarDuration.Short
+                                            )
+                                        } else {
+                                            snackbarHostState.showSnackbar(
+                                                message = "Generating debug token — tap again in a second",
+                                                duration = SnackbarDuration.Short
+                                            )
+                                        }
+                                    }
+                                }
+                            )
+                        }
                     }
 
                     Spacer(Modifier.height(12.dp))
