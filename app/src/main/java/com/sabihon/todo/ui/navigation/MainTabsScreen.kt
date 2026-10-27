@@ -175,6 +175,17 @@ fun MainTabsScreen(
                         onNavigateToTaskDetail = { navController.navigate(Route.AddEditTask(it)) },
                         onNavigateToEditTask = { navController.navigate(Route.AddEditTask(it)) },
                         onNavigateToAddTask = { navController.navigate(Route.AddEditTask()) },
+                        onNavigateToPrefilledAddTask = { candidate ->
+                            navController.navigate(
+                                Route.AddEditTask(
+                                    initialTitle = candidate.title,
+                                    initialDescription = candidate.description,
+                                    initialCategoryId = candidate.categoryId,
+                                    initialPriority = candidate.priority.name,
+                                    initialDueAt = candidate.dueAt
+                                )
+                            )
+                        },
                         onNavigateToSearch = { navController.navigate(Route.Search) },
                         onNavigateToHistory = { goToPage(2) },
                         onNavigateToProfile = { navController.navigate(Route.Profile) },

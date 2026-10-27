@@ -6,10 +6,13 @@ import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,11 +21,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -81,6 +86,8 @@ import com.sabihon.todo.core.ui.components.DictationMic
 import com.sabihon.todo.core.ui.components.DictationStrip
 import com.sabihon.todo.core.ui.components.SubTaskRoundedCheckbox
 import com.sabihon.todo.core.ui.theme.AccentBlue
+import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
+import com.sabihon.todo.domain.ai.AiSource
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.usecase.RepeatScheduler
@@ -92,12 +99,17 @@ import java.util.Locale
 /**
  * Add/Edit Task – fixed inconsistency and color contrast light/dark + 24.dp consistency
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AddEditTaskScreen(
     taskId: String?,
     onBack: () -> Unit,
     onSaved: () -> Unit,
+    initialTitle: String? = null,
+    initialDescription: String? = null,
+    initialCategoryId: String? = null,
+    initialPriority: String? = null,
+    initialDueAt: Long? = null,
     viewModel: AddEditViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -163,6 +175,15 @@ fun AddEditTaskScreen(
 
     LaunchedEffect(taskId) {
         viewModel.loadTask(taskId)
+        if (taskId == null) {
+            viewModel.seedFromDraft(
+                initialTitle = initialTitle,
+                initialDescription = initialDescription,
+                initialCategoryId = initialCategoryId,
+                initialPriorityName = initialPriority,
+                initialDueAt = initialDueAt
+            )
+        }
     }
 
     LaunchedEffect(uiState.errorMessage) {
@@ -516,7 +537,157 @@ fun AddEditTaskScreen(
                 )
             }
 
-            Text("Sub-tasks", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurface)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Sub-tasks",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                val canSuggestSteps = uiState.title.trim().length >= 3 && !uiState.isSuggestingSubTasks
+                val surfaces = LocalDaymarkSurfaces.current
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .background(
+                            if (canSuggestSteps || uiState.isSuggestingSubTasks) {
+                                surfaces.accentSurface
+                            } else {
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+                            }
+                        )
+                        .clickable(enabled = canSuggestSteps) { viewModel.onSuggestSubTasks() }
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (uiState.isSuggestingSubTasks) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.6.dp,
+                            color = AccentBlue
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Filled.AutoAwesome,
+                            contentDescription = "Suggest sub-task steps",
+                            tint = if (canSuggestSteps) AccentBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        text = if (uiState.isSuggestingSubTasks) "Suggesting\u2026" else "Suggest steps",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        color = if (canSuggestSteps || uiState.isSuggestingSubTasks) {
+                            surfaces.onAccentSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        }
+                    )
+                }
+            }
+
+            if (uiState.suggestedSubTasks.isNotEmpty()) {
+                val surfaces = LocalDaymarkSurfaces.current
+                val sourceLabel = when (uiState.suggestedSubTasksSource) {
+                    AiSource.CLOUD -> "AI suggested steps"
+                    AiSource.CACHE -> "AI suggested steps \u00B7 Cached"
+                    else -> "Suggested steps \u00B7 Offline rules"
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(surfaces.groupedCard)
+                        .border(1.dp, surfaces.cardBorder, RoundedCornerShape(18.dp))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = sourceLabel,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = AccentBlue,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = { viewModel.onAcceptAllSuggestedSubTasks() },
+                            modifier = Modifier.heightIn(min = 30.dp)
+                        ) {
+                            Text("Add all", color = AccentBlue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        TextButton(
+                            onClick = { viewModel.onDismissSuggestedSubTasks() },
+                            modifier = Modifier.heightIn(min = 30.dp)
+                        ) {
+                            Text("Dismiss", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        }
+                    }
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        uiState.suggestedSubTasks.forEach { step ->
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(100.dp))
+                                    .background(surfaces.card)
+                                    .border(1.dp, AccentBlue.copy(alpha = 0.3f), RoundedCornerShape(100.dp))
+                                    .clickable { viewModel.onAcceptSuggestedSubTask(step) }
+                                    .padding(horizontal = 11.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = null,
+                                    tint = AccentBlue,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = step,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Medium
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+            } else if (uiState.canUndoSuggestedSubTasks) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Suggested steps added to checklist",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = { viewModel.onUndoSuggestedSubTasks() }) {
+                        Text("Undo", color = AccentBlue, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+
             var editingSubId by remember { mutableStateOf<String?>(null) }
             var editingSubText by remember { mutableStateOf("") }
             uiState.subTasks.forEach { sub ->

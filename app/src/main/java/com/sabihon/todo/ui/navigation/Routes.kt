@@ -32,7 +32,14 @@ sealed interface Route {
     data class CategoryDetail(val categoryId: String) : Route
 
     @Serializable
-    data class AddEditTask(val taskId: String? = null) : Route
+    data class AddEditTask(
+        val taskId: String? = null,
+        val initialTitle: String? = null,
+        val initialDescription: String? = null,
+        val initialCategoryId: String? = null,
+        val initialPriority: String? = null,
+        val initialDueAt: Long? = null
+    ) : Route
 
     @Serializable
     data object Search : Route

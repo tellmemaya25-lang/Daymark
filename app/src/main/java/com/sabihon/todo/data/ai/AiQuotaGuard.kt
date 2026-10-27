@@ -10,7 +10,9 @@ import javax.inject.Singleton
 
 enum class AiFeature {
     PRIORITIZE,
-    QUICK_ADD
+    QUICK_ADD,
+    SUGGEST_SUBTASKS,
+    SUGGEST_NEXT_TASKS
 }
 
 /**

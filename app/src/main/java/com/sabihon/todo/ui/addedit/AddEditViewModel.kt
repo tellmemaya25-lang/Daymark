@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.sabihon.todo.core.datastore.AiPreferenceStore
+import com.sabihon.todo.core.telemetry.AiTelemetryLogger
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.ai.AiTaskDraft
 import com.sabihon.todo.domain.model.Category
@@ -18,6 +19,7 @@ import com.sabihon.todo.domain.usecase.DeleteTaskUseCase
 import com.sabihon.todo.domain.usecase.ParseQuickAddUseCase
 import com.sabihon.todo.domain.usecase.QuickAddResult
 import com.sabihon.todo.domain.usecase.RepeatScheduler
+import com.sabihon.todo.domain.usecase.SuggestSubTasksUseCase
 import com.sabihon.todo.domain.usecase.UpdateTaskUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,9 +47,16 @@ class AddEditViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val categoryRepository: CategoryRepository,
     private val parseQuickAddUseCase: ParseQuickAddUseCase,
+    private val suggestSubTasksUseCase: SuggestSubTasksUseCase,
     private val aiPreferences: AiPreferenceStore,
+    private val telemetry: AiTelemetryLogger,
     private val auth: FirebaseAuth
 ) : ViewModel() {
+
+    private enum class PendingConsentAction {
+        QUICK_ADD,
+        SUGGEST_STEPS
+    }
 
     private companion object {
         /** Hard ceiling for one save round-trip; keeps the Save button honest. */
@@ -77,6 +86,9 @@ class AddEditViewModel @Inject constructor(
     )
 
     private var quickAddUndo: QuickAddSnapshot? = null
+    private var subTasksSuggestionUndo: List<SubTask>? = null
+    private var pendingConsentAction: PendingConsentAction? = null
+    private var seededPrefill: Boolean = false
 
     /**
      * The form is seeded from Firestore exactly once. Later emissions (including the
@@ -155,6 +167,42 @@ class AddEditViewModel @Inject constructor(
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, errorMessage = "Failed to load task: ${e.message}") }
             }
+        }
+    }
+
+    /**
+     * Seeds a new-task editor once when opened from a contextual next-task suggestion
+     * or a project's '+' button. Never overwrites edits after first composition.
+     */
+    fun seedFromDraft(
+        initialTitle: String?,
+        initialDescription: String?,
+        initialCategoryId: String?,
+        initialPriorityName: String?,
+        initialDueAt: Long?
+    ) {
+        if (seededPrefill || _uiState.value.isEditMode) return
+        val hasAnyPrefill = !initialTitle.isNullOrBlank() ||
+            !initialDescription.isNullOrBlank() ||
+            !initialCategoryId.isNullOrBlank() ||
+            !initialPriorityName.isNullOrBlank() ||
+            initialDueAt != null
+        if (!hasAnyPrefill) return
+
+        seededPrefill = true
+        val parsedPriority = initialPriorityName?.let { raw ->
+            Priority.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+        }
+        _uiState.update { current ->
+            current.copy(
+                title = initialTitle?.takeIf { it.isNotBlank() } ?: current.title,
+                description = initialDescription?.takeIf { it.isNotBlank() } ?: current.description,
+                categoryId = initialCategoryId?.takeIf { it.isNotBlank() } ?: current.categoryId,
+                priority = parsedPriority ?: current.priority,
+                dueAt = initialDueAt ?: current.dueAt,
+                dueDateMillis = initialDueAt ?: current.dueDateMillis,
+                dueTimeMillis = initialDueAt ?: current.dueTimeMillis
+            )
         }
     }
 
@@ -343,6 +391,7 @@ class AddEditViewModel @Inject constructor(
 
         viewModelScope.launch {
             if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
+                pendingConsentAction = PendingConsentAction.QUICK_ADD
                 _uiState.update { it.copy(showAiConsentSheet = true) }
                 return@launch
             }
@@ -351,15 +400,155 @@ class AddEditViewModel @Inject constructor(
     }
 
     fun onAiConsentDecided(enableCloud: Boolean) {
+        val nextAction = pendingConsentAction
+        pendingConsentAction = null
         viewModelScope.launch {
             aiPreferences.setCloudEnabled(enableCloud)
             _uiState.update { it.copy(showAiConsentSheet = false) }
-            runQuickAdd()
+            when (nextAction) {
+                PendingConsentAction.SUGGEST_STEPS -> runSuggestSubTasks(forceRefresh = false)
+                PendingConsentAction.QUICK_ADD, null -> runQuickAdd()
+            }
         }
     }
 
     fun onDismissAiConsent() {
+        pendingConsentAction = null
         _uiState.update { it.copy(showAiConsentSheet = false) }
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Phase 3: AI sub-task breakdown ("Suggest steps")                 */
+    /* ---------------------------------------------------------------- */
+
+    fun onSuggestSubTasks(forceRefresh: Boolean = false) {
+        val snapshot = _uiState.value
+        if (snapshot.title.trim().length < 3 || snapshot.isSuggestingSubTasks) return
+
+        viewModelScope.launch {
+            if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
+                pendingConsentAction = PendingConsentAction.SUGGEST_STEPS
+                _uiState.update { it.copy(showAiConsentSheet = true) }
+                return@launch
+            }
+            runSuggestSubTasks(forceRefresh = forceRefresh)
+        }
+    }
+
+    private suspend fun runSuggestSubTasks(forceRefresh: Boolean) {
+        val snapshot = _uiState.value
+        val title = snapshot.title.trim()
+        if (title.length < 3 || snapshot.isSuggestingSubTasks) return
+
+        _uiState.update {
+            it.copy(
+                isSuggestingSubTasks = true,
+                canUndoSuggestedSubTasks = false
+            )
+        }
+
+        val result = suggestSubTasksUseCase(
+            uid = auth.currentUser?.uid,
+            title = title,
+            description = snapshot.description,
+            existingSubTasks = snapshot.subTasks.map { it.title },
+            forceRefresh = forceRefresh
+        )
+
+        _uiState.update { current ->
+            current.copy(
+                isSuggestingSubTasks = false,
+                suggestedSubTasks = result.steps,
+                suggestedSubTasksSource = result.source.takeIf { result.steps.isNotEmpty() }
+            )
+        }
+    }
+
+    fun onAcceptSuggestedSubTask(step: String) {
+        val clean = step.trim()
+        if (clean.isBlank()) return
+        val current = _uiState.value
+        if (subTasksSuggestionUndo == null) {
+            subTasksSuggestionUndo = current.subTasks
+        }
+        val alreadyExists = current.subTasks.any { it.title.equals(clean, ignoreCase = true) }
+        val newSub = SubTask(
+            id = System.currentTimeMillis().toString() + "_" + (0..999).random(),
+            title = clean,
+            isDone = false
+        )
+        _uiState.update { state ->
+            val nextSuggested = state.suggestedSubTasks.filterNot { it.equals(clean, ignoreCase = true) }
+            state.copy(
+                subTasks = if (alreadyExists) state.subTasks else state.subTasks + newSub,
+                suggestedSubTasks = nextSuggested,
+                suggestedSubTasksSource = state.suggestedSubTasksSource.takeIf { nextSuggested.isNotEmpty() },
+                canUndoSuggestedSubTasks = true
+            )
+        }
+        telemetry.logSuggestionAction(kind = "subtask", action = "added", count = 1)
+        persistSubTasks()
+    }
+
+    fun onAcceptAllSuggestedSubTasks() {
+        val current = _uiState.value
+        val pending = current.suggestedSubTasks
+        if (pending.isEmpty()) return
+
+        if (subTasksSuggestionUndo == null) {
+            subTasksSuggestionUndo = current.subTasks
+        }
+        val existingLower = current.subTasks.map { it.title.lowercase() }.toSet()
+        val additions = pending
+            .filter { it.isNotBlank() && it.lowercase() !in existingLower }
+            .mapIndexed { idx, step ->
+                SubTask(
+                    id = "${System.currentTimeMillis()}_${idx}_${(0..999).random()}",
+                    title = step,
+                    isDone = false
+                )
+            }
+
+        _uiState.update { state ->
+            state.copy(
+                subTasks = state.subTasks + additions,
+                suggestedSubTasks = emptyList(),
+                suggestedSubTasksSource = null,
+                canUndoSuggestedSubTasks = additions.isNotEmpty()
+            )
+        }
+        if (additions.isNotEmpty()) {
+            telemetry.logSuggestionAction(kind = "subtask", action = "added", count = additions.size)
+            persistSubTasks()
+        }
+    }
+
+    fun onUndoSuggestedSubTasks() {
+        val prior = subTasksSuggestionUndo ?: return
+        subTasksSuggestionUndo = null
+        _uiState.update { state ->
+            state.copy(
+                subTasks = prior,
+                canUndoSuggestedSubTasks = false
+            )
+        }
+        telemetry.logSuggestionAction(kind = "subtask", action = "undo", count = 1)
+        persistSubTasks()
+    }
+
+    fun onDismissSuggestedSubTasks() {
+        val hadSuggestions = _uiState.value.suggestedSubTasks.isNotEmpty()
+        subTasksSuggestionUndo = null
+        _uiState.update {
+            it.copy(
+                suggestedSubTasks = emptyList(),
+                suggestedSubTasksSource = null,
+                canUndoSuggestedSubTasks = false
+            )
+        }
+        if (hadSuggestions) {
+            telemetry.logSuggestionAction(kind = "subtask", action = "dismissed", count = 1)
+        }
     }
 
     private suspend fun runQuickAdd() {

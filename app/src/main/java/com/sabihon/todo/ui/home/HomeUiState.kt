@@ -1,6 +1,8 @@
 package com.sabihon.todo.ui.home
 
+import com.sabihon.todo.domain.ai.AiSource
 import com.sabihon.todo.domain.ai.PrioritizationPlan
+import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.usecase.DashboardCounts
@@ -99,7 +101,7 @@ data class HomeUiState(
      */
     val habitNextLabel: String? = null,
 
-    // ---- Smart AI prioritization ----
+    // ---- Smart AI prioritization (Phases 0–2) ----
     val showAiConsentSheet: Boolean = false,
     val showPrioritizeSheet: Boolean = false,
     val isPrioritizing: Boolean = false,
@@ -109,7 +111,19 @@ data class HomeUiState(
     /** Validated focus rank map (`taskId -> 1..N`) used when `HomeSort.SMART` is active. */
     val aiFocusRanks: Map<String, Int> = emptyMap(),
     val showPriorityUndo: Boolean = false,
-    val priorityUndoCount: Int = 0
+    val priorityUndoCount: Int = 0,
+
+    // ---- Phase 3: AI sub-task step suggestions in Home sub-task sheet ----
+    val isSuggestingSubTasks: Boolean = false,
+    val subTaskSheetSuggestions: List<String> = emptyList(),
+    val subTaskSheetSource: AiSource? = null,
+
+    // ---- Phase 4: Contextual next-task suggestions ----
+    val showSuggestedTasksCard: Boolean = false,
+    val isSuggestingNextTasks: Boolean = false,
+    val suggestedNextTasks: List<SuggestedTaskCandidate> = emptyList(),
+    val suggestedNextTasksSource: AiSource? = null,
+    val suggestionToastMessage: String? = null
 )
 
 sealed interface HomeAction {
@@ -138,4 +152,18 @@ sealed interface HomeAction {
     data class TogglePriorityProposal(val taskId: String, val checked: Boolean) : HomeAction
     data object ApplyPriorityPlan : HomeAction
     data object UndoPriorityPlan : HomeAction
+
+    // ---- Phase 3: AI sub-task breakdown in Home sheet ----
+    data class SuggestSubTasksForTask(val task: Task, val forceRefresh: Boolean = false) : HomeAction
+    data class AcceptSuggestedSubTask(val taskId: String, val step: String) : HomeAction
+    data class AcceptAllSuggestedSubTasks(val taskId: String) : HomeAction
+    data object ClearSubTaskSuggestions : HomeAction
+
+    // ---- Phase 4: Contextual next-task suggestions ----
+    data object RequestNextTaskSuggestions : HomeAction
+    data object RefreshNextTaskSuggestions : HomeAction
+    data object CloseSuggestedTasksCard : HomeAction
+    data class QuickAddSuggestedTask(val candidate: SuggestedTaskCandidate) : HomeAction
+    data class DismissSuggestedTask(val suggestionId: String) : HomeAction
+    data object ClearSuggestionToast : HomeAction
 }

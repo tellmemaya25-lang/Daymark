@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +24,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
@@ -33,6 +36,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -81,6 +85,8 @@ import com.sabihon.todo.core.ui.components.SegmentedTabs
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
 import com.sabihon.todo.core.ui.components.TabItem
 import com.sabihon.todo.core.ui.components.WeekStrip
+import com.sabihon.todo.domain.ai.AiSource
+import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.core.ui.util.isCompactHeight
 import com.sabihon.todo.domain.model.RepeatRule
@@ -90,7 +96,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(
     onNavigateToAllTasks: () -> Unit = {},
@@ -98,6 +104,7 @@ fun HomeScreen(
     onNavigateToTaskDetail: (String) -> Unit = {},
     onNavigateToEditTask: (String) -> Unit = {},
     onNavigateToAddTask: () -> Unit = {},
+    onNavigateToPrefilledAddTask: (SuggestedTaskCandidate) -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
     onNavigateToHistory: () -> Unit = {},
     onNavigateToProfile: () -> Unit = {},
@@ -165,6 +172,14 @@ fun HomeScreen(
             } else {
                 viewModel.dismissPriorityUndo()
             }
+        }
+    }
+
+    LaunchedEffect(uiState.suggestionToastMessage) {
+        val message = uiState.suggestionToastMessage
+        if (message != null) {
+            snackbarHostState.showSnackbar(message = message, duration = SnackbarDuration.Short)
+            viewModel.onAction(HomeAction.ClearSuggestionToast)
         }
     }
 
@@ -324,8 +339,38 @@ fun HomeScreen(
                             { viewModel.onAction(HomeAction.RequestPrioritize) }
                         } else {
                             null
+                        },
+                        onSuggestTasksClick = {
+                            viewModel.onAction(HomeAction.RequestNextTaskSuggestions)
                         }
                     )
+                }
+
+                if (uiState.showSuggestedTasksCard) {
+                    item(key = "ai_suggested_next_tasks") {
+                        SuggestedTasksCard(
+                            candidates = uiState.suggestedNextTasks,
+                            categoryNames = uiState.categoryNames,
+                            source = uiState.suggestedNextTasksSource,
+                            isLoading = uiState.isSuggestingNextTasks,
+                            onAddCandidate = { candidate ->
+                                viewModel.onAction(HomeAction.QuickAddSuggestedTask(candidate))
+                            },
+                            onEditCandidate = { candidate ->
+                                onNavigateToPrefilledAddTask(candidate)
+                            },
+                            onDismissCandidate = { id ->
+                                viewModel.onAction(HomeAction.DismissSuggestedTask(id))
+                            },
+                            onRefresh = {
+                                viewModel.onAction(HomeAction.RefreshNextTaskSuggestions)
+                            },
+                            onClose = {
+                                viewModel.onAction(HomeAction.CloseSuggestedTasksCard)
+                            },
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                        )
+                    }
                 }
 
                 if (uiState.visibleTasks.isEmpty() && uiState.completedTasks.isEmpty()) {
@@ -361,6 +406,7 @@ fun HomeScreen(
                         onAddSubTaskRequest = { target ->
                             taskForNewSubTask = target
                             newSubTaskTitle = ""
+                            viewModel.onAction(HomeAction.ClearSubTaskSuggestions)
                             showAddSubTaskSheet = true
                         },
                         onLongPress = { target ->
@@ -394,6 +440,7 @@ fun HomeScreen(
                                 onAddSubTaskRequest = { target ->
                                     taskForNewSubTask = target
                                     newSubTaskTitle = ""
+                                    viewModel.onAction(HomeAction.ClearSubTaskSuggestions)
                                     showAddSubTaskSheet = true
                                 },
                                 onLongPress = { target ->
@@ -599,16 +646,146 @@ fun HomeScreen(
                         )
                     }
 
-                    Text(
-                        text = "Add new task",
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Add new task",
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "to ${taskForNewSubTask?.title ?: "Task"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
 
-                    Text(
-                        text = "to ${taskForNewSubTask?.title ?: "Task"}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        val parentTask = taskForNewSubTask
+                        if (parentTask != null && parentTask.title.trim().length >= 3) {
+                            val surfaces = LocalDaymarkSurfaces.current
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(100.dp))
+                                    .background(surfaces.accentSurface)
+                                    .clickable(enabled = !uiState.isSuggestingSubTasks) {
+                                        viewModel.onAction(HomeAction.SuggestSubTasksForTask(parentTask))
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (uiState.isSuggestingSubTasks) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(12.dp),
+                                        strokeWidth = 1.6.dp,
+                                        color = AccentBlue
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Filled.AutoAwesome,
+                                        contentDescription = "Suggest steps",
+                                        tint = AccentBlue,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = if (uiState.isSuggestingSubTasks) "Suggesting\u2026" else "Suggest steps",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    ),
+                                    color = surfaces.onAccentSurface
+                                )
+                            }
+                        }
+                    }
+
+                    if (uiState.subTaskSheetSuggestions.isNotEmpty()) {
+                        val surfaces = LocalDaymarkSurfaces.current
+                        val sourceLabel = when (uiState.subTaskSheetSource) {
+                            AiSource.CLOUD -> "AI steps"
+                            AiSource.CACHE -> "AI steps \u00B7 Cached"
+                            else -> "Offline steps"
+                        }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(surfaces.groupedCard)
+                                .border(1.dp, surfaces.cardBorder, RoundedCornerShape(16.dp))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = sourceLabel,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    ),
+                                    color = AccentBlue,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = {
+                                        taskForNewSubTask?.let { target ->
+                                            viewModel.onAction(HomeAction.AcceptAllSuggestedSubTasks(target.id))
+                                        }
+                                    },
+                                    modifier = Modifier.height(30.dp)
+                                ) {
+                                    Text("Add all", color = AccentBlue, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                uiState.subTaskSheetSuggestions.forEach { step ->
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(100.dp))
+                                            .background(surfaces.card)
+                                            .border(1.dp, AccentBlue.copy(alpha = 0.3f), RoundedCornerShape(100.dp))
+                                            .clickable {
+                                                taskForNewSubTask?.let { target ->
+                                                    viewModel.onAction(
+                                                        HomeAction.AcceptSuggestedSubTask(target.id, step)
+                                                    )
+                                                }
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Add,
+                                            contentDescription = null,
+                                            tint = AccentBlue,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            text = step,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     OutlinedTextField(
                         value = newSubTaskTitle,
@@ -844,7 +1021,8 @@ private fun ListHeader(
     onSortMenuChange: (Boolean) -> Unit,
     onSortSelected: (HomeSort) -> Unit,
     onDirectionSelected: (HomeSortDirection) -> Unit,
-    onPrioritizeClick: (() -> Unit)? = null
+    onPrioritizeClick: (() -> Unit)? = null,
+    onSuggestTasksClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -885,6 +1063,35 @@ private fun ListHeader(
             }
         }
         Spacer(Modifier.weight(1f))
+
+        if (onSuggestTasksClick != null) {
+            val surfaces = LocalDaymarkSurfaces.current
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(100.dp))
+                    .background(surfaces.accentSurface)
+                    .clickable(onClick = onSuggestTasksClick)
+                    .padding(horizontal = 9.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.AutoAwesome,
+                    contentDescription = "Suggest next tasks",
+                    tint = AccentBlue,
+                    modifier = Modifier.size(12.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = "Suggest",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = surfaces.onAccentSurface
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+        }
 
         if (onPrioritizeClick != null) {
             val surfaces = LocalDaymarkSurfaces.current

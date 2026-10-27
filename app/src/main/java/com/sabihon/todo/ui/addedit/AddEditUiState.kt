@@ -1,5 +1,6 @@
 package com.sabihon.todo.ui.addedit
 
+import com.sabihon.todo.domain.ai.AiSource
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
@@ -42,5 +43,11 @@ data class AddEditUiState(
     /** The one-line failure message, when there was nothing worth filling. */
     val quickAddError: String? = null,
     /** Shown on the first ✨ tap before any prompt leaves the device. */
-    val showAiConsentSheet: Boolean = false
+    val showAiConsentSheet: Boolean = false,
+
+    // ---- Phase 3: AI sub-task step suggestions ----
+    val isSuggestingSubTasks: Boolean = false,
+    val suggestedSubTasks: List<String> = emptyList(),
+    val suggestedSubTasksSource: AiSource? = null,
+    val canUndoSuggestedSubTasks: Boolean = false
 )

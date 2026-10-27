@@ -1,6 +1,8 @@
 package com.sabihon.todo.domain.usecase
 
 import com.sabihon.todo.core.datastore.AiPreferenceStore
+import com.sabihon.todo.core.telemetry.AiTelemetryLogger
+import com.sabihon.todo.core.telemetry.NoOpAiTelemetry
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiFeature
 import com.sabihon.todo.data.ai.AiInputGuard
@@ -49,7 +51,8 @@ class PrioritizeTasksUseCase internal constructor(
     private val router: AiRouter,
     private val clock: () -> Long,
     private val todayProvider: () -> LocalDate,
-    private val zoneProvider: () -> ZoneId
+    private val zoneProvider: () -> ZoneId,
+    private val telemetry: AiTelemetryLogger = NoOpAiTelemetry
 ) {
 
     @Inject
@@ -60,7 +63,8 @@ class PrioritizeTasksUseCase internal constructor(
         inputGuard: AiInputGuard,
         quotaGuard: AiQuotaGuard,
         snapshotCache: AiSnapshotCache,
-        router: AiRouter
+        router: AiRouter,
+        telemetry: AiTelemetryLogger
     ) : this(
         aiTaskService = aiTaskService,
         prefs = prefs,
@@ -71,7 +75,8 @@ class PrioritizeTasksUseCase internal constructor(
         router = router,
         clock = System::currentTimeMillis,
         todayProvider = LocalDate::now,
-        zoneProvider = ZoneId::systemDefault
+        zoneProvider = ZoneId::systemDefault,
+        telemetry = telemetry
     )
 
     suspend operator fun invoke(
@@ -145,11 +150,24 @@ class PrioritizeTasksUseCase internal constructor(
                 if (sanitized != null) {
                     quotaGuard.recordSuccess(uid, estimatedTokens)
                     snapshotCache.put(uid, today, activeTasks, sanitized)
+                    telemetry.logRequest(
+                        feature = "prioritize_tasks",
+                        modelTier = tier,
+                        source = AiSource.CLOUD,
+                        latencyMs = (clock() - nowMillis).coerceAtLeast(0L)
+                    )
                     sanitized
                 } else {
                     val err = (cloudResult as? Result.Error)?.exception
                         ?: IllegalStateException("Prioritization timed out or returned invalid items")
                     quotaGuard.recordFailure(err)
+                    telemetry.logRequest(
+                        feature = "prioritize_tasks",
+                        modelTier = tier,
+                        source = AiSource.LOCAL_FALLBACK,
+                        latencyMs = (clock() - nowMillis).coerceAtLeast(0L),
+                        errorType = "fallback"
+                    )
                     localPlan
                 }
             }

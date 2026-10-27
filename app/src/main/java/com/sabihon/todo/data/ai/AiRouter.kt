@@ -10,10 +10,13 @@ import javax.inject.Singleton
 /**
  * Minimum-Sufficient-Intelligence Router (`docs/02-daymark-ai-system-design.md` §7):
  *
- *  - **Rung 0 (`LOCAL`)**: Cloud disabled, offline, or `< 2` open tasks (1 task needs 0 tokens).
- *  - **Rung 1 (`FLASH_LITE`)**: Default fast tier for `2..15` tasks or structured lists.
+ *  - **Rung 0 (`LOCAL`)**: Cloud disabled, offline, `< 2` open tasks for prioritization,
+ *    or sub-task title shorter than 3 characters.
+ *  - **Rung 1 (`FLASH_LITE`)**: Default fast tier for all `suggestSubTasks`, single-project
+ *    `suggestNextTasks`, and `2..15` open tasks in `prioritizeTasks`.
  *  - **Rung 2 (`FLASH`)**: Escalated only for dense lists (`>= 16` tasks across `>= 3`
- *    projects with `>= 5` undated/default-priority items) where semantic trade-offs matter.
+ *    projects with `>= 5` undated/default-priority items) or cross-project `suggestNextTasks`
+ *    spanning `>= 3` active projects with completion history.
  *  - **Rung 3 (Human schedule-conflict callout)**: Flags when `>= 4` tasks collide in
  *    the next 2 hours so the user chooses what to defer rather than letting AI guess.
  */
@@ -41,6 +44,40 @@ class AiRouter @Inject constructor() {
         return if (needsDeeperSynthesis) AiModelTier.FLASH else AiModelTier.FLASH_LITE
     }
 
+    fun chooseSubTaskTier(
+        title: String,
+        cloudEnabled: Boolean
+    ): AiModelTier {
+        if (!cloudEnabled || title.trim().length < MIN_SUBTASK_TITLE_LENGTH) {
+            return AiModelTier.LOCAL
+        }
+        return AiModelTier.FLASH_LITE
+    }
+
+    fun chooseNextTaskTier(
+        openTasks: List<Task>,
+        completedTasks: List<Task>,
+        categories: List<Category>,
+        targetCategoryId: String?,
+        cloudEnabled: Boolean
+    ): AiModelTier {
+        if (!cloudEnabled) return AiModelTier.LOCAL
+        if (targetCategoryId != null) return AiModelTier.FLASH_LITE
+
+        val validCategoryIds = categories.map { it.id }.toSet()
+        val activeProjects = (openTasks + completedTasks)
+            .filter { !it.isDeleted }
+            .mapNotNull { it.categoryId }
+            .filter { it in validCategoryIds }
+            .toSet()
+
+        val needsCrossProjectSynthesis = activeProjects.size >= ESCALATION_CATEGORY_THRESHOLD &&
+            completedTasks.count { it.isCompleted && !it.isDeleted } >= 3 &&
+            openTasks.count { !it.isCompleted && !it.isDeleted } >= 5
+
+        return if (needsCrossProjectSynthesis) AiModelTier.FLASH else AiModelTier.FLASH_LITE
+    }
+
     /**
      * Rung 3 human escalation: detects when too many deadlines collide imminently so
      * the plan explicitly invites the user to reschedule rather than pretending all
@@ -65,6 +102,7 @@ class AiRouter @Inject constructor() {
 
     companion object {
         const val MIN_CLOUD_TASKS = 2
+        const val MIN_SUBTASK_TITLE_LENGTH = 3
         const val ESCALATION_TASK_THRESHOLD = 16
         const val ESCALATION_CATEGORY_THRESHOLD = 3
         const val ESCALATION_AMBIGUOUS_THRESHOLD = 5

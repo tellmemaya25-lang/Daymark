@@ -2,6 +2,7 @@ package com.sabihon.todo.ui.categories
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
@@ -20,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -30,10 +33,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,13 +56,19 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.sabihon.todo.core.ui.components.AiConsentSheet
 import com.sabihon.todo.core.ui.components.CategoryCard
 import com.sabihon.todo.core.ui.components.EmptyState
 import com.sabihon.todo.core.ui.components.SabihonFab
 import com.sabihon.todo.core.ui.components.TaskRow
+import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.core.ui.theme.CategoryPaletteHex
+import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
 import com.sabihon.todo.core.ui.theme.parseColorHex
+import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
+import com.sabihon.todo.ui.home.SuggestedTasksCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -243,12 +256,22 @@ fun CategoryDetailScreen(
     onBack: () -> Unit = {},
     onTaskClick: (String) -> Unit = {},
     onAddTask: () -> Unit = {},
+    onAddPrefilledTask: (SuggestedTaskCandidate) -> Unit = {},
     viewModel: CategoryDetailViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    androidx.compose.runtime.LaunchedEffect(categoryId) {
+    LaunchedEffect(categoryId) {
         viewModel.loadCategory(categoryId)
+    }
+
+    LaunchedEffect(uiState.toastMessage) {
+        val message = uiState.toastMessage
+        if (message != null) {
+            snackbarHostState.showSnackbar(message = message, duration = SnackbarDuration.Short)
+            viewModel.clearToast()
+        }
     }
 
     Scaffold(
@@ -259,9 +282,38 @@ fun CategoryDetailScreen(
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
+                },
+                actions = {
+                    val surfaces = LocalDaymarkSurfaces.current
+                    Row(
+                        modifier = Modifier
+                            .padding(end = 12.dp)
+                            .clip(RoundedCornerShape(100.dp))
+                            .background(surfaces.accentSurface)
+                            .clickable { viewModel.requestSuggestions() }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AutoAwesome,
+                            contentDescription = "Suggest project tasks",
+                            tint = AccentBlue,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "Suggest",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = surfaces.onAccentSurface
+                        )
+                    }
                 }
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             SabihonFab(onClick = onAddTask)
         }
@@ -276,11 +328,35 @@ fun CategoryDetailScreen(
                 CircularProgressIndicator()
             }
         } else {
+            val categoryNames = remember(uiState.allCategories, uiState.category) {
+                if (uiState.allCategories.isNotEmpty()) {
+                    uiState.allCategories.associate { it.id to it.name }
+                } else {
+                    uiState.category?.let { mapOf(it.id to it.name) }.orEmpty()
+                }
+            }
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
             ) {
+                if (uiState.showSuggestionsCard) {
+                    item(key = "project_ai_suggestions") {
+                        SuggestedTasksCard(
+                            candidates = uiState.suggestedTasks,
+                            categoryNames = categoryNames,
+                            source = uiState.suggestionsSource,
+                            isLoading = uiState.isSuggesting,
+                            onAddCandidate = { viewModel.quickAddSuggestedTask(it) },
+                            onEditCandidate = onAddPrefilledTask,
+                            onDismissCandidate = { viewModel.dismissSuggestedTask(it) },
+                            onRefresh = { viewModel.requestSuggestions(forceRefresh = true) },
+                            onClose = { viewModel.closeSuggestions() },
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+
                 if (uiState.tasks.isEmpty()) {
                     item {
                         EmptyState(title = "No tasks in this category", description = "Add tasks to ${uiState.category?.name ?: "this category"}")
@@ -305,6 +381,14 @@ fun CategoryDetailScreen(
                     }
                 }
             }
+        }
+
+        if (uiState.showAiConsentSheet) {
+            AiConsentSheet(
+                onEnableCloudAi = { viewModel.onAiConsentDecided(true) },
+                onUseOfflineRules = { viewModel.onAiConsentDecided(false) },
+                onDismiss = viewModel::dismissAiConsent
+            )
         }
     }
 }
