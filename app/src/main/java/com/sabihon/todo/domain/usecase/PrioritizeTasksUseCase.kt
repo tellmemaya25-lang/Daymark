@@ -349,24 +349,29 @@ class PrioritizeTasksUseCase internal constructor(
         val raw = error.message.orEmpty()
         val lower = raw.lowercase()
         return when {
-            "firebasevertexai" in lower ||
-                "firebaseai" in lower ||
-                "generativelanguage" in lower ||
-                "has not been used" in lower ||
+            "has not been used" in lower ||
                 "service_disabled" in lower ||
-                "api_not_activated" in lower ->
-                "Enable 'Firebase AI Logic' in Firebase Console > AI Logic for project sabihon-todo, then tap ↻."
+                "api_not_activated" in lower ||
+                "is disabled" in lower ||
+                "not been enabled" in lower ->
+                "Enable 'Firebase AI Logic' (Gemini Developer API) in Firebase Console > Build > AI Logic for project sabihon-todo, then tap ↻."
             "app check" in lower || "appcheck" in lower || "attestation" in lower ->
-                "Firebase App Check blocked this build — disable App Check enforcement for AI Logic in Firebase Console, then tap ↻."
+                "Firebase App Check blocked this debug build — leave AI Logic unenforced in Firebase Console > App Check, then tap ↻."
+            "api_key_service_blocked" in lower ||
+                "api_key_android_app_blocked" in lower ||
+                "requests to this api" in lower ||
+                "are blocked" in lower ->
+                "API key restriction blocked Gemini — allow 'Firebase AI Logic API' & 'Generative Language API' (and your debug SHA-1) in Google Cloud Console > Credentials."
             "429" in lower || "quota" in lower || "resource_exhausted" in lower ->
                 "Gemini free-tier rate limit reached — wait a moment, then tap ↻."
             "unable to resolve host" in lower || "network" in lower || "offline" in lower || "socket" in lower ->
                 "Couldn't reach Gemini (check internet connection), then tap ↻."
-            "403" in lower || "permission_denied" in lower ->
-                "Firebase permission denied — check Firebase Console > AI Logic (Gemini Developer API), then tap ↻."
             else -> {
-                val brief = sanitizeLine(raw.lineSequence().firstOrNull(), 95) ?: "request failed"
-                "Gemini unavailable ($brief) — tap ↻ to retry."
+                val brief = sanitizeLine(
+                    raw.lineSequence().firstOrNull { it.isNotBlank() },
+                    120
+                ) ?: "request failed"
+                "Gemini error ($brief) — check Firebase Console > Build > AI Logic, then tap ↻."
             }
         }
     }

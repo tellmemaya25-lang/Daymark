@@ -126,17 +126,37 @@ class LocalSubTaskHeuristics @Inject constructor() {
                 "Submit payment before due date",
                 "Save receipt or confirmation"
             )
+            lower.containsAny("dinner", "lunch", "breakfast", "cook", "meal", "recipe", "bake", "prep food") -> listOf(
+                "Check recipe and ingredients on hand",
+                "Prep and chop ingredients",
+                "Cook main dish and tidy kitchen"
+            )
+            lower.containsAny("webinar", "meeting", "workshop", "seminar", "conference", "zoom", "interview", "standup") -> listOf(
+                "Confirm meeting link, time, and audio setup",
+                "Review agenda or talking points beforehand",
+                "Capture key takeaways and follow-up actions"
+            )
+            lower.containsAny("thesis", "dissertation", "research", "paper", "capstone", "manuscript", "literature") -> listOf(
+                "Gather key references and outline section goals",
+                "Draft the next focused section (45 min block)",
+                "Review citations, notes, and advisor feedback"
+            )
             lower.containsAny("workout", "gym", "run", "walk", "exercise", "yoga", "stretch", "train") -> listOf(
                 "Set out workout gear and water",
                 "Warm up for 5 minutes",
                 "Complete main session and cool down"
             )
             else -> {
-                val shortSubject = cleanTitle.take(36).trim()
+                val baseSubject = cleanTitle
+                    .replace(Regex("""^(?:follow up on|plan the next step for|gather details needed for)\s+""", RegexOption.IGNORE_CASE), "")
+                    .trim()
+                    .ifEmpty { cleanTitle }
+                    .take(36)
+                    .trim()
                 listOf(
-                    "Gather details needed for $shortSubject",
-                    "Complete the first main step",
-                    "Review and wrap up $shortSubject"
+                    "Outline what's needed for $baseSubject",
+                    "Complete the main work block",
+                    "Review and wrap up $baseSubject"
                 )
             }
         }

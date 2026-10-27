@@ -186,12 +186,31 @@ class SuggestSubTasksUseCase private constructor(
         val steps = clean(raw, existing)
         if (steps.isEmpty()) {
             Log.i(TAG, "steps: nothing usable came back, falling back to the offline splitter")
+            val errMsg = (cloudResult as? Result.Error)?.exception?.message.orEmpty().lowercase()
+            val fallbackHint = when {
+                "has not been used" in errMsg ||
+                    "service_disabled" in errMsg ||
+                    "api_not_activated" in errMsg ||
+                    "is disabled" in errMsg ||
+                    "not been enabled" in errMsg ->
+                    "Suggested offline — enable 'Firebase AI Logic' in Firebase Console > Build > AI Logic"
+                "app check" in errMsg || "appcheck" in errMsg || "attestation" in errMsg ->
+                    "Suggested offline — leave AI Logic unenforced in Firebase Console > App Check"
+                "api_key_service_blocked" in errMsg ||
+                    "api_key_android_app_blocked" in errMsg ||
+                    "are blocked" in errMsg ->
+                    "Suggested offline — allow Firebase AI Logic API on your Google Cloud API key"
+                "429" in errMsg || "quota" in errMsg || "resource_exhausted" in errMsg ->
+                    "Suggested offline — Gemini rate limit reached, try again shortly"
+                else ->
+                    "Suggested offline (Cloud AI unavailable right now)"
+            }
             return offline(
                 title = cleanTitle,
                 description = description,
                 existing = existing,
                 messageWhenEmpty = "AI didn't answer - try again",
-                noteWhenFallback = "Suggested offline (Cloud AI unavailable right now)"
+                noteWhenFallback = fallbackHint
             )
         }
 
