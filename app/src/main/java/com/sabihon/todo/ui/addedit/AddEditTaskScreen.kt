@@ -25,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -241,47 +242,69 @@ fun AddEditTaskScreen(
                 label = { Text("Title", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                 isError = uiState.titleError != null,
                 supportingText = { uiState.titleError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
-                leadingIcon = {
-                    if (recogniserAvailable) {
-                        DictationMic(
-                            listening = isSpeaking(DictationTarget.Title),
-                            description = "Dictate title",
-                            onClick = {
-                                dictate(
-                                    target = DictationTarget.Title,
-                                    baseText = uiState.title,
-                                    multiline = false,
-                                    onText = viewModel::onTitleChange
+                // Everything actionable sits on the right, next to the text it acts on:
+                // dictate, clear, then fill. The left edge carries no icon any more, so
+                // the title starts at the field's own padding and reads as one line of
+                // typing rather than a toolbar with a caption.
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (recogniserAvailable) {
+                            DictationMic(
+                                listening = isSpeaking(DictationTarget.Title),
+                                description = "Dictate title",
+                                onClick = {
+                                    dictate(
+                                        target = DictationTarget.Title,
+                                        baseText = uiState.title,
+                                        multiline = false,
+                                        onText = viewModel::onTitleChange
+                                    )
+                                }
+                            )
+                        }
+
+                        // Only while there is something to clear: a permanently drawn
+                        // "x" on an empty field is a button that does nothing.
+                        if (uiState.title.isNotEmpty()) {
+                            IconButton(
+                                onClick = { viewModel.onTitleChange("") },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Clear,
+                                    contentDescription = "Clear title",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
-                        )
-                    }
-                },
-                trailingIcon = {
-                    if (uiState.isQuickAddBusy) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = AccentBlue
-                        )
-                    } else {
-                        // Enabled only with text in the box: there is nothing to parse
-                        // in an empty sentence, and a dead button is better than a
-                        // button that answers "nothing found".
-                        IconButton(
-                            onClick = viewModel::onQuickAdd,
-                            enabled = uiState.title.isNotBlank()
-                        ) {
-                            Icon(
-                                Icons.Filled.AutoAwesome,
-                                contentDescription = "Fill the form from this sentence",
-                                tint = if (uiState.title.isNotBlank()) {
-                                    AccentBlue
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                                },
-                                modifier = Modifier.size(20.dp)
+                        }
+
+                        if (uiState.isQuickAddBusy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = AccentBlue
                             )
+                        } else {
+                            // Enabled only with text in the box: there is nothing to parse
+                            // in an empty sentence, and a dead button is better than a
+                            // button that answers "nothing found".
+                            IconButton(
+                                onClick = viewModel::onQuickAdd,
+                                enabled = uiState.title.isNotBlank(),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.AutoAwesome,
+                                    contentDescription = "Fill the form from this sentence",
+                                    tint = if (uiState.title.isNotBlank()) {
+                                        AccentBlue
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                    },
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 },
