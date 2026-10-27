@@ -175,7 +175,7 @@ fun SabihonNavHost(
                             initialPriority = candidate.priority.name,
                             initialDueAt = candidate.dueOffsetHours?.let {
                                 System.currentTimeMillis() + it * 3_600_000L
-                            }
+                            } ?: -1L
                         )
                     )
                 }
@@ -189,7 +189,7 @@ fun SabihonNavHost(
                 initialDescription = args.initialDescription,
                 initialCategoryId = args.initialCategoryId,
                 initialPriority = args.initialPriority,
-                initialDueAt = args.initialDueAt,
+                initialDueAt = args.initialDueAt.takeIf { it > 0L },
                 onBack = { navController.popBackStack() },
                 onSaved = { navController.popBackStack() }
             )

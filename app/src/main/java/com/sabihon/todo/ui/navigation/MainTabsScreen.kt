@@ -209,7 +209,7 @@ fun MainTabsScreen(
                                     initialPriority = candidate.priority.name,
                                     initialDueAt = candidate.dueOffsetHours?.let {
                                         System.currentTimeMillis() + it * 3_600_000L
-                                    }
+                                    } ?: -1L
                                 )
                             )
                         }
