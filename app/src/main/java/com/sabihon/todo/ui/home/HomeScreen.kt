@@ -3,7 +3,6 @@ package com.sabihon.todo.ui.home
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,8 +18,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -62,6 +62,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -69,7 +70,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -92,7 +94,9 @@ import com.sabihon.todo.core.ui.util.isCompactHeight
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.Task
 import java.text.SimpleDateFormat
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -129,6 +133,7 @@ fun HomeScreen(
     val revealCoordinator = remember { RevealCoordinator() }
     var completedExpanded by remember { mutableStateOf(true) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var showMonthlyCalendar by remember { mutableStateOf(false) }
     val bottomSheetState = rememberModalBottomSheetState()
     val addSheetState = rememberModalBottomSheetState()
 
@@ -201,45 +206,39 @@ fun HomeScreen(
             }
 
             /*
-             * Everything on this page scrolls, header included, and the week strip pins
-             * itself when it reaches the top.
+             * When scrolling downward reaches the weekly calendar (`HEADER_ITEM_KEY` and
+             * `MOMENTUM_ITEM_KEY` have scrolled clear above the viewport), smoothly glide
+             * the weekly calendar down from the top of the viewport onto the bottom of
+             * HomeScreen (directly above the bottom navigation bar).
              *
-             * `stripStuck` is that moment, and it does two jobs: it fades in the strip's
-             * divider so the pinned band reads as a separate surface, and it arms the
-             * day swipe. Arming is the important half - Home is page 0 of the tab pager,
-             * so an always-on horizontal drag here would steal the swipe that changes
-             * tabs. Until the strip is pinned, that drag belongs to the pager.
+             * `isSuccessfullyAtBottom` becomes true only once the downward spring animation
+             * has arrived at the bottom, arming:
+             *   - Swipe left / right -> move forward / backward in the calendar
+             *   - Swipe upward       -> open the full monthly calendar sheet
              */
-            val stripStuck by remember {
+            val reachedWeeklyCalendar by remember {
                 derivedStateOf {
                     val info = listState.layoutInfo
-                    val week = info.visibleItemsInfo.firstOrNull { it.key == WEEK_ITEM_KEY }
-                        ?: return@derivedStateOf false
-                    if (week.offset > info.viewportStartOffset) return@derivedStateOf false
-                    // The strip is pinned once the card above it has scrolled clear. If
-                    // that card is still on screen the strip is only part-way up, and a
-                    // horizontal drag there is still the user's attempt to change tabs.
-                    val momentum = info.visibleItemsInfo.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
-                    momentum == null || momentum.offset + momentum.size <= info.viewportStartOffset
+                    val visible = info.visibleItemsInfo
+                    if (visible.isEmpty()) return@derivedStateOf false
+                    val headerVisible = visible.any { it.key == HEADER_ITEM_KEY }
+                    val momentum = visible.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
+                    val momentumStillVisible = momentum != null &&
+                        momentum.offset + momentum.size > info.viewportStartOffset + 8
+                    !headerVisible && !momentumStillVisible
                 }
             }
-            val stripDividerAlpha by animateFloatAsState(
-                targetValue = if (stripStuck) 1f else 0f,
-                animationSpec = tween(180),
-                label = "stripDivider"
+            val dockProgress by animateFloatAsState(
+                targetValue = if (reachedWeeklyCalendar) 1f else 0f,
+                animationSpec = spring(
+                    dampingRatio = 0.84f,
+                    stiffness = Spring.StiffnessLow
+                ),
+                label = "weekCalendarDockProgress"
             )
-
-            // Read here, not inside the LazyColumn builder: that lambda is not
-            // @Composable, so MaterialTheme cannot be touched from within it.
-            val stripBg = MaterialTheme.colorScheme.background
-
-            // Right is yesterday, left is tomorrow – the direction a paper calendar moves
-            // when you flip back and then forward again.
-            val shiftDay: (Int) -> Unit = { days ->
-                viewModel.onAction(
-                    HomeAction.SelectDate(uiState.selectedDate.plusDays(days.toLong()))
-                )
-            }
+            val isSuccessfullyAtBottom = reachedWeeklyCalendar && dockProgress >= 0.98f
+            var containerHeightPx by remember { mutableIntStateOf(0) }
+            var dockedBarHeightPx by remember { mutableIntStateOf(0) }
 
             PullToRefreshBox(
                 isRefreshing = uiState.isRefreshing,
@@ -248,16 +247,18 @@ fun HomeScreen(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { containerHeightPx = it.height }
+            ) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
+                    modifier = Modifier.fillMaxSize()
                 ) {
                 // The header scrolls with everything else. A short window gets the
                 // compact variant, which is about the height available, not about what
-                // sticks - nothing in this list is exempt from scrolling except the strip.
+                // sticks - nothing in this list is exempt from scrolling.
                 item(key = HEADER_ITEM_KEY) {
                     if (compactHeader) {
                         HomeHeaderCompact(
@@ -286,29 +287,15 @@ fun HomeScreen(
                     )
                 }
 
-                stickyHeader(key = WEEK_ITEM_KEY) {
-                    Column(modifier = Modifier.background(stripBg)) {
-                        WeekStripBar(
-                            days = uiState.weekDays,
-                            selected = uiState.selectedDate,
-                            onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
-                            onShiftDay = shiftDay,
-                            // The drag only exists while pinned. With no handler
-                            // attached the gesture falls through to the tab pager,
-                            // which is what should happen while the strip is at rest.
-                            swipeEnabled = stripStuck
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(
-                                    MaterialTheme.colorScheme.onSurface.copy(
-                                        alpha = 0.10f * stripDividerAlpha
-                                    )
-                                )
-                        )
-                    }
+                item(key = WEEK_ITEM_KEY) {
+                    WeekStrip(
+                        days = uiState.weekDays,
+                        selected = uiState.selectedDate,
+                        onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
+                        modifier = Modifier.graphicsLayer {
+                            alpha = (1f - dockProgress * 3.5f).coerceIn(0f, 1f)
+                        }
+                    )
                 }
 
                 // Smart AI actions sit directly under the week strip so both Task
@@ -447,7 +434,34 @@ fun HomeScreen(
                     }
                 }
 
-                item { Spacer(Modifier.height(110.dp)) }
+                item { Spacer(Modifier.height(320.dp)) }
+                }
+
+                if (dockProgress > 0.005f) {
+                    val travelDistancePx = (containerHeightPx - dockedBarHeightPx)
+                        .coerceAtLeast(0)
+                        .toFloat()
+                    DockedWeeklyCalendarBar(
+                        days = uiState.weekDays,
+                        selectedDate = uiState.selectedDate,
+                        isDockedAtBottom = isSuccessfullyAtBottom,
+                        onSelectDate = { date ->
+                            viewModel.onAction(HomeAction.SelectDate(date))
+                        },
+                        onShiftDays = { deltaDays ->
+                            viewModel.onAction(
+                                HomeAction.SelectDate(uiState.selectedDate.plusDays(deltaDays))
+                            )
+                        },
+                        onExpandMonthCalendar = { showMonthlyCalendar = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .onSizeChanged { dockedBarHeightPx = it.height }
+                            .graphicsLayer {
+                                translationY = -travelDistancePx * (1f - dockProgress)
+                                alpha = (dockProgress * 4f).coerceIn(0f, 1f)
+                            }
+                    )
                 }
             }
             }
@@ -787,6 +801,29 @@ fun HomeScreen(
             }
         }
 
+        if (showMonthlyCalendar) {
+            val daysWithTasks = remember(uiState.allTasks) {
+                val today = LocalDate.now()
+                val zone = ZoneId.systemDefault()
+                uiState.allTasks
+                    .filter { !it.isCompleted }
+                    .map { task ->
+                        val dueDate = task.dueAt
+                            ?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+                            ?: today
+                        if (dueDate.isBefore(today)) today else dueDate
+                    }
+                    .map { it.toEpochDay() }
+                    .toSet()
+            }
+            MonthlyCalendarSheet(
+                selectedDate = uiState.selectedDate,
+                daysWithTasks = daysWithTasks,
+                onSelectDate = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
+                onDismiss = { showMonthlyCalendar = false }
+            )
+        }
+
         if (uiState.showAiConsentSheet) {
             AiConsentSheet(
                 onEnableCloudAi = { viewModel.onAction(HomeAction.DecideAiConsent(true)) },
@@ -963,59 +1000,6 @@ private fun SearchCircleButton(
 
 /* Prioritize pill                                                     */
 /* ------------------------------------------------------------------ */
-
-/**
- * The sparkle that opens the focus-plan sheet.
- *
- * Only drawn when there are at least two open tasks: a plan that ranks one task is not
- * a plan, and offering it on an empty list is offering nothing.
- */
-/**
- * The week strip, pinned in the top bar, with a horizontal drag that moves the
- * selected day by one.
- *
- * The gesture is always live here – the whole point of moving the strip out of the list
- * is that it is permanently on screen, so there is no "only when pinned" state left to
- * wait for. The cost is honest: a horizontal drag started *on the strip* moves the day
- * instead of the tabs, because this handler consumes it before the pager sees it. Tab
- * swiping still works everywhere else on the screen – the header, the momentum card and
- * the task list all still belong to the pager.
- *
- * Right is yesterday, left is tomorrow: the direction a paper calendar moves when you
- * flip back and then forward again.
- */
-@Composable
-private fun WeekStripBar(
-    days: List<WeekDay>,
-    selected: LocalDate,
-    onSelect: (LocalDate) -> Unit,
-    onShiftDay: (Int) -> Unit,
-    swipeEnabled: Boolean,
-    modifier: Modifier = Modifier
-) {
-    WeekStrip(
-        days = days,
-        selected = selected,
-        onSelect = onSelect,
-        modifier = modifier.pointerInput(selected, swipeEnabled) {
-            if (!swipeEnabled) return@pointerInput
-            // toPx() lives out here: the gesture callbacks are plain lambdas, not a
-            // Density scope. Re-keyed on `selected` so a drag always resolves against
-            // the day that is on screen.
-            val threshold = 48.dp.toPx()
-            var dragged = 0f
-            detectHorizontalDragGestures(
-                onDragStart = { dragged = 0f },
-                onDragEnd = {
-                    when {
-                        dragged > threshold -> onShiftDay(-1)
-                        dragged < -threshold -> onShiftDay(1)
-                    }
-                }
-            ) { _, amount -> dragged += amount }
-        }
-    )
-}
 
 /**
  * "Prioritize Task" – a full-width row of its own.

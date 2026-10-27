@@ -22,12 +22,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -55,13 +59,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.SabihonApp
 import com.sabihon.todo.core.datastore.AiPreferences
 import com.sabihon.todo.core.datastore.ThemePref
-import com.sabihon.todo.core.ui.components.BrandHeader
 import com.sabihon.todo.core.ui.components.GroupedCard
 import com.sabihon.todo.core.ui.components.GroupedDivider
 import com.sabihon.todo.core.ui.components.GroupedRow
@@ -105,6 +111,7 @@ fun SettingsScreen(
     var showThemeSheet by remember { mutableStateOf(false) }
     var showApiKeySheet by remember { mutableStateOf(false) }
     var apiKeyDraft by remember { mutableStateOf("") }
+    var apiKeyVisible by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -141,16 +148,7 @@ fun SettingsScreen(
                 .padding(padding)
         ) {
             item {
-                BrandHeader(
-                    avatarInitials = uiState.displayName.take(2).uppercase().ifBlank { "DM" },
-                    avatarUrl = uiState.localPhotoUri?.toString() ?: uiState.photoUrl,
-                    onAvatarClick = onNavigateToProfile,
-                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp)
-                )
-            }
-
-            item {
-                Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 28.dp)) {
+                Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 24.dp)) {
                     Text(
                         text = "Your app, your way.",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
@@ -237,6 +235,7 @@ fun SettingsScreen(
                             value = keyStatus,
                             onClick = {
                                 apiKeyDraft = uiState.geminiApiKey
+                                apiKeyVisible = false
                                 showApiKeySheet = true
                             }
                         )
@@ -364,6 +363,29 @@ fun SettingsScreen(
                     onValueChange = { apiKeyDraft = it },
                     placeholder = { Text("AIzaSy...") },
                     singleLine = true,
+                    visualTransformation = if (apiKeyVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                            Icon(
+                                imageVector = if (apiKeyVisible) {
+                                    Icons.Filled.VisibilityOff
+                                } else {
+                                    Icons.Filled.Visibility
+                                },
+                                contentDescription = if (apiKeyVisible) {
+                                    "Hide API key"
+                                } else {
+                                    "Show API key"
+                                },
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
