@@ -42,7 +42,8 @@ fun WeekStrip(
     days: List<WeekDay>,
     selected: LocalDate,
     onSelect: (LocalDate) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
 ) {
     if (days.isEmpty()) return
 
@@ -55,7 +56,7 @@ fun WeekStrip(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = if (compact) 9.dp else 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -66,6 +67,7 @@ fun WeekStrip(
                 isSelected = isSelected,
                 selectedSurface = selectedSurface,
                 onSelectedSurface = onSelectedSurface,
+                compact = compact,
                 onClick = { onSelect(day.date) }
             )
         }
@@ -78,6 +80,7 @@ private fun DayCell(
     isSelected: Boolean,
     selectedSurface: Color,
     onSelectedSurface: Color,
+    compact: Boolean = false,
     onClick: () -> Unit
 ) {
     val background by animateColorAsState(
@@ -99,7 +102,12 @@ private fun DayCell(
         label = "dayNumber"
     )
     val pillHeight by animateDpAsState(
-        targetValue = if (isSelected) 68.dp else 58.dp,
+        targetValue = when {
+            isSelected && compact -> 64.dp
+            isSelected -> 68.dp
+            compact -> 54.dp
+            else -> 58.dp
+        },
         animationSpec = tween(220),
         label = "dayHeight"
     )
@@ -115,7 +123,7 @@ private fun DayCell(
                 role = Role.Tab,
                 onClick = onClick
             )
-            .padding(vertical = 8.dp),
+            .padding(vertical = if (compact) 6.dp else 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -127,7 +135,7 @@ private fun DayCell(
             ),
             color = labelColor
         )
-        Spacer(Modifier.height(5.dp))
+        Spacer(Modifier.height(if (compact) 4.dp else 5.dp))
         Text(
             text = "${day.dayOfMonth}",
             style = MaterialTheme.typography.titleMedium.copy(
@@ -136,7 +144,7 @@ private fun DayCell(
             ),
             color = numberColor
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(if (compact) 3.dp else 4.dp))
         Box(
             modifier = Modifier
                 .size(3.dp)

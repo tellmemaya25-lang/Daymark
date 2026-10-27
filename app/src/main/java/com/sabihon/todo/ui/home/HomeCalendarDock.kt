@@ -105,20 +105,23 @@ fun DockedWeeklyCalendarBar(
         label = "dockVisualDragX"
     )
     val visualOffsetY by animateFloatAsState(
-        targetValue = if (isDockedAtBottom) (dragY * 0.20f).coerceIn(-28f, 10f) else 0f,
+        targetValue = if (isDockedAtBottom) (dragY * 0.20f).coerceIn(-24f, 0f) else 0f,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "dockVisualDragY"
     )
 
     val weekMonday = remember(selectedDate) { selectedDate.with(DayOfWeek.MONDAY) }
-    val dockShape = RoundedCornerShape(22.dp)
+    val dockShape = RoundedCornerShape(
+        topStart = 24.dp,
+        topEnd = 24.dp,
+        bottomStart = 0.dp,
+        bottomEnd = 0.dp
+    )
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp)
             .graphicsLayer {
-                translationX = visualOffsetX
                 translationY = visualOffsetY
             }
             .shadow(
@@ -189,7 +192,7 @@ fun DockedWeeklyCalendarBar(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 6.dp, bottom = 2.dp),
+                .padding(top = 4.dp, bottom = 1.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Subtle pull-up header cue – also tappable to open the full month calendar.
@@ -197,7 +200,7 @@ fun DockedWeeklyCalendarBar(
                 modifier = Modifier
                     .clip(RoundedCornerShape(100.dp))
                     .clickable(enabled = isDockedAtBottom) { onExpandMonthCalendar() }
-                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                    .padding(horizontal = 12.dp, vertical = 1.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
@@ -222,12 +225,12 @@ fun DockedWeeklyCalendarBar(
                 targetState = weekMonday,
                 transitionSpec = {
                     val forward = targetState.isAfter(initialState)
-                    val enter = slideInHorizontally(tween(240)) { width ->
+                    val enter = slideInHorizontally(tween(340)) { width ->
                         if (forward) width / 2 else -width / 2
-                    } + fadeIn(tween(200))
-                    val exit = slideOutHorizontally(tween(220)) { width ->
+                    } + fadeIn(tween(280))
+                    val exit = slideOutHorizontally(tween(320)) { width ->
                         if (forward) -width / 2 else width / 2
-                    } + fadeOut(tween(160))
+                    } + fadeOut(tween(220))
                     (enter togetherWith exit).using(SizeTransform(clip = false))
                 },
                 label = "dockedWeekSlide"
@@ -252,7 +255,11 @@ fun DockedWeeklyCalendarBar(
                 WeekStrip(
                     days = sliceDays,
                     selected = selectedDate,
-                    onSelect = onSelectDate
+                    onSelect = onSelectDate,
+                    compact = true,
+                    modifier = Modifier.graphicsLayer {
+                        translationX = visualOffsetX
+                    }
                 )
             }
         }

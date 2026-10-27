@@ -12,15 +12,17 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -185,9 +187,13 @@ fun HomeScreen(
         }
     }
 
+    // Outer MainTabsScreen Scaffold already consumes bottom navigation-bar insets for
+    // RoundedBottomNavBar; restricting this nested Scaffold to statusBars prevents a
+    // duplicate bottom inset gap so DockedWeeklyCalendarBar sits flush on the bottom nav.
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets.statusBars
     ) { innerPadding ->
         if (uiState.isLoading) {
             LoadingShimmer(modifier = Modifier.padding(innerPadding))
@@ -230,13 +236,13 @@ fun HomeScreen(
             }
             val dockProgress by animateFloatAsState(
                 targetValue = if (reachedWeeklyCalendar) 1f else 0f,
-                animationSpec = spring(
-                    dampingRatio = 0.84f,
-                    stiffness = Spring.StiffnessLow
+                animationSpec = tween(
+                    durationMillis = 780,
+                    easing = FastOutSlowInEasing
                 ),
                 label = "weekCalendarDockProgress"
             )
-            val isSuccessfullyAtBottom = reachedWeeklyCalendar && dockProgress >= 0.98f
+            val isSuccessfullyAtBottom = reachedWeeklyCalendar && dockProgress >= 0.99f
             var containerHeightPx by remember { mutableIntStateOf(0) }
             var dockedBarHeightPx by remember { mutableIntStateOf(0) }
 
@@ -293,7 +299,7 @@ fun HomeScreen(
                         selected = uiState.selectedDate,
                         onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
                         modifier = Modifier.graphicsLayer {
-                            alpha = (1f - dockProgress * 3.5f).coerceIn(0f, 1f)
+                            alpha = (1f - dockProgress * 2.2f).coerceIn(0f, 1f)
                         }
                     )
                 }
@@ -459,7 +465,7 @@ fun HomeScreen(
                             .onSizeChanged { dockedBarHeightPx = it.height }
                             .graphicsLayer {
                                 translationY = -travelDistancePx * (1f - dockProgress)
-                                alpha = (dockProgress * 4f).coerceIn(0f, 1f)
+                                alpha = (dockProgress * 5f).coerceIn(0f, 1f)
                             }
                     )
                 }
