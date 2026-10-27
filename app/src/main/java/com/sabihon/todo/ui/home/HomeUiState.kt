@@ -109,7 +109,14 @@ data class HomeUiState(
     /** Validated focus rank map (`taskId -> 1..N`) used when `HomeSort.SMART` is active. */
     val aiFocusRanks: Map<String, Int> = emptyMap(),
     val showPriorityUndo: Boolean = false,
-    val priorityUndoCount: Int = 0
+    val priorityUndoCount: Int = 0,
+
+    // ---- suggested steps (quick Add-sub-task sheet) ----
+    /** Steps offered for the task whose sheet is open; empty hides the chip row. */
+    val suggestedSteps: List<String> = emptyList(),
+    val isSuggestingSteps: Boolean = false,
+    /** Why there are none, when that is worth saying. */
+    val suggestedStepsMessage: String? = null
 )
 
 sealed interface HomeAction {
@@ -123,6 +130,14 @@ sealed interface HomeAction {
     /** Clears the habit reschedule confirmation once it has been shown. */
     data object ClearHabitLabel : HomeAction
     data class AddSubTask(val taskId: String, val subTaskTitle: String) : HomeAction
+
+    /** Asks for steps for the task whose sub-task sheet is open. */
+    data class SuggestSubTasks(val taskId: String) : HomeAction
+
+    /** Accepts one offered step straight into the checklist. */
+    data class AcceptSuggestedStep(val taskId: String, val step: String) : HomeAction
+
+    object DismissSuggestedSteps : HomeAction
     data class ToggleSubTask(val taskId: String, val subTaskId: String, val isDone: Boolean) : HomeAction
     data class SetFilter(val filter: HomeFilter) : HomeAction
     data class SetSort(val sort: HomeSort) : HomeAction

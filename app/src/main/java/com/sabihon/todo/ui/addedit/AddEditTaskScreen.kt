@@ -8,11 +8,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -81,6 +84,7 @@ import com.sabihon.todo.core.ui.components.ConfirmDialog
 import com.sabihon.todo.core.ui.components.DictationMic
 import com.sabihon.todo.core.ui.components.DictationStrip
 import com.sabihon.todo.core.ui.components.SubTaskRoundedCheckbox
+import com.sabihon.todo.core.ui.components.SuggestedStepChip
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
@@ -539,7 +543,31 @@ fun AddEditTaskScreen(
                 )
             }
 
-            Text("Sub-tasks", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurface)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Sub-tasks",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                SuggestStepsAction(
+                    busy = uiState.isSuggestingSubTasks,
+                    hasSuggestions = uiState.suggestedSubTasks.isNotEmpty(),
+                    onSuggest = viewModel::onSuggestSubTasks
+                )
+            }
+
+            SuggestedStepSection(
+                steps = uiState.suggestedSubTasks,
+                message = uiState.subTaskSuggestionMessage,
+                onAccept = viewModel::onAcceptSuggestedSubTask,
+                onAcceptAll = viewModel::onAcceptAllSuggestedSubTasks,
+                onDismiss = viewModel::onDismissSuggestedSubTasks
+            )
+
             var editingSubId by remember { mutableStateOf<String?>(null) }
             var editingSubText by remember { mutableStateOf("") }
             uiState.subTasks.forEach { sub ->
@@ -802,6 +830,133 @@ private fun safeFormatTime(millis: Long): String {
 /**
  * Pill used for the None / Daily / Weekly choice.
  */
+/* ------------------------------------------------------------------ */
+/* Suggested steps                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The ✨ half of the Sub-tasks header.
+ *
+ * It turns into a spinner rather than disabling silently, because a button that does
+ * nothing for two seconds reads as a broken button. While busy it ignores taps: the use
+ * case has its own single-flight lock, but the lock quietly refusing is not something to
+ * rely on when the alternative is one line of `if`.
+ */
+@Composable
+private fun SuggestStepsAction(
+    busy: Boolean,
+    hasSuggestions: Boolean,
+    onSuggest: () -> Unit
+) {
+    TextButton(
+        onClick = { if (!busy) onSuggest() },
+        enabled = !busy,
+        shape = RoundedCornerShape(100.dp),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+    ) {
+        if (busy) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+                color = AccentBlue
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Filled.AutoAwesome,
+                contentDescription = null,
+                tint = AccentBlue,
+                modifier = Modifier.size(15.dp)
+            )
+        }
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text = if (hasSuggestions) "Suggest more" else "Suggest steps",
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
+            color = AccentBlue
+        )
+    }
+}
+
+/**
+ * Offered steps, or the one line explaining why there are none.
+ *
+ * The message is deliberately specific - "Smart AI is off", "AI didn't answer", "Daily
+ * AI limit reached" - because a single "couldn't suggest steps" is what made the
+ * quick-add fallback impossible to diagnose for weeks.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SuggestedStepSection(
+    steps: List<String>,
+    message: String?,
+    onAccept: (String) -> Unit,
+    onAcceptAll: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    if (steps.isEmpty() && message == null) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (steps.isNotEmpty()) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                steps.forEach { step ->
+                    SuggestedStepChip(text = step, onClick = { onAccept(step) })
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Adding six steps one tap at a time is the kind of friction that makes
+                // people stop using the feature, so the whole row is one tap away.
+                if (steps.size > 1) {
+                    TextButton(
+                        onClick = onAcceptAll,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "Add all ${steps.size}",
+                            style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                            color = AccentBlue,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(
+                    onClick = onDismiss,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        "Dismiss",
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        if (message != null) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 @Composable
 private fun RepeatChip(
     label: String,

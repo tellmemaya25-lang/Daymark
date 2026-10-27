@@ -22,6 +22,7 @@ import com.sabihon.todo.domain.usecase.PrioritizationUndoSnapshot
 import com.sabihon.todo.domain.usecase.PrioritizeTasksUseCase
 import com.sabihon.todo.domain.usecase.RestoreTaskUseCase
 import com.sabihon.todo.domain.usecase.ToggleCompleteUseCase
+import com.sabihon.todo.domain.usecase.SuggestSubTasksUseCase
 import com.sabihon.todo.domain.usecase.UpdateTaskUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -55,6 +56,7 @@ class HomeViewModel @Inject constructor(
     private val localPriorityScorer: LocalPriorityScorer,
     private val aiSnapshotCache: AiSnapshotCache,
     private val aiPreferences: AiPreferenceStore,
+    private val suggestSubTasksUseCase: SuggestSubTasksUseCase,
     private val avatarStore: AvatarStore,
     private val auth: FirebaseAuth
 ) : ViewModel() {
@@ -298,6 +300,21 @@ class HomeViewModel @Inject constructor(
             is HomeAction.ClearError -> _uiState.update { it.copy(errorMessage = null) }
             is HomeAction.ClearHabitLabel -> _uiState.update { it.copy(habitNextLabel = null) }
             is HomeAction.AddSubTask -> addSubTask(action.taskId, action.subTaskTitle)
+            is HomeAction.SuggestSubTasks -> suggestSteps(action.taskId)
+            is HomeAction.AcceptSuggestedStep -> {
+                addSubTask(action.taskId, action.step)
+                // Drop the accepted step so the row shrinks as steps land, and clear the
+                // message: it explained an empty state that no longer applies.
+                _uiState.update { current ->
+                    current.copy(
+                        suggestedSteps = current.suggestedSteps - action.step,
+                        suggestedStepsMessage = null
+                    )
+                }
+            }
+            HomeAction.DismissSuggestedSteps -> _uiState.update {
+                it.copy(suggestedSteps = emptyList(), suggestedStepsMessage = null)
+            }
             is HomeAction.ToggleSubTask -> toggleSubTask(action.taskId, action.subTaskId, action.isDone)
             is HomeAction.SetFilter -> {
                 _uiState.update { current ->
@@ -602,6 +619,44 @@ class HomeViewModel @Inject constructor(
             )
             val updated = task.copy(subTasks = task.subTasks + newSub)
             updateTaskUseCase(updated)
+        }
+    }
+
+    /**
+     * Offers steps for an existing task, from the quick sheet, without opening the editor.
+     *
+     * The task's title and notes are the input, and the steps it already has are excluded
+     * here rather than only in the UI: the suggestion is for the gap, not for a list the
+     * user has already written.
+     */
+    private fun suggestSteps(taskId: String) {
+        val task = _uiState.value.allTasks.find { it.id == taskId } ?: return
+        if (_uiState.value.isSuggestingSteps) return
+
+        _uiState.update { it.copy(isSuggestingSteps = true, suggestedStepsMessage = null) }
+        viewModelScope.launch {
+            try {
+                val result = suggestSubTasksUseCase(
+                    title = task.title,
+                    description = task.description.takeIf { it.isNotBlank() },
+                    existingSubTasks = task.subTasks.map { it.title },
+                    uid = auth.currentUser?.uid
+                )
+                _uiState.update { current ->
+                    current.copy(
+                        isSuggestingSteps = false,
+                        suggestedSteps = result.steps,
+                        suggestedStepsMessage = result.message
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSuggestingSteps = false,
+                        suggestedStepsMessage = "Couldn't suggest steps - try again"
+                    )
+                }
+            }
         }
     }
 

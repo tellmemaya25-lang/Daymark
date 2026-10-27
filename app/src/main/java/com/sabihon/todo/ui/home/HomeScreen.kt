@@ -7,6 +7,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +37,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -78,6 +82,7 @@ import com.sabihon.todo.core.ui.components.FilterEmptyState
 import com.sabihon.todo.core.ui.components.LoadingShimmer
 import com.sabihon.todo.core.ui.components.MomentumCard
 import com.sabihon.todo.core.ui.components.RevealCoordinator
+import com.sabihon.todo.core.ui.components.SuggestedStepChip
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
 import com.sabihon.todo.core.ui.components.WeekStrip
 import com.sabihon.todo.domain.model.Priority
@@ -90,7 +95,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(
     onNavigateToCategories: () -> Unit = {},
@@ -602,6 +607,12 @@ fun HomeScreen(
                         )
                     }
 
+                    // A different task means a different set of steps; carrying the last
+                    // one over would offer steps for a task the user is no longer editing.
+                    LaunchedEffect(taskForNewSubTask?.id) {
+                        viewModel.onAction(HomeAction.DismissSuggestedSteps)
+                    }
+
                     Text(
                         text = "Add new task",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
@@ -612,6 +623,89 @@ fun HomeScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    // Steps for the task you are already looking at, without leaving the
+                    // sheet. Accepting one adds it immediately - the whole point of being
+                    // in this sheet instead of the full editor is fewer taps.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = {
+                                taskForNewSubTask?.let { task ->
+                                    viewModel.onAction(HomeAction.SuggestSubTasks(task.id))
+                                }
+                            },
+                            enabled = !uiState.isSuggestingSteps,
+                            shape = RoundedCornerShape(100.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            if (uiState.isSuggestingSteps) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = AccentBlue
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = AccentBlue,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                text = if (uiState.suggestedSteps.isEmpty()) "Suggest steps" else "Suggest more",
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                ),
+                                color = AccentBlue
+                            )
+                        }
+                    }
+
+                    if (uiState.suggestedSteps.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            uiState.suggestedSteps.forEach { step ->
+                                SuggestedStepChip(
+                                    text = step,
+                                    onClick = {
+                                        taskForNewSubTask?.let { task ->
+                                            viewModel.onAction(
+                                                HomeAction.AcceptSuggestedStep(task.id, step)
+                                            )
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Spacer(Modifier.weight(1f))
+                            TextButton(
+                                onClick = {
+                                    viewModel.onAction(HomeAction.DismissSuggestedSteps)
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    "Dismiss",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    uiState.suggestedStepsMessage?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
                     OutlinedTextField(
                         value = newSubTaskTitle,
