@@ -192,7 +192,6 @@ fun MainTabsScreen(
             saveableStateHolder.SaveableStateProvider(MAIN_TABS[page].key) {
                 when (page) {
                     0 -> HomeScreen(
-                        onNavigateToAllTasks = { navController.navigate(Route.AllTasks) },
                         onNavigateToCategories = { navController.navigate(Route.Categories) },
                         onNavigateToTaskDetail = { navController.navigate(Route.AddEditTask(it)) },
                         onNavigateToEditTask = { navController.navigate(Route.AddEditTask(it)) },
@@ -207,6 +206,7 @@ fun MainTabsScreen(
                     PROJECTS_PAGE -> ProjectsScreen(
                         onProjectClick = { navController.navigate(Route.CategoryDetail(it)) },
                         onProfileClick = { navController.navigate(Route.Profile) },
+                        onAllTasksClick = { navController.navigate(Route.AllTasks) },
                         addRequest = addProjectRequest,
                         onAddRequestHandled = { addProjectRequest = 0 }
                     )

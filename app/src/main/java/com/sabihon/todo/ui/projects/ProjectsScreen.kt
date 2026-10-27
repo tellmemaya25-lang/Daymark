@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Delete
@@ -72,6 +73,8 @@ import com.sabihon.todo.core.ui.theme.CategoryPaletteHex
 fun ProjectsScreen(
     onProjectClick: (String) -> Unit = {},
     onProfileClick: () -> Unit = {},
+    /** Opens the flat list of every task, whatever project it belongs to. */
+    onAllTasksClick: () -> Unit = {},
     /**
      * Incremented by the tab host each time the bottom bar's "+" is tapped while this
      * page is showing. A plain Int rather than a lambda because the bar lives above the
@@ -163,6 +166,11 @@ fun ProjectsScreen(
                         Spacer(Modifier.height(18.dp))
                     }
                 }
+
+                // "All tasks" used to be a tab on Home. It lives here now, because a
+                // strip of tabs was too much furniture for one list, and this screen is
+                // already the place you come to look at everything at once.
+                item { AllTasksRow(onClick = onAllTasksClick) }
 
                 if (uiState.projects.isEmpty()) {
                     item { EmptyProjects() }
@@ -275,6 +283,72 @@ private fun ProjectActionRow(
 }
 
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * Flat "everything" entry – same metrics as a project row so the list reads as one
+ * column, but with a neutral tile instead of a tinted project colour: it is not a
+ * project, and it should not pretend to be one.
+ */
+@Composable
+private fun AllTasksRow(onClick: () -> Unit) {
+    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onClick)
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.List,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Spacer(Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "All tasks",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = "Everything, across every project",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+        )
+    }
+}
+
 @Composable
 private fun ProjectRow(
     project: Category,
