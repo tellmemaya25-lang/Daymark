@@ -11,9 +11,40 @@ import kotlin.math.roundToInt
 enum class HomeFilter { TODAY, UPCOMING, ALL }
 
 /**
- * "Default order" control next to the ON YOUR LIST header.
+ * What the ON YOUR LIST control sorts by.
+ *
+ * There used to be a third value, DEFAULT, whose implementation was byte-identical to
+ * DUE_DATE - two rows in the menu that did the same thing. Due date is the default.
  */
-enum class HomeSort { DEFAULT, PRIORITY, DUE_DATE }
+enum class HomeSort { PRIORITY, DUE_DATE }
+
+/** Which way the sort runs. A due-date list is not useful in only one direction. */
+enum class HomeSortDirection { ASCENDING, DESCENDING }
+
+val HomeSort.label: String
+    get() = when (this) {
+        HomeSort.PRIORITY -> "Priority first"
+        HomeSort.DUE_DATE -> "Due date"
+    }
+
+val HomeSortDirection.label: String
+    get() = when (this) {
+        HomeSortDirection.ASCENDING -> "Ascending"
+        HomeSortDirection.DESCENDING -> "Descending"
+    }
+
+/** Short enough to live in the header row without pushing the count off screen. */
+val HomeSort.shortLabel: String
+    get() = when (this) {
+        HomeSort.PRIORITY -> "Priority"
+        HomeSort.DUE_DATE -> "Due date"
+    }
+
+val HomeSortDirection.arrow: String
+    get() = when (this) {
+        HomeSortDirection.ASCENDING -> "\u2191"
+        HomeSortDirection.DESCENDING -> "\u2193"
+    }
 
 /**
  * One cell of the week strip above the task list.
@@ -54,7 +85,8 @@ data class HomeUiState(
     val visibleTasks: List<Task> = emptyList(),
     val completedTasks: List<Task> = emptyList(),
     val selectedFilter: HomeFilter = HomeFilter.TODAY,
-    val selectedSort: HomeSort = HomeSort.DEFAULT,
+    val selectedSort: HomeSort = HomeSort.DUE_DATE,
+    val sortDirection: HomeSortDirection = HomeSortDirection.ASCENDING,
     val categoryNames: Map<String, String> = emptyMap(),
     val momentum: Momentum = Momentum(),
     val errorMessage: String? = null,
@@ -81,5 +113,6 @@ sealed interface HomeAction {
     data class ToggleSubTask(val taskId: String, val subTaskId: String, val isDone: Boolean) : HomeAction
     data class SetFilter(val filter: HomeFilter) : HomeAction
     data class SetSort(val sort: HomeSort) : HomeAction
+    data class SetSortDirection(val direction: HomeSortDirection) : HomeAction
     data class SelectDate(val date: LocalDate) : HomeAction
 }

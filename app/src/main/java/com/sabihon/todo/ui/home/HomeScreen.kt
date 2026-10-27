@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -65,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.core.ui.components.BrandHeader
 import com.sabihon.todo.core.ui.components.CompletionSplash
 import com.sabihon.todo.core.ui.components.FilterEmptyState
@@ -291,14 +293,13 @@ fun HomeScreen(
                         } else {
                             formatLocalDate(uiState.selectedDate, "EEE d MMM")
                         },
-                        sortLabel = when (uiState.selectedSort) {
-                            HomeSort.DEFAULT -> "Default order"
-                            HomeSort.PRIORITY -> "Priority first"
-                            HomeSort.DUE_DATE -> "Due date"
-                        },
+                        sortLabel = "${uiState.selectedSort.shortLabel} ${uiState.sortDirection.arrow}",
+                        sort = uiState.selectedSort,
+                        direction = uiState.sortDirection,
                         showSortMenu = showSortMenu,
                         onSortMenuChange = { showSortMenu = it },
-                        onSortSelected = { sort -> viewModel.onAction(HomeAction.SetSort(sort)) }
+                        onSortSelected = { sort -> viewModel.onAction(HomeAction.SetSort(sort)) },
+                        onDirectionSelected = { dir -> viewModel.onAction(HomeAction.SetSortDirection(dir)) }
                     )
                 }
 
@@ -785,9 +786,12 @@ private fun ListHeader(
     count: Int,
     dateHint: String?,
     sortLabel: String,
+    sort: HomeSort,
+    direction: HomeSortDirection,
     showSortMenu: Boolean,
     onSortMenuChange: (Boolean) -> Unit,
-    onSortSelected: (HomeSort) -> Unit
+    onSortSelected: (HomeSort) -> Unit,
+    onDirectionSelected: (HomeSortDirection) -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -855,15 +859,33 @@ private fun ListHeader(
                 expanded = showSortMenu,
                 onDismissRequest = { onSortMenuChange(false) }
             ) {
-                listOf(
-                    HomeSort.DEFAULT to "Default order",
-                    HomeSort.PRIORITY to "Priority first",
-                    HomeSort.DUE_DATE to "Due date"
-                ).forEach { (sort, label) ->
-                    DropdownMenuItem(
-                        text = { Text(label, style = MaterialTheme.typography.bodyMedium) },
+                // Two sections rather than one flat list: what to sort by, and which
+                // way. A checkmark says which of each is live, so the header label
+                // ("Due date \u2191") and the menu can never disagree.
+                SortSectionLabel("Sort by")
+                HomeSort.entries.forEach { option ->
+                    SortMenuItem(
+                        label = option.label,
+                        selected = option == sort,
                         onClick = {
-                            onSortSelected(sort)
+                            onSortSelected(option)
+                            onSortMenuChange(false)
+                        }
+                    )
+                }
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                )
+
+                SortSectionLabel("Order")
+                HomeSortDirection.entries.forEach { option ->
+                    SortMenuItem(
+                        label = option.label,
+                        selected = option == direction,
+                        onClick = {
+                            onDirectionSelected(option)
                             onSortMenuChange(false)
                         }
                     )
@@ -1027,4 +1049,46 @@ private fun getStartOfDay(timeMillis: Long): Long {
         set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }
     return cal.timeInMillis
+}
+
+@Composable
+private fun SortSectionLabel(text: String) {
+    Text(
+        text = text.uppercase(),
+        style = MaterialTheme.typography.labelSmall.copy(
+            fontSize = 10.sp,
+            letterSpacing = 1.2.sp,
+            fontWeight = FontWeight.Bold
+        ),
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 2.dp)
+    )
+}
+
+@Composable
+private fun SortMenuItem(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    DropdownMenuItem(
+        text = {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (selected) AccentBlue else MaterialTheme.colorScheme.onSurface
+            )
+        },
+        trailingIcon = {
+            if (selected) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = AccentBlue,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        },
+        onClick = onClick
+    )
 }

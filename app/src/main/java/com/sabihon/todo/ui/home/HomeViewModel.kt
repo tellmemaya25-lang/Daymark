@@ -192,6 +192,7 @@ class HomeViewModel @Inject constructor(
                                 allTasks,
                                 current.selectedFilter,
                                 current.selectedSort,
+                                current.sortDirection,
                                 current.selectedDate
                             )
                             current.copy(
@@ -215,39 +216,22 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Applies the segmented tab + sort, then splits active work from the
-     * collapsible "Completed" section.
-     */
+    /** Applies the segmented tab + sort, then splits active work from "Completed". */
     private fun splitTasks(
         tasks: List<Task>,
         filter: HomeFilter,
         sort: HomeSort,
+        direction: HomeSortDirection,
         selectedDate: LocalDate = LocalDate.now()
-    ): Pair<List<Task>, List<Task>> {
-        val start = getStartOfDay(selectedDate)
-        val end = getEndOfDay(selectedDate)
-        // Undated tasks belong to "today", not to whatever day is selected.
-        val isTodaySelected = selectedDate == LocalDate.now()
-        val matching = when (filter) {
-            HomeFilter.TODAY -> tasks.filter { task ->
-                (task.dueAt == null && isTodaySelected) || (task.dueAt != null && task.dueAt in start..end)
-            }
-            HomeFilter.UPCOMING -> tasks.filter { it.dueAt != null && it.dueAt > end }
-            HomeFilter.ALL -> tasks
-        }
-        val sorted = when (sort) {
-            HomeSort.DEFAULT -> matching.sortedBy { it.dueAt ?: Long.MAX_VALUE }
-            HomeSort.PRIORITY -> matching.sortedWith(
-                compareByDescending<Task> { it.priority.ordinal }.thenBy { it.dueAt ?: Long.MAX_VALUE }
-            )
-            HomeSort.DUE_DATE -> matching.sortedBy { it.dueAt ?: Long.MAX_VALUE }
-        }
-        val visible = sorted.filter { !it.isCompleted }
-        val completed = sorted.filter { it.isCompleted }
-            .sortedByDescending { it.completedAt ?: it.updatedAt }
-        return visible to completed
-    }
+    ): Pair<List<Task>, List<Task>> =
+        HomeTaskSorter.split(
+            tasks = tasks,
+            filter = filter,
+            sort = sort,
+            direction = direction,
+            selectedDate = selectedDate,
+            zone = zone()
+        )
 
     fun onAction(action: HomeAction) {
         when (action) {
@@ -264,6 +248,7 @@ class HomeViewModel @Inject constructor(
                         current.allTasks,
                         action.filter,
                         current.selectedSort,
+                        current.sortDirection,
                         current.selectedDate
                     )
                     current.copy(
@@ -279,10 +264,27 @@ class HomeViewModel @Inject constructor(
                         current.allTasks,
                         current.selectedFilter,
                         action.sort,
+                        current.sortDirection,
                         current.selectedDate
                     )
                     current.copy(
                         selectedSort = action.sort,
+                        visibleTasks = visible,
+                        completedTasks = completed
+                    )
+                }
+            }
+            is HomeAction.SetSortDirection -> {
+                _uiState.update { current ->
+                    val (visible, completed) = splitTasks(
+                        current.allTasks,
+                        current.selectedFilter,
+                        current.selectedSort,
+                        action.direction,
+                        current.selectedDate
+                    )
+                    current.copy(
+                        sortDirection = action.direction,
                         visibleTasks = visible,
                         completedTasks = completed
                     )
@@ -295,6 +297,7 @@ class HomeViewModel @Inject constructor(
                         current.allTasks,
                         HomeFilter.TODAY,
                         current.selectedSort,
+                        current.sortDirection,
                         action.date
                     )
                     val today = LocalDate.now()
