@@ -98,6 +98,12 @@ fun GroupedRow(
     supporting: String? = null,
     value: String? = null,
     leading: (@Composable () -> Unit)? = null,
+    /**
+     * A control on the trailing edge, e.g. a switch. When present it replaces the
+     * chevron: a row that toggles something in place is not a row that goes anywhere,
+     * and an arrow beside a switch reads as two competing affordances.
+     */
+    trailing: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null
 ) {
     Row(
@@ -136,7 +142,10 @@ fun GroupedRow(
                     text = supporting,
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    // Two lines only when there is a trailing control: the switch row
+                    // carries an honest sentence about training data, and one line
+                    // would ellipsis it into noise.
+                    maxLines = if (trailing != null) 3 else 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -153,7 +162,10 @@ fun GroupedRow(
             )
         }
 
-        if (onClick != null) {
+        if (trailing != null) {
+            Spacer(Modifier.width(12.dp))
+            trailing()
+        } else if (onClick != null) {
             Spacer(Modifier.width(4.dp))
             Icon(
                 Icons.AutoMirrored.Filled.KeyboardArrowRight,

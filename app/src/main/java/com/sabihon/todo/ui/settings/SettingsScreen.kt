@@ -25,6 +25,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -79,9 +81,11 @@ import com.sabihon.todo.ui.profile.ProfileViewModel
 fun SettingsScreen(
     onNavigateToHistory: () -> Unit = {},
     onNavigateToProfile: () -> Unit = {},
-    viewModel: ProfileViewModel = hiltViewModel()
+    viewModel: ProfileViewModel = hiltViewModel(),
+    aiViewModel: AiSettingsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val aiState by aiViewModel.uiState.collectAsState()
     var showThemeSheet by remember { mutableStateOf(false) }
 
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
@@ -130,6 +134,36 @@ fun SettingsScreen(
                             supporting = "System, light or dark",
                             value = uiState.theme.label,
                             onClick = { showThemeSheet = true }
+                        )
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    SectionLabel("SMART FILL")
+                    GroupedCard {
+                        GroupedRow(
+                            label = "Fill the form from a sentence",
+                            supporting = "Without this, typed sentences are read on the " +
+                                "device only. Off means dates, times, priorities, repeats " +
+                                "and spoken sub-tasks still fill in, but descriptions and " +
+                                "sub-tasks written as prose are not read at all. When on, " +
+                                "the sentence is sent to Google's Gemini API, and on the " +
+                                "free tier that text may be used to improve their models.",
+                            trailing = {
+                                // Nothing until the stored value has been read: drawing
+                                // a switch that is on by default and then flipping it off
+                                // a frame later is worse than drawing no switch at all.
+                                aiState.aiEnabled?.let { enabled ->
+                                    Switch(
+                                        checked = enabled,
+                                        onCheckedChange = aiViewModel::setAiEnabled,
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color.White,
+                                            checkedTrackColor = AccentBlue
+                                        )
+                                    )
+                                }
+                            }
                         )
                     }
 

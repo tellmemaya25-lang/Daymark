@@ -39,12 +39,28 @@ class ParseQuickAddUseCase @Inject constructor(
     private val parser: QuickAddParser
 ) {
 
-    suspend operator fun invoke(input: String, categories: List<Category>): QuickAddResult {
+    /**
+     * @param allowCloud false when the user has switched AI off in Settings. The offline
+     *   parser still runs - dates, times, priorities, repeats, reminders and spoken
+     *   sub-task separators all still fill in. Only a description and prose sub-tasks,
+     *   which need a model, stop.
+     */
+    suspend operator fun invoke(
+        input: String,
+        categories: List<Category>,
+        allowCloud: Boolean = true
+    ): QuickAddResult {
         val sentence = input.trim()
         val offline = parser.parse(sentence, categories)
 
-        val cloud = withTimeoutOrNull(TIMEOUT_MS) {
-            aiTaskService.parseQuickAdd(sentence, categories)
+        // Not even attempted when switched off: no request, no round-trip, no silent
+        // 12-second wait for a call that was never allowed to happen.
+        val cloud = if (allowCloud) {
+            withTimeoutOrNull(TIMEOUT_MS) {
+                aiTaskService.parseQuickAdd(sentence, categories)
+            }
+        } else {
+            null
         }
 
         val draft = (cloud as? Result.Success<AiTaskDraft>)?.data

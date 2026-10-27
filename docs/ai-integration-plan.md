@@ -208,6 +208,26 @@ later without touching the AI layer.
 
 ---
 
+### Resolved since this plan was written
+
+- **B** — `gemini-3.5-flash-lite`, one constant in `FirebaseAiTaskService`, free-tier.
+- **D** — option 1: the sparkle lives in the Add Task title field. No Home layout change.
+- **C, partly** — the free-tier training terms are stated on the Settings toggle itself.
+
+### The Settings toggle
+
+`Settings → SMART FILL` is one switch, on by default, stored in `sabihon_prefs`.
+
+- **Off** stops the cloud call entirely — no request, no 12-second wait. The on-device
+  reader still fills date, time, priority, repeat, reminders and spoken sub-tasks.
+  A description and prose sub-tasks do not fill, because only a model can read those.
+- **On** sends the one sentence to the Gemini API. The row says so, and says that the
+  free tier may use that text to improve Google's models.
+
+`AiPreferences` shares the `sabihon_prefs` DataStore through a single delegate in
+`SabihonDataStore.kt` — two `preferencesDataStore` declarations for one file name crash
+at runtime, and the theme preferences already owned one.
+
 ## 8. Testing and verification, honestly
 
 - Pure-JVM tests (JUnit5/MockK/Truth already in the project) can cover: the fallback parser,

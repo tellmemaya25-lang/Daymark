@@ -3,6 +3,7 @@ package com.sabihon.todo.ui.addedit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.sabihon.todo.core.datastore.AiPreferences
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.ai.AiTaskDraft
 import com.sabihon.todo.domain.model.Category
@@ -44,6 +45,7 @@ class AddEditViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val categoryRepository: CategoryRepository,
     private val parseQuickAddUseCase: ParseQuickAddUseCase,
+    private val aiPreferences: AiPreferences,
     private val auth: FirebaseAuth
 ) : ViewModel() {
 
@@ -345,7 +347,10 @@ class AddEditViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            val result = parseQuickAddUseCase(sentence, snapshot.categories)
+            // Read on every tap, not once at construction: the switch in Settings can
+            // change while this editor is open behind it.
+            val allowCloud = aiPreferences.aiEnabled.first()
+            val result = parseQuickAddUseCase(sentence, snapshot.categories, allowCloud)
             val draft = result.draft
 
             if (!draft.hasDetails) {

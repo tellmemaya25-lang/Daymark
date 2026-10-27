@@ -10,6 +10,7 @@ import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.usecase.ParseQuickAddUseCase
 import com.sabihon.todo.domain.usecase.QuickAddResult
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -113,6 +114,41 @@ class ParseQuickAddUseCaseTest {
         cloud(AiTaskDraft(title = "Gym", repeat = RepeatRule.WEEKLY, repeatDays = listOf(9, 0)))
 
         assertEquals(RepeatRule.NONE, useCase("gym", emptyList()).draft.repeat)
+    }
+
+    @Test
+    fun `with AI switched off the model is never called`() = runTest {
+        cloud(AiTaskDraft(title = "Ignored", description = "a note only a model could write"))
+
+        val result = useCase("call mom friday 5pm", emptyList(), allowCloud = false)
+
+        coVerify(exactly = 0) { service.parseQuickAdd(any(), any()) }
+        assertEquals(QuickAddResult.Source.LOCAL, result.source)
+        // The sentence still fills what the on-device reader understands.
+        assertEquals("Call mom", result.draft.title)
+        // And the cloud-only field is genuinely absent, not silently half-filled.
+        assertNull(result.draft.description)
+    }
+
+    @Test
+    fun `with AI switched on the model is called exactly once`() = runTest {
+        cloud(AiTaskDraft(title = "Call mom", description = "from the cloud"))
+
+        useCase("call mom friday 5pm", emptyList(), allowCloud = true)
+
+        coVerify(exactly = 1) { service.parseQuickAdd(any(), any()) }
+    }
+
+    @Test
+    fun `a spoken sub-task separator works with AI switched off`() = runTest {
+        val result = useCase(
+            "buy groceries add subtask milk add subtask eggs",
+            emptyList(),
+            allowCloud = false
+        )
+
+        assertEquals("Buy groceries", result.draft.title)
+        assertEquals(listOf("milk", "eggs"), result.draft.subTasks)
     }
 
     @Test
