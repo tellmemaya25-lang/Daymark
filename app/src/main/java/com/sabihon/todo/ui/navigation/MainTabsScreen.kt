@@ -200,7 +200,19 @@ fun MainTabsScreen(
                         onNavigateToHistory = { goToPage(2) },
                         onNavigateToProfile = { navController.navigate(Route.Profile) },
                         onNavigateToSettings = { goToPage(3) },
-                        onNavigateToCategory = { navController.navigate(Route.CategoryDetail(it)) }
+                        onNavigateToCategory = { navController.navigate(Route.CategoryDetail(it)) },
+                        onNavigateToAddTaskPrefilled = { candidate ->
+                            navController.navigate(
+                                Route.AddEditTask(
+                                    initialTitle = candidate.title,
+                                    initialCategoryId = candidate.categoryId,
+                                    initialPriority = candidate.priority.name,
+                                    initialDueAt = candidate.dueOffsetHours?.let {
+                                        System.currentTimeMillis() + it * 3_600_000L
+                                    }
+                                )
+                            )
+                        }
                     )
 
                     PROJECTS_PAGE -> ProjectsScreen(

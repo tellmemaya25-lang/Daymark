@@ -86,6 +86,7 @@ import com.sabihon.todo.core.ui.components.RevealCoordinator
 import com.sabihon.todo.core.ui.components.SuggestedStepChip
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
 import com.sabihon.todo.core.ui.components.WeekStrip
+import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.core.ui.util.isCompactHeight
 import com.sabihon.todo.domain.model.RepeatRule
@@ -113,6 +114,7 @@ fun HomeScreen(
     onNavigateToProfile: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
     onNavigateToCategory: (String) -> Unit = {},
+    onNavigateToAddTaskPrefilled: (SuggestedTaskCandidate) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -328,6 +330,7 @@ fun HomeScreen(
                                 viewModel.onAction(HomeAction.DismissSuggestion(suggestion))
                             },
                             onRefresh = { viewModel.onAction(HomeAction.RequestSuggestions) },
+                            onEdit = onNavigateToAddTaskPrefilled,
                             modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp)
                         )
                     }

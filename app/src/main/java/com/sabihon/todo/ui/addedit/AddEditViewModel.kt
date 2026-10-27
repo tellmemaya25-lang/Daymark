@@ -85,6 +85,7 @@ class AddEditViewModel @Inject constructor(
      * echo of our own sub-task writes) must not overwrite what the user is typing.
      */
     private var seededTaskId: String? = null
+    private var draftSeeded: Boolean = false
 
     /**
      * The document this form was opened on.
@@ -157,6 +158,36 @@ class AddEditViewModel @Inject constructor(
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, errorMessage = "Failed to load task: ${e.message}") }
             }
+        }
+    }
+
+    /**
+     * Seeds a new-task draft once when opened from a contextual suggestion or a
+     * project page's `+` button.
+     */
+    fun seedFromDraft(
+        title: String? = null,
+        description: String? = null,
+        categoryId: String? = null,
+        priorityName: String? = null,
+        dueAt: Long? = null
+    ) {
+        if (draftSeeded || _uiState.value.isEditMode) return
+        if (title == null && description == null && categoryId == null && priorityName == null && dueAt == null) return
+        draftSeeded = true
+        val parsedPriority = priorityName?.let { name ->
+            Priority.entries.firstOrNull { it.name.equals(name, ignoreCase = true) }
+        }
+        _uiState.update { state ->
+            state.copy(
+                title = title ?: state.title,
+                description = description ?: state.description,
+                categoryId = categoryId ?: state.categoryId,
+                priority = parsedPriority ?: state.priority,
+                dueAt = dueAt ?: state.dueAt,
+                dueDateMillis = dueAt ?: state.dueDateMillis,
+                dueTimeMillis = dueAt ?: state.dueTimeMillis
+            )
         }
     }
 

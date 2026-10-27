@@ -433,6 +433,12 @@ class HomeViewModel @Inject constructor(
             HomeAction.DismissAiConsent -> _uiState.update { it.copy(showAiConsentSheet = false) }
             HomeAction.RefreshPrioritize -> runPrioritization(forceRefresh = true)
             HomeAction.DismissPrioritizeSheet -> {
+                if (_uiState.value.prioritizationPlan != null) {
+                    telemetry.logOutcome(
+                        feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
+                        action = FirebaseAiTelemetry.ACTION_DISMISSED
+                    )
+                }
                 _uiState.update { it.copy(showPrioritizeSheet = false, isPrioritizing = false) }
             }
             is HomeAction.TogglePriorityProposal -> togglePriorityProposal(action.taskId, action.checked)
@@ -551,6 +557,11 @@ class HomeViewModel @Inject constructor(
                 is Result.Success -> {
                     val undo = result.data
                     lastPriorityUndo = undo.takeIf { it.count > 0 }
+                    telemetry.logOutcome(
+                        feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
+                        action = FirebaseAiTelemetry.ACTION_ACCEPTED,
+                        count = undo.count.coerceAtLeast(1)
+                    )
                     _uiState.update { current ->
                         val ranks = plan.focusRankMap.ifEmpty { current.aiFocusRanks }
                         val (visible, completed) = splitTasks(

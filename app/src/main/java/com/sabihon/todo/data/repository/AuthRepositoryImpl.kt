@@ -4,6 +4,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
+import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiQuotaGuard
 import com.sabihon.todo.data.ai.AiSnapshotCache
@@ -31,6 +32,7 @@ class AuthRepositoryImpl @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val aiSnapshotCache: AiSnapshotCache,
     private val aiQuotaGuard: AiQuotaGuard,
+    private val aiPreferences: AiPreferenceStore,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : AuthRepository {
 
@@ -140,6 +142,7 @@ class AuthRepositoryImpl @Inject constructor(
             aiSnapshotCache.evictUser(uid)
             aiSnapshotCache.clearAll()
             aiQuotaGuard.resetRuntimeState()
+            aiPreferences.clearDismissedSuggestions()
             // Delete user subcollections would require cloud function; for now delete user doc
             firestore.collection("users").document(uid).delete().await()
             auth.currentUser?.delete()?.await()

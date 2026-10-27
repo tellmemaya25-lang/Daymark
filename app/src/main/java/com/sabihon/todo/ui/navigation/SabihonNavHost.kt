@@ -164,13 +164,32 @@ fun SabihonNavHost(
                 categoryId = args.categoryId,
                 onBack = { navController.popBackStack() },
                 onTaskClick = { taskId -> navController.navigate(Route.AddEditTask(taskId)) },
-                onAddTask = { navController.navigate(Route.AddEditTask()) }
+                onAddTask = {
+                    navController.navigate(Route.AddEditTask(initialCategoryId = args.categoryId))
+                },
+                onEditSuggestion = { candidate ->
+                    navController.navigate(
+                        Route.AddEditTask(
+                            initialTitle = candidate.title,
+                            initialCategoryId = candidate.categoryId ?: args.categoryId,
+                            initialPriority = candidate.priority.name,
+                            initialDueAt = candidate.dueOffsetHours?.let {
+                                System.currentTimeMillis() + it * 3_600_000L
+                            }
+                        )
+                    )
+                }
             )
         }
         composable<Route.AddEditTask> { backStackEntry ->
             val args = backStackEntry.toRoute<Route.AddEditTask>()
             AddEditTaskScreen(
                 taskId = args.taskId,
+                initialTitle = args.initialTitle,
+                initialDescription = args.initialDescription,
+                initialCategoryId = args.initialCategoryId,
+                initialPriority = args.initialPriority,
+                initialDueAt = args.initialDueAt,
                 onBack = { navController.popBackStack() },
                 onSaved = { navController.popBackStack() }
             )

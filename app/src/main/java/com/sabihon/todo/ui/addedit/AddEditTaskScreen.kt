@@ -103,6 +103,11 @@ fun AddEditTaskScreen(
     taskId: String?,
     onBack: () -> Unit,
     onSaved: () -> Unit,
+    initialTitle: String? = null,
+    initialDescription: String? = null,
+    initialCategoryId: String? = null,
+    initialPriority: String? = null,
+    initialDueAt: Long? = null,
     viewModel: AddEditViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -166,8 +171,26 @@ fun AddEditTaskScreen(
         }
     }
 
-    LaunchedEffect(taskId) {
-        viewModel.loadTask(taskId)
+    LaunchedEffect(
+        taskId,
+        initialTitle,
+        initialDescription,
+        initialCategoryId,
+        initialPriority,
+        initialDueAt
+    ) {
+        if (taskId != null) {
+            viewModel.loadTask(taskId)
+        } else {
+            viewModel.loadTask(null)
+            viewModel.seedFromDraft(
+                title = initialTitle,
+                description = initialDescription,
+                categoryId = initialCategoryId,
+                priorityName = initialPriority,
+                dueAt = initialDueAt
+            )
+        }
     }
 
     LaunchedEffect(uiState.errorMessage) {

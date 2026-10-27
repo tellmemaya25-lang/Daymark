@@ -244,6 +244,7 @@ fun CategoryDetailScreen(
     onBack: () -> Unit = {},
     onTaskClick: (String) -> Unit = {},
     onAddTask: () -> Unit = {},
+    onEditSuggestion: (com.sabihon.todo.domain.ai.SuggestedTaskCandidate) -> Unit = {},
     viewModel: CategoryDetailViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -293,6 +294,7 @@ fun CategoryDetailScreen(
                             onAccept = { viewModel.acceptSuggestion(it) },
                             onDismiss = { viewModel.dismissSuggestion(it) },
                             onRefresh = { viewModel.loadSuggestions(force = true) },
+                            onEdit = onEditSuggestion,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             title = "Suggested for this project"
                         )

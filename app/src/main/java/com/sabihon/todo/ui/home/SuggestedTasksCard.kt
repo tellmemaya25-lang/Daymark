@@ -61,7 +61,8 @@ fun SuggestedTasksCard(
     onDismiss: (SuggestedTaskCandidate) -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
-    title: String = "Suggested next steps"
+    title: String = "Suggested next steps",
+    onEdit: ((SuggestedTaskCandidate) -> Unit)? = null
 ) {
     if (suggestions.isEmpty() && !isRefreshing) return
 
@@ -135,7 +136,8 @@ fun SuggestedTasksCard(
                     SuggestionRow(
                         suggestion = suggestion,
                         onAccept = { onAccept(suggestion) },
-                        onDismiss = { onDismiss(suggestion) }
+                        onDismiss = { onDismiss(suggestion) },
+                        onEdit = onEdit?.let { callback -> { callback(suggestion) } }
                     )
                 }
                 if (suggestions.isNotEmpty()) {
@@ -166,13 +168,23 @@ fun SuggestedTasksCard(
 private fun SuggestionRow(
     suggestion: SuggestedTaskCandidate,
     onAccept: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onEdit: (() -> Unit)? = null
 ) {
     val surfaces = LocalDaymarkSurfaces.current
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (onEdit != null) {
+                    Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = onEdit)
+                } else {
+                    Modifier
+                }
+            )
             .padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

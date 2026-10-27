@@ -1,6 +1,8 @@
 package com.sabihon.todo.domain.usecase
 
 import com.sabihon.todo.core.datastore.AiPreferenceStore
+import com.sabihon.todo.core.telemetry.AiTelemetry
+import com.sabihon.todo.core.telemetry.FirebaseAiTelemetry
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiFeature
 import com.sabihon.todo.data.ai.AiInputGuard
@@ -49,7 +51,8 @@ class PrioritizeTasksUseCase internal constructor(
     private val router: AiRouter,
     private val clock: () -> Long,
     private val todayProvider: () -> LocalDate,
-    private val zoneProvider: () -> ZoneId
+    private val zoneProvider: () -> ZoneId,
+    private val telemetry: AiTelemetry = AiTelemetry.NoOp
 ) {
 
     @Inject
@@ -60,7 +63,8 @@ class PrioritizeTasksUseCase internal constructor(
         inputGuard: AiInputGuard,
         quotaGuard: AiQuotaGuard,
         snapshotCache: AiSnapshotCache,
-        router: AiRouter
+        router: AiRouter,
+        telemetry: AiTelemetry
     ) : this(
         aiTaskService = aiTaskService,
         prefs = prefs,
@@ -71,7 +75,8 @@ class PrioritizeTasksUseCase internal constructor(
         router = router,
         clock = System::currentTimeMillis,
         todayProvider = LocalDate::now,
-        zoneProvider = ZoneId::systemDefault
+        zoneProvider = ZoneId::systemDefault,
+        telemetry = telemetry
     )
 
     suspend operator fun invoke(
@@ -97,13 +102,27 @@ class PrioritizeTasksUseCase internal constructor(
 
         if (!forceRefresh) {
             val cached = snapshotCache.get(uid, today, activeTasks)
-            if (cached != null) return cached
+            if (cached != null) {
+                telemetry.logCall(
+                    feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
+                    source = "cache",
+                    status = "ok",
+                    latencyMs = (clock() - nowMillis).coerceAtLeast(0L)
+                )
+                return cached
+            }
         }
 
         val cloudEnabled = prefs.isCloudEnabledNow()
         val tier = router.chooseTier(activeTasks, categories, cloudEnabled)
         if (tier == AiModelTier.LOCAL) {
             snapshotCache.put(uid, today, activeTasks, localPlan)
+            telemetry.logCall(
+                feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
+                source = "local",
+                status = "ok",
+                latencyMs = (clock() - nowMillis).coerceAtLeast(0L)
+            )
             return localPlan
         }
 
@@ -127,7 +146,15 @@ class PrioritizeTasksUseCase internal constructor(
         }
 
         return when (execution) {
-            is AiQuotaGuard.ExecutionOutcome.Blocked -> localPlan
+            is AiQuotaGuard.ExecutionOutcome.Blocked -> {
+                telemetry.logCall(
+                    feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
+                    source = "local",
+                    status = "blocked_${execution.reason.name.lowercase()}",
+                    latencyMs = (clock() - nowMillis).coerceAtLeast(0L)
+                )
+                localPlan
+            }
             is AiQuotaGuard.ExecutionOutcome.Executed -> {
                 val cloudResult = execution.value
                 val sanitized = (cloudResult as? Result.Success<CloudPrioritizationDraft>)?.data
@@ -145,11 +172,23 @@ class PrioritizeTasksUseCase internal constructor(
                 if (sanitized != null) {
                     quotaGuard.recordSuccess(uid, estimatedTokens)
                     snapshotCache.put(uid, today, activeTasks, sanitized)
+                    telemetry.logCall(
+                        feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
+                        source = "cloud",
+                        status = "ok",
+                        latencyMs = (clock() - nowMillis).coerceAtLeast(0L)
+                    )
                     sanitized
                 } else {
                     val err = (cloudResult as? Result.Error)?.exception
                         ?: IllegalStateException("Prioritization timed out or returned invalid items")
                     quotaGuard.recordFailure(err)
+                    telemetry.logCall(
+                        feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
+                        source = "cloud",
+                        status = "fallback",
+                        latencyMs = (clock() - nowMillis).coerceAtLeast(0L)
+                    )
                     localPlan
                 }
             }
