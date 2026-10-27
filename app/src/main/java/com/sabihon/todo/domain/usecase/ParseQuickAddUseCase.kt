@@ -43,10 +43,19 @@ class ParseQuickAddUseCase private constructor(
     private val aiTaskService: AiTaskService,
     private val parser: QuickAddParser,
     private val inputGuard: AiInputGuard,
-    private val quotaGuard: AiQuotaGuard?,
-    private val prefs: AiPreferenceStore?
+    /**
+     * The two dependencies that only exist when the cloud half is wired up, bundled so
+     * there is exactly one nullable parameter.
+     *
+     * Their being separate nullable parameters is what broke the build: Kotlin erases
+     * `AiQuotaGuard?` to `AiQuotaGuard`, so this constructor and the injected one below
+     * had the same JVM signature and the compiler rejected the pair. One nullable
+     * parameter of its own type cannot collide with anything.
+     */
+    private val cloud: CloudGate?
 ) {
 
+    /** Dagger's way in: the cloud half is always present in the app. */
     @Inject
     constructor(
         aiTaskService: AiTaskService,
@@ -58,8 +67,7 @@ class ParseQuickAddUseCase private constructor(
         aiTaskService = aiTaskService,
         parser = parser,
         inputGuard = inputGuard,
-        quotaGuard = quotaGuard as AiQuotaGuard?,
-        prefs = prefs as AiPreferenceStore?
+        cloud = CloudGate(quotaGuard, prefs)
     )
 
     /** Preserved for unit tests that wire only [AiTaskService] and [QuickAddParser]. */
@@ -70,8 +78,13 @@ class ParseQuickAddUseCase private constructor(
         aiTaskService = aiTaskService,
         parser = parser,
         inputGuard = AiInputGuard(),
-        quotaGuard = null,
-        prefs = null
+        cloud = null
+    )
+
+    /** The rate limiter and the cloud switch, held together so neither is ever half-set. */
+    internal class CloudGate(
+        val quotaGuard: AiQuotaGuard,
+        val prefs: AiPreferenceStore
     )
 
     suspend operator fun invoke(
@@ -82,7 +95,8 @@ class ParseQuickAddUseCase private constructor(
         val sentence = input.trim()
         val offline = parser.parse(sentence, categories)
 
-        if (prefs != null && !prefs.isCloudEnabledNow()) {
+        val gate = cloud
+        if (gate != null && !gate.prefs.isCloudEnabledNow()) {
             return QuickAddResult(offline, QuickAddResult.Source.LOCAL)
         }
 
@@ -93,8 +107,8 @@ class ParseQuickAddUseCase private constructor(
             expectedOutputChars = 240
         )
 
-        val cloudResult: Result<AiTaskDraft>? = if (quotaGuard != null) {
-            val outcome = quotaGuard.runIfPermitted(
+        val cloudResult: Result<AiTaskDraft>? = if (gate != null) {
+            val outcome = gate.quotaGuard.runIfPermitted(
                 uid = uid,
                 feature = AiFeature.QUICK_ADD,
                 estimatedTokens = estimatedTokens,
@@ -109,9 +123,9 @@ class ParseQuickAddUseCase private constructor(
                 is AiQuotaGuard.ExecutionOutcome.Executed -> {
                     val res = outcome.value
                     if (res is Result.Success) {
-                        quotaGuard.recordSuccess(uid, estimatedTokens)
+                        gate.quotaGuard.recordSuccess(uid, estimatedTokens)
                     } else {
-                        quotaGuard.recordFailure((res as? Result.Error)?.exception)
+                        gate.quotaGuard.recordFailure((res as? Result.Error)?.exception)
                     }
                     res
                 }
