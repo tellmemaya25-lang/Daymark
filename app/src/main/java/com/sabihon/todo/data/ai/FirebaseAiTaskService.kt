@@ -4,6 +4,8 @@ import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.type.generationConfig
+import com.sabihon.todo.BuildConfig
+import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.ai.AiModelTier
 import com.sabihon.todo.domain.ai.AiTaskDraft
@@ -16,28 +18,32 @@ import com.sabihon.todo.domain.ai.SuggestionContext
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import javax.net.ssl.HttpsURLConnection
 
 /**
  * The only file that talks to Gemini.
  *
- * Deliberately thin: it builds a prompt, asks for JSON, and maps the answer. Whether
- * that answer is trustworthy - whether the task id or category exists, whether the
- * date is sane, whether Top Focus was inflated - is decided by the domain use cases,
- * so this class stays replaceable and all validation can be tested without a network.
- *
- * No API key lives here. Firebase AI Logic authorises the request through the Firebase
- * project, which is why App Check is installed before the first call (see `SabihonApp`).
+ * Supports two zero-cost transports transparently:
+ *  1. Direct Google AI Studio Gemini API (`aistudio.google.com/apikey`) when a free key is
+ *     configured in `Settings > AI` or gitignored `local.properties` (`GEMINI_API_KEY=...`) —
+ *     works on Firebase Spark without upgrading to the Blaze billing plan.
+ *  2. Firebase AI Logic (`Firebase.ai`) when no direct AI Studio key is set.
  */
 @Singleton
-class FirebaseAiTaskService @Inject constructor() : AiTaskService {
+class FirebaseAiTaskService @Inject constructor(
+    private val aiPreferences: AiPreferenceStore
+) : AiTaskService {
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -84,16 +90,28 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
             ).distinct()
         }
 
+        val directApiKey = aiPreferences.getGeminiApiKeyNow()
+            .trim()
+            .ifBlank { BuildConfig.GEMINI_API_KEY.trim() }
+
         var lastError: Exception? = null
         for (candidateId in candidates) {
             try {
-                val response = getOrBuildModel(candidateId).generateContent(prompt)
+                val text = if (directApiKey.isNotEmpty()) {
+                    callGoogleAiStudioRest(
+                        apiKey = directApiKey,
+                        modelName = candidateId,
+                        prompt = prompt
+                    )
+                } else {
+                    getOrBuildModel(candidateId).generateContent(prompt).text
+                }
                 if (tier == AiModelTier.FLASH) {
                     resolvedFlashModelId = candidateId
                 } else {
                     resolvedLiteModelId = candidateId
                 }
-                return response.text
+                return text
             } catch (e: Exception) {
                 lastError = e
                 val msg = e.message.orEmpty().lowercase()
@@ -110,6 +128,55 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
             }
         }
         throw lastError ?: IllegalStateException("No Gemini model available")
+    }
+
+    /**
+     * Calls the free-tier Google AI Studio Gemini Developer REST endpoint directly over
+     * HTTPS (`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`)
+     * so Spark-plan developers never need to upgrade Firebase to Blaze.
+     */
+    private suspend fun callGoogleAiStudioRest(
+        apiKey: String,
+        modelName: String,
+        prompt: String
+    ): String? = withContext(Dispatchers.IO) {
+        val endpoint = URL("https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent")
+        val bodyJson = json.encodeToString(
+            DirectGenerateRequest.serializer(),
+            DirectGenerateRequest(
+                contents = listOf(DirectContent(parts = listOf(DirectPart(text = prompt)))),
+                generationConfig = DirectGenerationConfig(responseMimeType = "application/json")
+            )
+        )
+        val conn = (endpoint.openConnection() as HttpsURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 10_000
+            readTimeout = 13_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            setRequestProperty("x-goog-api-key", apiKey)
+        }
+        try {
+            conn.outputStream.use { out ->
+                out.write(bodyJson.toByteArray(Charsets.UTF_8))
+            }
+            val code = conn.responseCode
+            if (code in 200..299) {
+                val raw = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val parsed = json.decodeFromString(DirectGenerateResponse.serializer(), raw)
+                parsed.candidates
+                    ?.firstOrNull()
+                    ?.content
+                    ?.parts
+                    ?.mapNotNull { it.text }
+                    ?.joinToString("")
+            } else {
+                val errBody = conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                throw IllegalStateException("HTTP $code ($modelName): ${errBody.take(260)}")
+            }
+        } finally {
+            conn.disconnect()
+        }
     }
 
     override suspend fun parseQuickAdd(
@@ -506,6 +573,37 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
         val focusRank: Int? = null,
         val isTopFocus: Boolean? = null,
         val reason: String? = null
+    )
+
+    @Serializable
+    private data class DirectGenerateRequest(
+        val contents: List<DirectContent>,
+        val generationConfig: DirectGenerationConfig
+    )
+
+    @Serializable
+    private data class DirectContent(
+        val parts: List<DirectPart> = emptyList()
+    )
+
+    @Serializable
+    private data class DirectPart(
+        val text: String? = null
+    )
+
+    @Serializable
+    private data class DirectGenerationConfig(
+        val responseMimeType: String
+    )
+
+    @Serializable
+    private data class DirectGenerateResponse(
+        val candidates: List<DirectCandidate>? = null
+    )
+
+    @Serializable
+    private data class DirectCandidate(
+        val content: DirectContent? = null
     )
 
     private companion object {

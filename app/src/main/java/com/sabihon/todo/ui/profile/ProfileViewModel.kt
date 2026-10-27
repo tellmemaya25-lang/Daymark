@@ -12,6 +12,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
+import com.sabihon.todo.BuildConfig
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.datastore.ThemePreferences
 import com.sabihon.todo.data.ai.AiQuotaGuard
@@ -57,7 +58,8 @@ data class ProfileUiState(
     val confirmNewPassword: String = "",
     val passwordError: String? = null,
     val aiCloudEnabled: Boolean = false,
-    val aiDailyCalls: Int = 0
+    val aiDailyCalls: Int = 0,
+    val geminiApiKey: String = ""
 )
 
 @HiltViewModel
@@ -205,6 +207,30 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             aiPreferences.observeDailyCalls(auth.currentUser?.uid).collectLatest { calls ->
                 _uiState.update { it.copy(aiDailyCalls = calls) }
+            }
+        }
+        viewModelScope.launch {
+            aiPreferences.geminiApiKey.collectLatest { savedKey ->
+                val effective = savedKey.ifBlank { BuildConfig.GEMINI_API_KEY }
+                _uiState.update { it.copy(geminiApiKey = effective) }
+            }
+        }
+    }
+
+    fun saveGeminiApiKey(rawKey: String) {
+        viewModelScope.launch {
+            val cleaned = rawKey.trim().removeSurrounding("\"").trim()
+            aiPreferences.setGeminiApiKey(cleaned)
+            aiSnapshotCache.clearAll()
+            aiQuotaGuard.resetRuntimeState()
+            _uiState.update {
+                it.copy(
+                    successMessage = if (cleaned.isNotEmpty()) {
+                        "Gemini API key saved — Smart AI ready"
+                    } else {
+                        "Gemini API key cleared"
+                    }
+                )
             }
         }
     }

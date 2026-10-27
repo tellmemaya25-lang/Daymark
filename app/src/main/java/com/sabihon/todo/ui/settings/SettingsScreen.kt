@@ -24,10 +24,13 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -100,6 +103,8 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showThemeSheet by remember { mutableStateOf(false) }
+    var showApiKeySheet by remember { mutableStateOf(false) }
+    var apiKeyDraft by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -218,6 +223,24 @@ fun SettingsScreen(
                             )
                         }
                         GroupedDivider()
+                        val configuredKey = uiState.geminiApiKey.trim()
+                        val keyStatus = if (configuredKey.length > 8) {
+                            "${configuredKey.take(4)}…${configuredKey.takeLast(4)}"
+                        } else if (configuredKey.isNotEmpty()) {
+                            "Saved"
+                        } else {
+                            "Set key"
+                        }
+                        GroupedRow(
+                            label = "Gemini API key",
+                            supporting = "Free at aistudio.google.com/apikey — no Blaze plan needed",
+                            value = keyStatus,
+                            onClick = {
+                                apiKeyDraft = uiState.geminiApiKey
+                                showApiKeySheet = true
+                            }
+                        )
+                        GroupedDivider()
                         GroupedRow(
                             label = "Today's cloud requests",
                             supporting = "Tap to clear cached focus plan",
@@ -305,6 +328,77 @@ fun SettingsScreen(
                     }
 
                     Spacer(Modifier.height(110.dp))
+                }
+            }
+        }
+    }
+
+    if (showApiKeySheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showApiKeySheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            shape = DaymarkSheetShape,
+            containerColor = LocalDaymarkSurfaces.current.card,
+            tonalElevation = 0.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
+            ) {
+                Text(
+                    "Free Gemini API key",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Skip the Firebase Blaze upgrade: create a free key at aistudio.google.com/apikey (no credit card required) and paste it below. Stored only on this device.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = apiKeyDraft,
+                    onValueChange = { apiKeyDraft = it },
+                    placeholder = { Text("AIzaSy...") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        viewModel.saveGeminiApiKey(apiKeyDraft)
+                        showApiKeySheet = false
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AccentBlue,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                ) {
+                    Text(
+                        text = if (apiKeyDraft.isBlank()) "Clear key" else "Save Gemini key",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                TextButton(
+                    onClick = { showApiKeySheet = false },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp)
+                ) {
+                    Text("Cancel")
                 }
             }
         }
