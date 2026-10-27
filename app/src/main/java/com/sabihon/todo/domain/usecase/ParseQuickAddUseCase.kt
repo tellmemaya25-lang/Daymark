@@ -1,5 +1,6 @@
 package com.sabihon.todo.domain.usecase
 
+import android.util.Log
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiFeature
@@ -97,11 +98,15 @@ class ParseQuickAddUseCase private constructor(
 
         val gate = cloud
         if (gate != null && !gate.prefs.isCloudEnabledNow()) {
+            Log.i(TAG, "quick add: cloud AI is switched off, using the on-device reading")
             return QuickAddResult(offline, QuickAddResult.Source.LOCAL)
         }
 
         val scrubbedInput = inputGuard.sanitizeForPrompt(sentence, MAX_PROMPT_SENTENCE)
-            .ifBlank { return QuickAddResult(offline, QuickAddResult.Source.LOCAL) }
+            .ifBlank {
+                Log.w(TAG, "quick add: nothing survived PII scrubbing, using the on-device reading")
+                return QuickAddResult(offline, QuickAddResult.Source.LOCAL)
+            }
         val estimatedTokens = inputGuard.estimateTokens(
             promptChars = 950 + scrubbedInput.length,
             expectedOutputChars = 240
@@ -119,9 +124,18 @@ class ParseQuickAddUseCase private constructor(
                 }
             }
             when (outcome) {
-                is AiQuotaGuard.ExecutionOutcome.Blocked -> null
+                is AiQuotaGuard.ExecutionOutcome.Blocked -> {
+                    Log.w(TAG, "quick add: cloud call blocked by quota guard (${outcome.reason})")
+                    null
+                }
                 is AiQuotaGuard.ExecutionOutcome.Executed -> {
                     val res = outcome.value
+                    if (res is Result.Error) {
+                        // The one line that turns "smart AI isn't working" into a
+                        // diagnosis. Without it every failure looked identical to the
+                        // feature being switched off.
+                        Log.w(TAG, "quick add: the model call failed", res.exception)
+                    }
                     if (res is Result.Success) {
                         gate.quotaGuard.recordSuccess(uid, estimatedTokens)
                     } else {
@@ -142,8 +156,10 @@ class ParseQuickAddUseCase private constructor(
             ?.let { merge(it, offline) }
 
         return if (draft != null) {
+            Log.i(TAG, "quick add: the model answered")
             QuickAddResult(draft, QuickAddResult.Source.CLOUD)
         } else {
+            Log.i(TAG, "quick add: falling back to the on-device reading")
             QuickAddResult(offline, QuickAddResult.Source.LOCAL)
         }
     }
@@ -203,6 +219,7 @@ class ParseQuickAddUseCase private constructor(
     )
 
     private companion object {
+        const val TAG = "QuickAdd"
         const val TIMEOUT_MS = 12_000L
         const val MAX_PROMPT_SENTENCE = 300
         const val MAX_TITLE = 120

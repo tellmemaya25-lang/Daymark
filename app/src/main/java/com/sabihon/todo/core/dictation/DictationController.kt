@@ -29,6 +29,18 @@ class DictationController(private val context: Context) {
     private var recognizer: SpeechRecognizer? = null
     private var buffer: DictationBuffer? = null
     private var onText: ((String) -> Unit)? = null
+    private var listeningIntent: Intent? = null
+
+    /**
+     * How many times the session has been re-armed after hearing nothing.
+     *
+     * The recogniser ends itself on a short silence - about three seconds on most
+     * devices, which is not long enough to think of a task and say it. Rather than let
+     * that end the session, the microphone stays open and starts again, up to
+     * [MAX_SILENT_RESTARTS] times. Only the user's Done or Cancel, or a real failure,
+     * closes it.
+     */
+    private var silentRestarts = 0
 
     /**
      * True once a partial has been written into the field. Cancel only rewinds when it
@@ -52,6 +64,7 @@ class DictationController(private val context: Context) {
             return
         }
 
+        silentRestarts = 0
         buffer = DictationBuffer(baseText, multiline, replace)
         this.onText = onText
         published = false
@@ -72,10 +85,17 @@ class DictationController(private val context: Context) {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            // Ask for a longer silence before the recogniser gives up. Honour depends on
+            // the device's engine, which is exactly why the restart below exists too.
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_MS)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_MS)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, MIN_SPEECH_MS)
             // No EXTRA_LANGUAGE: the device's own language is the one the user is
             // already typing in, and forcing a tag invites ERROR_LANGUAGE_NOT_SUPPORTED.
         }
 
+        listeningIntent = intent
+        silentRestarts = 0
         runCatching { created.startListening(intent) }.onFailure {
             teardown(restore = true)
             _state.value = DictationUiState(message = COULD_NOT_START)
@@ -126,6 +146,7 @@ class DictationController(private val context: Context) {
         recognizer = null
         buffer = null
         onText = null
+        listeningIntent = null
         published = false
     }
 
@@ -170,6 +191,8 @@ class DictationController(private val context: Context) {
         }
 
         override fun onResults(results: Bundle?) {
+            // A real result means the session did its job; a later one starts clean.
+            silentRestarts = 0
             val heard = firstResult(results)
             if (heard == null) {
                 teardown(restore = true)
@@ -182,13 +205,38 @@ class DictationController(private val context: Context) {
         }
 
         override fun onError(error: Int) {
+            // Hearing nothing is the most common outcome there is, and it is not a
+            // failure: the session stays open and listens again.
+            val silence = error == SpeechRecognizer.ERROR_NO_MATCH ||
+                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+            if (silence && silentRestarts < MAX_SILENT_RESTARTS) {
+                silentRestarts++
+                val intent = listeningIntent
+                val speech = recognizer
+                if (intent != null && speech != null &&
+                    runCatching { speech.startListening(intent) }.isSuccess
+                ) {
+                    return
+                }
+            }
+
             teardown(restore = true)
-            _state.value = DictationUiState(message = messageFor(error))
+            _state.value = DictationUiState(
+                message = if (silence) NOTHING_HEARD_AFTER_RETRIES else messageFor(error)
+            )
         }
     }
 
     private companion object {
         const val NOTHING_HEARD = "Didn't catch that — try again"
+        const val NOTHING_HEARD_AFTER_RETRIES = "Didn't catch anything — tap the mic and try again"
+
+        /** How long the engine waits for speech before concluding the sentence ended. */
+        const val SILENCE_MS = 4_000L
+        const val MIN_SPEECH_MS = 1_500L
+
+        /** Restarts allowed without a single word being heard before giving up. */
+        const val MAX_SILENT_RESTARTS = 6
         const val NO_SERVICE = "The speech service can't be reached — type instead"
         const val MICROPHONE_OFF = "Microphone is off for daymark . — type instead, or turn it on in Settings"
         const val BUSY = "The speech service is busy — tap the mic again"
