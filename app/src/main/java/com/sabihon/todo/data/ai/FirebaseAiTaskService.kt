@@ -44,18 +44,73 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
     /**
      * Built on first use, not at construction: this class is injected into ViewModels
      * that also run in previews and unit tests, where there is no Firebase to talk to.
+     *
+     * Model IDs on the Gemini Developer API evolve over time, so we cache models per ID
+     * and fall back across supported Flash tiers if a project rejects one with 404.
      */
-    private val flashLiteModel by lazy { buildModel(AiModelTier.FLASH_LITE.modelId) }
-    private val flashModel by lazy { buildModel(AiModelTier.FLASH.modelId) }
+    private val modelCache = java.util.concurrent.ConcurrentHashMap<String, com.google.firebase.ai.GenerativeModel>()
 
-    private fun buildModel(modelName: String) =
-        Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
-            modelName = modelName,
-            generationConfig = generationConfig {
-                // Ask for JSON rather than prose; the prompt pins the shape.
-                responseMimeType = "application/json"
+    @Volatile
+    private var resolvedLiteModelId: String = AiModelTier.FLASH_LITE.modelId
+
+    @Volatile
+    private var resolvedFlashModelId: String = AiModelTier.FLASH.modelId
+
+    private fun getOrBuildModel(modelName: String) =
+        modelCache.getOrPut(modelName) {
+            Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
+                modelName = modelName,
+                generationConfig = generationConfig {
+                    // Ask for JSON rather than prose; the prompt pins the shape.
+                    responseMimeType = "application/json"
+                }
+            )
+        }
+
+    private suspend fun generateJsonText(prompt: String, tier: AiModelTier): String? {
+        val candidates = when (tier) {
+            AiModelTier.FLASH -> listOf(
+                resolvedFlashModelId,
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-2.5-flash-lite"
+            ).distinct()
+            else -> listOf(
+                resolvedLiteModelId,
+                "gemini-2.5-flash-lite",
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-2.0-flash-lite"
+            ).distinct()
+        }
+
+        var lastError: Exception? = null
+        for (candidateId in candidates) {
+            try {
+                val response = getOrBuildModel(candidateId).generateContent(prompt)
+                if (tier == AiModelTier.FLASH) {
+                    resolvedFlashModelId = candidateId
+                } else {
+                    resolvedLiteModelId = candidateId
+                }
+                return response.text
+            } catch (e: Exception) {
+                lastError = e
+                val msg = e.message.orEmpty().lowercase()
+                val modelUnavailable = "404" in msg ||
+                    "not_found" in msg ||
+                    "not found" in msg ||
+                    "not supported" in msg ||
+                    "invalid model" in msg
+                android.util.Log.w(
+                    "FirebaseAiTaskService",
+                    "Gemini call failed on model=$candidateId (modelUnavailable=$modelUnavailable): ${e.message}"
+                )
+                if (!modelUnavailable) throw e
             }
-        )
+        }
+        throw lastError ?: IllegalStateException("No Gemini model available")
+    }
 
     override suspend fun parseQuickAdd(
         input: String,
@@ -64,8 +119,7 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
         if (input.isBlank()) return Result.Error(IllegalArgumentException("Nothing to read"))
 
         return try {
-            val response = flashLiteModel.generateContent(quickAddPrompt(input, categories))
-            val text: String? = response.text
+            val text: String? = generateJsonText(quickAddPrompt(input, categories), AiModelTier.FLASH_LITE)
             val payload = text?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned nothing usable"))
@@ -84,12 +138,8 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
         if (tasks.isEmpty()) return Result.Error(IllegalArgumentException("No open tasks to prioritize"))
 
         return try {
-            val model = when (modelTier) {
-                AiModelTier.FLASH -> flashModel
-                else -> flashLiteModel
-            }
-            val response = model.generateContent(prioritizePrompt(tasks))
-            val payload = response.text?.let(::jsonObject)
+            val rawText = generateJsonText(prioritizePrompt(tasks), modelTier)
+            val payload = rawText?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned no prioritization JSON"))
             } else {
@@ -108,13 +158,11 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
         if (title.isBlank()) return Result.Error(IllegalArgumentException("Nothing to break down"))
 
         return try {
-            // Flash Lite on purpose: the same tier as quick-add. Splitting a task into
-            // steps is a short, well-bounded rewrite, and the latency budget (1.2 s
-            // target) rules out the heavier tier before the answer quality would.
-            val response = flashLiteModel.generateContent(
-                subTaskPrompt(title, description, existingSubTasks)
+            val rawText = generateJsonText(
+                subTaskPrompt(title, description, existingSubTasks),
+                AiModelTier.FLASH_LITE
             )
-            val payload = response.text?.let(::jsonObject)
+            val payload = rawText?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned no steps"))
             } else {
@@ -138,8 +186,8 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
         }
 
         return try {
-            val response = flashLiteModel.generateContent(nextTaskPrompt(context))
-            val payload = response.text?.let(::jsonObject)
+            val rawText = generateJsonText(nextTaskPrompt(context), AiModelTier.FLASH_LITE)
+            val payload = rawText?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned no suggestions"))
             } else {

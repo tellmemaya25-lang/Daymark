@@ -120,7 +120,12 @@ class CategoryDetailViewModel @Inject constructor(
         if (_uiState.value.isSuggesting) return
         if (suggestionsRequested && !force) return
         suggestionsRequested = true
-        _uiState.update { it.copy(isSuggesting = true) }
+        _uiState.update {
+            it.copy(
+                isSuggesting = true,
+                suggestionsExpanded = if (force) true else it.suggestionsExpanded
+            )
+        }
 
         viewModelScope.launch {
             try {
@@ -129,14 +134,21 @@ class CategoryDetailViewModel @Inject constructor(
                     openTasks = state.tasks.filter { !it.isCompleted },
                     recentCompleted = state.tasks.filter { it.isCompleted },
                     categories = listOfNotNull(state.category),
-                    uid = auth.currentUser?.uid
+                    uid = auth.currentUser?.uid,
+                    forceInteractive = force
                 )
                 // A candidate for another project is dropped rather than re-homed: the
                 // card lives inside one project and must not suggest work elsewhere.
                 val scoped = result.candidates.filter {
                     it.categoryId == null || it.categoryId == state.category?.id
                 }
-                _uiState.update { it.copy(isSuggesting = false, suggestions = scoped) }
+                _uiState.update {
+                    it.copy(
+                        isSuggesting = false,
+                        suggestions = scoped,
+                        suggestionsExpanded = if (force) true else it.suggestionsExpanded
+                    )
+                }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isSuggesting = false) }
             }

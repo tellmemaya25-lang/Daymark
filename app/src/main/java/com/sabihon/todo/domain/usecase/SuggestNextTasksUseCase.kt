@@ -94,7 +94,8 @@ class SuggestNextTasksUseCase private constructor(
         openTasks: List<Task>,
         recentCompleted: List<Task>,
         categories: List<Category>,
-        uid: String? = null
+        uid: String? = null,
+        forceInteractive: Boolean = false
     ): NextTaskSuggestions {
         val open = openTasks.filter { !it.isCompleted && !it.isDeleted }
         val completed = recentCompleted.filter { it.isCompleted && !it.isDeleted }
@@ -103,12 +104,16 @@ class SuggestNextTasksUseCase private constructor(
         val gate = cloud
         if (gate != null && !gate.prefs.isCloudEnabledNow()) {
             Log.i(TAG, "next: cloud AI is switched off, using the local heuristics")
-            return local(open, completed, categories, dismissed, message = null)
+            return local(open, completed, categories, dismissed, message = null, interactive = forceInteractive)
         }
 
         val context = buildContext(open, completed, categories)
         if (context.openTitles.isEmpty() && context.recentCompletedTitles.isEmpty()) {
-            return NextTaskSuggestions(message = "Nothing to suggest from yet - add a task or two")
+            return if (forceInteractive) {
+                local(open, completed, categories, dismissed, message = null, interactive = true)
+            } else {
+                NextTaskSuggestions(message = "Nothing to suggest from yet - add a task or two")
+            }
         }
 
         val startedAt = System.currentTimeMillis()
@@ -119,7 +124,7 @@ class SuggestNextTasksUseCase private constructor(
                     uid = uid,
                     feature = AiFeature.SUGGEST_NEXT,
                     estimatedTokens = estimatedTokens,
-                    enforceCooldown = true
+                    enforceCooldown = !forceInteractive
                 ) {
                     withTimeoutOrNull(TIMEOUT_MS) { aiTaskService.suggestNextTasks(context) }
                 }
@@ -132,7 +137,7 @@ class SuggestNextTasksUseCase private constructor(
                         status = "blocked_${outcome.reason.name.lowercase()}",
                         latencyMs = System.currentTimeMillis() - startedAt
                     )
-                    return local(open, completed, categories, dismissed, message = null)
+                    return local(open, completed, categories, dismissed, message = null, interactive = forceInteractive)
                 }
 
                 is AiQuotaGuard.ExecutionOutcome.Executed -> {
@@ -160,7 +165,7 @@ class SuggestNextTasksUseCase private constructor(
         val cleaned = clean(raw, open, categories, dismissed)
         if (cleaned.isEmpty()) {
             Log.i(TAG, "next: nothing usable from the model, using the local heuristics")
-            return local(open, completed, categories, dismissed, message = null)
+            return local(open, completed, categories, dismissed, message = null, interactive = forceInteractive)
         }
 
         Log.i(TAG, "next: the model suggested ${cleaned.size}")
@@ -172,10 +177,16 @@ class SuggestNextTasksUseCase private constructor(
         completed: List<Task>,
         categories: List<Category>,
         dismissed: Set<String>,
-        message: String?
+        message: String?,
+        interactive: Boolean = false
     ): NextTaskSuggestions {
+        val rawCandidates = if (interactive) {
+            heuristics.suggestInteractive(open, completed, categories)
+        } else {
+            heuristics.suggest(open, completed, categories)
+        }
         val candidates = clean(
-            raw = heuristics.suggest(open, completed, categories),
+            raw = rawCandidates,
             open = open,
             categories = categories,
             dismissed = dismissed
@@ -183,9 +194,6 @@ class SuggestNextTasksUseCase private constructor(
         return NextTaskSuggestions(
             candidates = candidates,
             source = NextTaskSuggestions.Source.LOCAL,
-            // Only carried through when there is genuinely nothing to show: an empty
-            // result plus a message is a dead card, and a card that says "nothing to
-            // suggest" every day is worse than one that hides.
             message = if (candidates.isEmpty()) message else null
         )
     }

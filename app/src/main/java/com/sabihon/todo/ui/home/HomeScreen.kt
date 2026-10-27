@@ -311,9 +311,24 @@ fun HomeScreen(
                     }
                 }
 
-                // Suggestions sit directly under the strip: near enough to be the first
-                // thing read when the list is nearly clear, and gone entirely once the
-                // user collapses them.
+                // Smart AI actions sit directly under the week strip so both Task
+                // Prioritization and Contextual Task Suggestions are always visible
+                // regardless of how many tasks are scheduled on the currently selected day.
+                item {
+                    HomeAiActionRow(
+                        isPrioritizing = uiState.isPrioritizing,
+                        isSuggesting = uiState.isSuggestingNext,
+                        onPrioritizeClick = { viewModel.onAction(HomeAction.RequestPrioritize) },
+                        onSuggestClick = { viewModel.onAction(HomeAction.RequestSuggestions) },
+                        modifier = Modifier.padding(
+                            start = 20.dp,
+                            end = 20.dp,
+                            top = 8.dp,
+                            bottom = 4.dp
+                        )
+                    )
+                }
+
                 if (uiState.nextTaskSuggestions.isNotEmpty() || uiState.isSuggestingNext) {
                     item {
                         SuggestedTasksCard(
@@ -331,24 +346,11 @@ fun HomeScreen(
                             },
                             onRefresh = { viewModel.onAction(HomeAction.RequestSuggestions) },
                             onEdit = onNavigateToAddTaskPrefilled,
-                            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp)
-                        )
-                    }
-                }
-
-                // Today / Upcoming / All tasks used to live here. They are gone: with a
-                // sticky week strip and a day swipe, the strip is the browser, and two
-                // ways to change what you are looking at was one too many. "All tasks"
-                // moved to the Projects tab, which is where you go to see everything.
-                if (uiState.visibleTasks.size >= 2) {
-                    item {
-                        PrioritizeTaskButton(
-                            onClick = { viewModel.onAction(HomeAction.RequestPrioritize) },
                             modifier = Modifier.padding(
                                 start = 20.dp,
                                 end = 20.dp,
-                                top = 4.dp,
-                                bottom = 10.dp
+                                top = 6.dp,
+                                bottom = 6.dp
                             )
                         )
                     }
@@ -1021,38 +1023,88 @@ private fun WeekStripBar(
  * says what it does instead of relying on a sparkle to explain itself.
  */
 @Composable
-private fun PrioritizeTaskButton(
-    onClick: () -> Unit,
+private fun HomeAiActionRow(
+    isPrioritizing: Boolean,
+    isSuggesting: Boolean,
+    onPrioritizeClick: () -> Unit,
+    onSuggestClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val surfaces = LocalDaymarkSurfaces.current
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(surfaces.accentSurface)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            // Null content description: the button's own Text is the label, and a
-            // second one would have TalkBack saying "prioritize tasks, prioritize task".
-            imageVector = Icons.Filled.AutoAwesome,
-            contentDescription = null,
-            tint = AccentBlue,
-            modifier = Modifier.size(16.dp)
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = "Prioritize Task",
-            style = MaterialTheme.typography.labelLarge.copy(
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold
-            ),
-            color = surfaces.onAccentSurface
-        )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(surfaces.accentSurface)
+                .clickable(enabled = !isPrioritizing, onClick = onPrioritizeClick)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (isPrioritizing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    strokeWidth = 2.dp,
+                    color = AccentBlue
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    tint = AccentBlue,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = "Prioritize",
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                ),
+                color = surfaces.onAccentSurface
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(surfaces.accentSurface)
+                .clickable(enabled = !isSuggesting, onClick = onSuggestClick)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (isSuggesting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    strokeWidth = 2.dp,
+                    color = AccentBlue
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    tint = AccentBlue,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = "Suggest tasks",
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                ),
+                color = surfaces.onAccentSurface
+            )
+        }
     }
 }
 

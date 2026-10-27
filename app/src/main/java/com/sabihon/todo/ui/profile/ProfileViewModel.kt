@@ -14,6 +14,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.datastore.ThemePreferences
+import com.sabihon.todo.data.ai.AiQuotaGuard
 import com.sabihon.todo.data.ai.AiSnapshotCache
 import com.sabihon.todo.data.local.AvatarStore
 import com.sabihon.todo.core.datastore.ThemePref
@@ -69,6 +70,7 @@ class ProfileViewModel @Inject constructor(
     private val themePreferences: ThemePreferences,
     private val aiPreferences: AiPreferenceStore,
     private val aiSnapshotCache: AiSnapshotCache,
+    private val aiQuotaGuard: AiQuotaGuard,
     private val avatarStore: AvatarStore
 ) : ViewModel() {
 
@@ -210,6 +212,7 @@ class ProfileViewModel @Inject constructor(
     fun setAiCloudEnabled(enabled: Boolean) {
         viewModelScope.launch {
             aiPreferences.setCloudEnabled(enabled)
+            aiQuotaGuard.resetRuntimeState()
             if (!enabled) {
                 aiSnapshotCache.clearAll()
             }
@@ -219,6 +222,7 @@ class ProfileViewModel @Inject constructor(
     fun clearAiCache() {
         viewModelScope.launch {
             aiSnapshotCache.clearAll()
+            aiQuotaGuard.resetRuntimeState()
             aiPreferences.clearDismissedSuggestions()
             _uiState.update { it.copy(successMessage = "Smart AI cache cleared") }
         }

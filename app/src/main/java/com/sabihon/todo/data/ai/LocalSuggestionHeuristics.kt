@@ -60,6 +60,127 @@ class LocalSuggestionHeuristics @Inject constructor() {
     }
 
     /**
+     * Broader local suggestions for interactive "Suggest tasks" requests when Cloud AI
+     * is switched off, offline, or cooling down.
+     *
+     * Starts with the strict rules in [suggest], then fills up to [limit] from 1-day
+     * overdue tasks, undated high-priority work, multi-step tasks without checklists,
+     * recent completions, or calm daily planning starters.
+     */
+    fun suggestInteractive(
+        openTasks: List<Task>,
+        recentCompleted: List<Task>,
+        categories: List<Category>,
+        today: LocalDate = LocalDate.now(),
+        zone: ZoneId = ZoneId.systemDefault(),
+        limit: Int = MAX_SUGGESTIONS
+    ): List<SuggestedTaskCandidate> {
+        val open = openTasks.filter { !it.isCompleted && !it.isDeleted }
+        val completed = recentCompleted.filter { it.isCompleted && !it.isDeleted }
+        val openTitles = open.mapTo(mutableSetOf()) { it.title.normalized() }
+
+        val candidates = mutableListOf<SuggestedTaskCandidate>()
+        suggest(open, completed, categories, today, zone, limit).forEach { candidates += it }
+
+        // 1-day overdue tasks that didn't hit the >= 2-day strict threshold
+        open.asSequence()
+            .filter { it.dueAt != null }
+            .map { task -> task to daysOverdue(task.dueAt!!, today, zone) }
+            .filter { (_, days) -> days == 1L }
+            .forEach { (task, _) ->
+                val title = "Catch up on ${task.title.trim()}".take(MAX_TITLE_CHARS)
+                candidates += SuggestedTaskCandidate(
+                    suggestionId = SuggestedTaskCandidate.idFor(title, task.categoryId),
+                    title = title,
+                    categoryId = task.categoryId,
+                    priority = task.priority,
+                    dueOffsetHours = TODAY_OFFSET_HOURS,
+                    reason = "Missed yesterday — fit it in today"
+                )
+            }
+
+        // High/Urgent tasks with no due date yet
+        open.asSequence()
+            .filter { it.dueAt == null && (it.priority == Priority.URGENT || it.priority == Priority.HIGH) }
+            .take(2)
+            .forEach { task ->
+                val title = "Schedule time for ${task.title.trim()}".take(MAX_TITLE_CHARS)
+                candidates += SuggestedTaskCandidate(
+                    suggestionId = SuggestedTaskCandidate.idFor(title, task.categoryId),
+                    title = title,
+                    categoryId = task.categoryId,
+                    priority = task.priority,
+                    dueOffsetHours = TODAY_OFFSET_HOURS,
+                    reason = "${task.priority.name.lowercase().replaceFirstChar { it.uppercase() }} priority with no date set"
+                )
+            }
+
+        // Recent completion follow-up
+        completed
+            .sortedByDescending { it.completedAt ?: it.updatedAt }
+            .firstOrNull()
+            ?.let { recent ->
+                val title = "Follow up on ${recent.title.trim()}".take(MAX_TITLE_CHARS)
+                candidates += SuggestedTaskCandidate(
+                    suggestionId = SuggestedTaskCandidate.idFor(title, recent.categoryId),
+                    title = title,
+                    categoryId = recent.categoryId,
+                    priority = Priority.MEDIUM,
+                    dueOffsetHours = EVENING_OFFSET_HOURS,
+                    reason = "Recently completed — keep momentum going"
+                )
+            }
+
+        // Empty categories that could use a first step
+        val openCatIds = open.mapNotNull { it.categoryId }.toSet()
+        categories.firstOrNull { it.id !in openCatIds }?.let { emptyCat ->
+            val title = "Add next action for ${emptyCat.name}".take(MAX_TITLE_CHARS)
+            candidates += SuggestedTaskCandidate(
+                suggestionId = SuggestedTaskCandidate.idFor(title, emptyCat.id),
+                title = title,
+                categoryId = emptyCat.id,
+                priority = Priority.MEDIUM,
+                dueOffsetHours = EVENING_OFFSET_HOURS,
+                reason = "No open tasks in ${emptyCat.name}"
+            )
+        }
+
+        // Calm daily starters so the card is never blank when explicitly requested
+        val defaultCatId = categories.firstOrNull()?.id
+        listOf(
+            SuggestedTaskCandidate(
+                suggestionId = SuggestedTaskCandidate.idFor("Plan top 3 priorities for today", defaultCatId),
+                title = "Plan top 3 priorities for today",
+                categoryId = defaultCatId,
+                priority = Priority.HIGH,
+                dueOffsetHours = TODAY_OFFSET_HOURS,
+                reason = "A quick 2-minute plan keeps the day focused"
+            ),
+            SuggestedTaskCandidate(
+                suggestionId = SuggestedTaskCandidate.idFor("Clear one quick 5-minute task", defaultCatId),
+                title = "Clear one quick 5-minute task",
+                categoryId = defaultCatId,
+                priority = Priority.LOW,
+                dueOffsetHours = 4,
+                reason = "Easy win to build momentum"
+            ),
+            SuggestedTaskCandidate(
+                suggestionId = SuggestedTaskCandidate.idFor("Review upcoming deadlines for the week", defaultCatId),
+                title = "Review upcoming deadlines for the week",
+                categoryId = defaultCatId,
+                priority = Priority.MEDIUM,
+                dueOffsetHours = EVENING_OFFSET_HOURS,
+                reason = "Stay ahead of upcoming commitments"
+            )
+        ).forEach { candidates += it }
+
+        return candidates
+            .filter { it.title.normalized() !in openTitles }
+            .distinctBy { it.suggestionId }
+            .take(limit)
+    }
+
+    /**
      * A habit with a streak worth protecting that is not on today's list. Repeating
      * tasks that are already open today are skipped by the caller's title filter, so
      * this only fires for a habit the user has not been shown yet.

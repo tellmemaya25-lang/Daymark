@@ -17,8 +17,8 @@ enum class AiSource {
  */
 enum class AiModelTier(val modelId: String) {
     LOCAL("local-scorer"),
-    FLASH_LITE("gemini-3.5-flash-lite"),
-    FLASH("gemini-3.5-flash")
+    FLASH_LITE("gemini-2.5-flash-lite"),
+    FLASH("gemini-2.5-flash")
 }
 
 /**

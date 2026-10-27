@@ -192,4 +192,16 @@ class SuggestSubTasksUseCaseTest {
 
         assertEquals(listOf("print the tickets", "charge the camera"), steps)
     }
+
+    @Test
+    fun `suggestFallbackSteps offers concrete steps for plain single-phrase tasks`() {
+        val steps = heuristics.suggestFallbackSteps(
+            title = "Call the dentist",
+            description = null,
+            existingSubTasks = emptyList()
+        )
+
+        assertTrue(steps.isNotEmpty())
+        assertTrue(steps.size in 2..6)
+    }
 }

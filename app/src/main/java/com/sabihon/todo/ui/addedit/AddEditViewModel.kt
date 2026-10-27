@@ -87,6 +87,13 @@ class AddEditViewModel @Inject constructor(
     private var seededTaskId: String? = null
     private var draftSeeded: Boolean = false
 
+    private enum class PendingEditorAiAction {
+        QUICK_ADD,
+        SUGGEST_STEPS
+    }
+
+    private var pendingAiAction: PendingEditorAiAction? = null
+
     /**
      * The document this form was opened on.
      *
@@ -356,31 +363,43 @@ class AddEditViewModel @Inject constructor(
             return
         }
 
+        viewModelScope.launch {
+            if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
+                pendingAiAction = PendingEditorAiAction.SUGGEST_STEPS
+                _uiState.update { it.copy(showAiConsentSheet = true) }
+                return@launch
+            }
+            runSuggestSubTasks()
+        }
+    }
+
+    private suspend fun runSuggestSubTasks() {
+        val snapshot = _uiState.value
+        if (snapshot.isSuggestingSubTasks || snapshot.title.isBlank()) return
+
         _uiState.update {
             it.copy(isSuggestingSubTasks = true, subTaskSuggestionMessage = null)
         }
-        viewModelScope.launch {
-            try {
-                val result = suggestSubTasksUseCase(
-                    title = snapshot.title,
-                    description = snapshot.description.takeIf { d -> d.isNotBlank() },
-                    existingSubTasks = snapshot.subTasks.map { it.title },
-                    uid = auth.currentUser?.uid
+        try {
+            val result = suggestSubTasksUseCase(
+                title = snapshot.title,
+                description = snapshot.description.takeIf { d -> d.isNotBlank() },
+                existingSubTasks = snapshot.subTasks.map { it.title },
+                uid = auth.currentUser?.uid
+            )
+            _uiState.update { current ->
+                current.copy(
+                    isSuggestingSubTasks = false,
+                    suggestedSubTasks = result.steps,
+                    subTaskSuggestionMessage = result.message
                 )
-                _uiState.update { current ->
-                    current.copy(
-                        isSuggestingSubTasks = false,
-                        suggestedSubTasks = result.steps,
-                        subTaskSuggestionMessage = result.message
-                    )
-                }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isSuggestingSubTasks = false,
-                        subTaskSuggestionMessage = "Couldn't suggest steps - try again"
-                    )
-                }
+            }
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(
+                    isSuggestingSubTasks = false,
+                    subTaskSuggestionMessage = "Couldn't suggest steps - try again"
+                )
             }
         }
     }
@@ -463,6 +482,7 @@ class AddEditViewModel @Inject constructor(
 
         viewModelScope.launch {
             if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
+                pendingAiAction = PendingEditorAiAction.QUICK_ADD
                 _uiState.update { it.copy(showAiConsentSheet = true) }
                 return@launch
             }
@@ -472,13 +492,19 @@ class AddEditViewModel @Inject constructor(
 
     fun onAiConsentDecided(enableCloud: Boolean) {
         viewModelScope.launch {
+            val action = pendingAiAction
+            pendingAiAction = null
             aiPreferences.setCloudEnabled(enableCloud)
             _uiState.update { it.copy(showAiConsentSheet = false) }
-            runQuickAdd()
+            when (action) {
+                PendingEditorAiAction.SUGGEST_STEPS -> runSuggestSubTasks()
+                PendingEditorAiAction.QUICK_ADD, null -> runQuickAdd()
+            }
         }
     }
 
     fun onDismissAiConsent() {
+        pendingAiAction = null
         _uiState.update { it.copy(showAiConsentSheet = false) }
     }
 

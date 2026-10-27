@@ -120,7 +120,13 @@ class SuggestSubTasksUseCase private constructor(
         val gate = cloud
         if (gate != null && !gate.prefs.isCloudEnabledNow()) {
             Log.i(TAG, "steps: cloud AI is switched off, using the offline splitter")
-            return offline(cleanTitle, existing, "Smart AI is off - turn it on in Settings for suggested steps")
+            return offline(
+                title = cleanTitle,
+                description = description,
+                existing = existing,
+                messageWhenEmpty = "Smart AI is off - turn it on in Settings for suggested steps",
+                noteWhenFallback = "Suggested offline (enable Smart AI in Settings for Gemini steps)"
+            )
         }
 
         val estimatedTokens = estimateTokens(cleanTitle, description)
@@ -130,7 +136,7 @@ class SuggestSubTasksUseCase private constructor(
                     uid = uid,
                     feature = AiFeature.SUB_TASKS,
                     estimatedTokens = estimatedTokens,
-                    enforceCooldown = true
+                    enforceCooldown = false
                 ) {
                     withTimeoutOrNull(TIMEOUT_MS) {
                         aiTaskService.suggestSubTasks(cleanTitle, description, existing)
@@ -141,16 +147,22 @@ class SuggestSubTasksUseCase private constructor(
                     Log.w(TAG, "steps: blocked by quota guard (${outcome.reason})")
                     val message = when (outcome.reason) {
                         AiQuotaGuard.BlockReason.DAILY_QUOTA_EXCEEDED ->
-                            "Daily AI limit reached - try again tomorrow"
+                            "Daily AI limit reached - showing offline steps"
                         AiQuotaGuard.BlockReason.COOLDOWN,
                         AiQuotaGuard.BlockReason.IN_FLIGHT ->
                             "Give it a moment, then ask again"
                         AiQuotaGuard.BlockReason.CIRCUIT_OPEN ->
-                            "AI is cooling down after a failure - try again shortly"
+                            "Suggested offline while Cloud AI reconnects"
                         AiQuotaGuard.BlockReason.CLOUD_DISABLED ->
-                            "Smart AI is off - turn it on in Settings for suggested steps"
+                            "Suggested offline (enable Smart AI in Settings for Gemini steps)"
                     }
-                    return offline(cleanTitle, existing, message)
+                    return offline(
+                        title = cleanTitle,
+                        description = description,
+                        existing = existing,
+                        messageWhenEmpty = message,
+                        noteWhenFallback = message
+                    )
                 }
 
                 is AiQuotaGuard.ExecutionOutcome.Executed -> {
@@ -174,7 +186,13 @@ class SuggestSubTasksUseCase private constructor(
         val steps = clean(raw, existing)
         if (steps.isEmpty()) {
             Log.i(TAG, "steps: nothing usable came back, falling back to the offline splitter")
-            return offline(cleanTitle, existing, "AI didn't answer - try again")
+            return offline(
+                title = cleanTitle,
+                description = description,
+                existing = existing,
+                messageWhenEmpty = "AI didn't answer - try again",
+                noteWhenFallback = "Suggested offline (Cloud AI unavailable right now)"
+            )
         }
 
         remember(cleanTitle, steps)
@@ -185,17 +203,28 @@ class SuggestSubTasksUseCase private constructor(
     /** The offline attempt, labelled, or an honest message when it has nothing to offer. */
     private fun offline(
         title: String,
+        description: String?,
         existing: List<String>,
-        messageWhenEmpty: String
+        messageWhenEmpty: String,
+        noteWhenFallback: String? = null
     ): SubTaskSuggestions {
-        val steps = clean(heuristics.split(title, existing), existing)
+        val rawOffline = if (cloud != null) {
+            heuristics.suggestFallbackSteps(title, description, existing)
+        } else {
+            heuristics.split(title, existing)
+        }
+        val steps = clean(rawOffline, existing)
         return if (steps.isEmpty()) {
             SubTaskSuggestions(
                 source = SubTaskSuggestions.Source.LOCAL,
                 message = messageWhenEmpty
             )
         } else {
-            SubTaskSuggestions(steps = steps, source = SubTaskSuggestions.Source.LOCAL)
+            SubTaskSuggestions(
+                steps = steps,
+                source = SubTaskSuggestions.Source.LOCAL,
+                message = if (cloud != null) noteWhenFallback else null
+            )
         }
     }
 
