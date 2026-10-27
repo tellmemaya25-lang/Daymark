@@ -18,6 +18,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -66,7 +68,7 @@ import com.sabihon.todo.domain.model.SubTask
  *
  * Swipe actions stay in [SwipeableTaskRow], which wraps this card.
  */
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun TaskRow(
     title: String,
@@ -189,7 +191,13 @@ fun TaskRow(
 
                 if (chips.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Wraps rather than overflows. A row of four chips (category, due,
+                    // priority, habit) does not fit across a narrow card, and a plain Row
+                    // squeezed the last one to a single letter underneath the chevron.
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         chips.forEachIndexed { index, label ->
                             MetaChip(
                                 label = label,
@@ -489,7 +497,11 @@ private fun MetaChip(
                 fontWeight = FontWeight.Medium
             ),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1
+            maxLines = 1,
+            // Belt and braces: a chip longer than the whole card should end in an
+            // ellipsis, never be cut mid-word.
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
