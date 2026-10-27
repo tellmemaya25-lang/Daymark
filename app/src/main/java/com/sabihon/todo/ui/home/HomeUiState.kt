@@ -1,5 +1,7 @@
 package com.sabihon.todo.ui.home
 
+import com.sabihon.todo.domain.ai.PrioritizationPlan
+import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.usecase.DashboardCounts
 import java.time.LocalDate
@@ -12,17 +14,15 @@ enum class HomeFilter { TODAY, UPCOMING, ALL }
 
 /**
  * What the ON YOUR LIST control sorts by.
- *
- * There used to be a third value, DEFAULT, whose implementation was byte-identical to
- * DUE_DATE - two rows in the menu that did the same thing. Due date is the default.
  */
-enum class HomeSort { PRIORITY, DUE_DATE }
+enum class HomeSort { SMART, PRIORITY, DUE_DATE }
 
-/** Which way the sort runs. A due-date list is not useful in only one direction. */
+/** Which way the sort runs. */
 enum class HomeSortDirection { ASCENDING, DESCENDING }
 
 val HomeSort.label: String
     get() = when (this) {
+        HomeSort.SMART -> "Smart focus"
         HomeSort.PRIORITY -> "Priority first"
         HomeSort.DUE_DATE -> "Due date"
     }
@@ -36,6 +36,7 @@ val HomeSortDirection.label: String
 /** Short enough to live in the header row without pushing the count off screen. */
 val HomeSort.shortLabel: String
     get() = when (this) {
+        HomeSort.SMART -> "Smart"
         HomeSort.PRIORITY -> "Priority"
         HomeSort.DUE_DATE -> "Due date"
     }
@@ -96,7 +97,19 @@ data class HomeUiState(
      * One-shot line confirming where a completed habit rescheduled to, e.g.
      * "Next: Tue, Oct 27". Null when nothing is pending.
      */
-    val habitNextLabel: String? = null
+    val habitNextLabel: String? = null,
+
+    // ---- Smart AI prioritization ----
+    val showAiConsentSheet: Boolean = false,
+    val showPrioritizeSheet: Boolean = false,
+    val isPrioritizing: Boolean = false,
+    val prioritizationPlan: PrioritizationPlan? = null,
+    /** Checked proposals (`taskId -> suggestedPriority`) inside the review sheet. */
+    val selectedPriorityChanges: Map<String, Priority> = emptyMap(),
+    /** Validated focus rank map (`taskId -> 1..N`) used when `HomeSort.SMART` is active. */
+    val aiFocusRanks: Map<String, Int> = emptyMap(),
+    val showPriorityUndo: Boolean = false,
+    val priorityUndoCount: Int = 0
 )
 
 sealed interface HomeAction {
@@ -115,4 +128,14 @@ sealed interface HomeAction {
     data class SetSort(val sort: HomeSort) : HomeAction
     data class SetSortDirection(val direction: HomeSortDirection) : HomeAction
     data class SelectDate(val date: LocalDate) : HomeAction
+
+    // ---- Smart AI prioritization ----
+    data object RequestPrioritize : HomeAction
+    data class DecideAiConsent(val enableCloud: Boolean) : HomeAction
+    data object DismissAiConsent : HomeAction
+    data object RefreshPrioritize : HomeAction
+    data object DismissPrioritizeSheet : HomeAction
+    data class TogglePriorityProposal(val taskId: String, val checked: Boolean) : HomeAction
+    data object ApplyPriorityPlan : HomeAction
+    data object UndoPriorityPlan : HomeAction
 }

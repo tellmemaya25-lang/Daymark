@@ -3,23 +3,32 @@ package com.sabihon.todo.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
+import com.sabihon.todo.data.ai.AiSnapshotCache
+import com.sabihon.todo.data.ai.LocalPriorityScorer
 import com.sabihon.todo.data.local.AvatarStore
+import com.sabihon.todo.domain.ai.PrioritizationPlan
+import com.sabihon.todo.domain.model.Category
+import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.model.TaskFilter
+import com.sabihon.todo.domain.usecase.ApplyPriorityPlanUseCase
 import com.sabihon.todo.domain.usecase.DeleteTaskUseCase
 import com.sabihon.todo.domain.usecase.GetDashboardCountsUseCase
 import com.sabihon.todo.domain.usecase.ObserveCategoriesUseCase
 import com.sabihon.todo.domain.usecase.ObserveTasksUseCase
+import com.sabihon.todo.domain.usecase.PrioritizationUndoSnapshot
+import com.sabihon.todo.domain.usecase.PrioritizeTasksUseCase
 import com.sabihon.todo.domain.usecase.RestoreTaskUseCase
 import com.sabihon.todo.domain.usecase.ToggleCompleteUseCase
 import com.sabihon.todo.domain.usecase.UpdateTaskUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -41,6 +50,11 @@ class HomeViewModel @Inject constructor(
     private val restoreTaskUseCase: RestoreTaskUseCase,
     private val updateTaskUseCase: UpdateTaskUseCase,
     private val observeCategoriesUseCase: ObserveCategoriesUseCase,
+    private val prioritizeTasksUseCase: PrioritizeTasksUseCase,
+    private val applyPriorityPlanUseCase: ApplyPriorityPlanUseCase,
+    private val localPriorityScorer: LocalPriorityScorer,
+    private val aiSnapshotCache: AiSnapshotCache,
+    private val aiPreferences: AiPreferenceStore,
     private val avatarStore: AvatarStore,
     private val auth: FirebaseAuth
 ) : ViewModel() {
@@ -50,6 +64,9 @@ class HomeViewModel @Inject constructor(
 
     /** Live collectors, kept so a pull-to-refresh can restart them. */
     private val observeJobs = mutableListOf<Job>()
+
+    private var categoriesList: List<Category> = emptyList()
+    private var lastPriorityUndo: PrioritizationUndoSnapshot? = null
 
     init {
         val user = auth.currentUser
@@ -76,7 +93,6 @@ class HomeViewModel @Inject constructor(
     private fun observeAvatar() {
         viewModelScope.launch {
             val user = auth.currentUser
-            // Same entry point as Projects and Activity; see AvatarStore.observe.
             avatarStore.observe(user?.uid, user?.photoUrl?.toString()).collect { uri ->
                 _uiState.update { it.copy(avatarUrl = uri) }
             }
@@ -91,10 +107,7 @@ class HomeViewModel @Inject constructor(
 
     /**
      * Pull-to-refresh: Firestore already streams, so "refresh" means
-     * re-subscribing from scratch — this re-reads the collection and picks up
-     * anything the local cache missed (and anything another device wrote while
-     * the listener was idle). The spinner is held for a beat so the gesture has
-     * visible feedback even when the snapshot comes back instantly.
+     * re-subscribing from scratch.
      */
     fun refresh() {
         if (_uiState.value.isRefreshing) return
@@ -129,7 +142,7 @@ class HomeViewModel @Inject constructor(
             val date = monday.plusDays(offset.toLong())
             WeekDay(
                 date = date,
-                letter = date.dayOfWeek.name.take(1), // M T W T F S S
+                letter = date.dayOfWeek.name.take(1),
                 dayOfMonth = date.dayOfMonth,
                 isToday = date == today,
                 hasTasks = date.toEpochDay() in daysWithTasks
@@ -158,6 +171,7 @@ class HomeViewModel @Inject constructor(
         return viewModelScope.launch {
             observeCategoriesUseCase().collectLatest { result ->
                 if (result is Result.Success) {
+                    categoriesList = result.data
                     val names = result.data.associate { it.id to it.name }
                     _uiState.update { it.copy(categoryNames = names) }
                 }
@@ -170,31 +184,66 @@ class HomeViewModel @Inject constructor(
             observeTasksUseCase(TaskFilter()).collectLatest { result ->
                 when (result) {
                     is Result.Success -> {
-                        val start = getStartOfDay(LocalDate.now())
-                        val end = getEndOfDay(LocalDate.now())
+                        val today = LocalDate.now()
+                        val start = getStartOfDay(today)
+                        val end = getEndOfDay(today)
                         val allTasks = result.data.filter { !it.isDeleted }.sortedBy { it.dueAt ?: Long.MAX_VALUE }
                         val todayTasks = allTasks.filter { task ->
-                            task.dueAt == null || task.dueAt in start..end
+                            task.dueAt == null ||
+                                task.dueAt in start..end ||
+                                (!task.isCompleted && task.dueAt < start)
                         }
                         val momentum = Momentum(
                             total = todayTasks.size,
                             done = todayTasks.count { it.isCompleted }
                         )
-                        // Days that still have open work -> strip dots. Undated tasks land on today.
-                        val today = LocalDate.now()
+
+                        // Real-time CDC: surgically evict completed/deleted tasks from
+                        // the cached prioritization plan and keep focus ranks fresh.
+                        val cdcUpdatedPlan = aiSnapshotCache.onTasksSnapshotChanged(
+                            uid = auth.currentUser?.uid,
+                            today = today,
+                            allTasks = allTasks
+                        )
+                        val latestFocusRanks = cdcUpdatedPlan?.focusRankMap
+                            ?: aiSnapshotCache.getActiveFocusRanks(auth.currentUser?.uid, today)
+
                         val daysWithTasks = allTasks
                             .filter { !it.isCompleted }
-                            .map { task -> task.dueAt?.let { dateOf(it) } ?: today }
+                            .map { task ->
+                                val d = task.dueAt?.let { dateOf(it) } ?: today
+                                if (d.isBefore(today)) today else d
+                            }
                             .map { it.toEpochDay() }
                             .toSet()
+
                         _uiState.update { current ->
+                            val effectiveRanks = if (latestFocusRanks.isNotEmpty()) {
+                                latestFocusRanks
+                            } else {
+                                current.aiFocusRanks.filterKeys { id ->
+                                    allTasks.any { it.id == id && !it.isCompleted }
+                                }
+                            }
                             val (visible, completed) = splitTasks(
-                                allTasks,
-                                current.selectedFilter,
-                                current.selectedSort,
-                                current.sortDirection,
-                                current.selectedDate
+                                tasks = allTasks,
+                                filter = current.selectedFilter,
+                                sort = current.selectedSort,
+                                direction = current.sortDirection,
+                                selectedDate = current.selectedDate,
+                                aiFocusRanks = effectiveRanks
                             )
+                            val syncedPlan = if (current.prioritizationPlan != null && cdcUpdatedPlan != null) {
+                                cdcUpdatedPlan
+                            } else {
+                                current.prioritizationPlan
+                            }
+                            val stillPendingChanges = syncedPlan?.recommendations
+                                ?.filter { it.hasPriorityChange }
+                                ?.map { it.taskId }
+                                ?.toSet()
+                                .orEmpty()
+
                             current.copy(
                                 isLoading = false,
                                 allTasks = allTasks,
@@ -202,12 +251,18 @@ class HomeViewModel @Inject constructor(
                                 visibleTasks = visible,
                                 completedTasks = completed,
                                 momentum = momentum,
-                                weekDays = buildWeek(current.selectedDate, daysWithTasks)
+                                weekDays = buildWeek(current.selectedDate, daysWithTasks),
+                                aiFocusRanks = effectiveRanks,
+                                prioritizationPlan = syncedPlan,
+                                selectedPriorityChanges = if (syncedPlan != null) {
+                                    current.selectedPriorityChanges.filterKeys { it in stillPendingChanges }
+                                } else {
+                                    current.selectedPriorityChanges
+                                }
                             )
                         }
                     }
                     is Result.Loading -> _uiState.update {
-                        // A refresh re-subscribes; don't cover live content with the skeleton.
                         if (it.allTasks.isEmpty()) it.copy(isLoading = true) else it
                     }
                     is Result.Error -> _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
@@ -222,7 +277,8 @@ class HomeViewModel @Inject constructor(
         filter: HomeFilter,
         sort: HomeSort,
         direction: HomeSortDirection,
-        selectedDate: LocalDate = LocalDate.now()
+        selectedDate: LocalDate = LocalDate.now(),
+        aiFocusRanks: Map<String, Int> = _uiState.value.aiFocusRanks
     ): Pair<List<Task>, List<Task>> =
         HomeTaskSorter.split(
             tasks = tasks,
@@ -230,7 +286,8 @@ class HomeViewModel @Inject constructor(
             sort = sort,
             direction = direction,
             selectedDate = selectedDate,
-            zone = zone()
+            zone = zone(),
+            aiFocusRanks = aiFocusRanks
         )
 
     fun onAction(action: HomeAction) {
@@ -249,7 +306,8 @@ class HomeViewModel @Inject constructor(
                         action.filter,
                         current.selectedSort,
                         current.sortDirection,
-                        current.selectedDate
+                        current.selectedDate,
+                        current.aiFocusRanks
                     )
                     current.copy(
                         selectedFilter = action.filter,
@@ -265,7 +323,8 @@ class HomeViewModel @Inject constructor(
                         current.selectedFilter,
                         action.sort,
                         current.sortDirection,
-                        current.selectedDate
+                        current.selectedDate,
+                        current.aiFocusRanks
                     )
                     current.copy(
                         selectedSort = action.sort,
@@ -281,7 +340,8 @@ class HomeViewModel @Inject constructor(
                         current.selectedFilter,
                         current.selectedSort,
                         action.direction,
-                        current.selectedDate
+                        current.selectedDate,
+                        current.aiFocusRanks
                     )
                     current.copy(
                         sortDirection = action.direction,
@@ -292,18 +352,21 @@ class HomeViewModel @Inject constructor(
             }
             is HomeAction.SelectDate -> {
                 _uiState.update { current ->
-                    // Picking a day always means "show me that day", so snap back to Today.
                     val (visible, completed) = splitTasks(
                         current.allTasks,
                         HomeFilter.TODAY,
                         current.selectedSort,
                         current.sortDirection,
-                        action.date
+                        action.date,
+                        current.aiFocusRanks
                     )
                     val today = LocalDate.now()
                     val daysWithTasks = current.allTasks
                         .filter { !it.isCompleted }
-                        .map { task -> task.dueAt?.let { dateOf(it) } ?: today }
+                        .map { task ->
+                            val d = task.dueAt?.let { dateOf(it) } ?: today
+                            if (d.isBefore(today)) today else d
+                        }
                         .map { it.toEpochDay() }
                         .toSet()
                     current.copy(
@@ -315,20 +378,186 @@ class HomeViewModel @Inject constructor(
                     )
                 }
             }
+            HomeAction.RequestPrioritize -> onRequestPrioritize()
+            is HomeAction.DecideAiConsent -> onDecideAiConsent(action.enableCloud)
+            HomeAction.DismissAiConsent -> _uiState.update { it.copy(showAiConsentSheet = false) }
+            HomeAction.RefreshPrioritize -> runPrioritization(forceRefresh = true)
+            HomeAction.DismissPrioritizeSheet -> {
+                _uiState.update { it.copy(showPrioritizeSheet = false, isPrioritizing = false) }
+            }
+            is HomeAction.TogglePriorityProposal -> togglePriorityProposal(action.taskId, action.checked)
+            HomeAction.ApplyPriorityPlan -> applyPriorityPlan()
+            HomeAction.UndoPriorityPlan -> undoPriorityPlan()
         }
+    }
+
+    private fun onRequestPrioritize() {
+        if (_uiState.value.isPrioritizing) return
+        viewModelScope.launch {
+            if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
+                _uiState.update { it.copy(showAiConsentSheet = true) }
+            } else {
+                runPrioritization(forceRefresh = false)
+            }
+        }
+    }
+
+    private fun onDecideAiConsent(enableCloud: Boolean) {
+        viewModelScope.launch {
+            aiPreferences.setCloudEnabled(enableCloud)
+            _uiState.update { it.copy(showAiConsentSheet = false) }
+            runPrioritization(forceRefresh = false)
+        }
+    }
+
+    /**
+     * Zero-wait progressive prioritization:
+     *  - `t = 0 ms`: Opens the sheet immediately with `LocalPriorityScorer` (Rung 0).
+     *  - Async: Refines with cached or cloud Gemini recommendations and cross-fades.
+     */
+    private fun runPrioritization(forceRefresh: Boolean) {
+        val snapshot = _uiState.value
+        val openTasks = snapshot.allTasks.filter { !it.isCompleted && !it.isDeleted }
+        if (openTasks.isEmpty()) {
+            _uiState.update { it.copy(errorMessage = "Add an open task first to prioritize your list") }
+            return
+        }
+
+        val instantPlan = localPriorityScorer.buildLocalPlan(
+            openTasks = openTasks,
+            today = LocalDate.now(),
+            zone = zone()
+        )
+        _uiState.update { current ->
+            val currentPlan = if (!forceRefresh && current.prioritizationPlan != null) {
+                current.prioritizationPlan
+            } else {
+                instantPlan
+            }
+            current.copy(
+                showPrioritizeSheet = true,
+                isPrioritizing = true,
+                prioritizationPlan = currentPlan,
+                selectedPriorityChanges = defaultSelectedChanges(currentPlan)
+            )
+        }
+
+        viewModelScope.launch {
+            val resolvedPlan = prioritizeTasksUseCase(
+                uid = auth.currentUser?.uid,
+                tasks = snapshot.allTasks,
+                categories = categoriesList,
+                forceRefresh = forceRefresh
+            )
+            _uiState.update { current ->
+                val ranks = resolvedPlan.focusRankMap
+                val (visible, completed) = splitTasks(
+                    tasks = current.allTasks,
+                    filter = current.selectedFilter,
+                    sort = current.selectedSort,
+                    direction = current.sortDirection,
+                    selectedDate = current.selectedDate,
+                    aiFocusRanks = ranks
+                )
+                current.copy(
+                    isPrioritizing = false,
+                    prioritizationPlan = resolvedPlan,
+                    selectedPriorityChanges = defaultSelectedChanges(resolvedPlan),
+                    aiFocusRanks = ranks,
+                    visibleTasks = visible,
+                    completedTasks = completed
+                )
+            }
+        }
+    }
+
+    private fun defaultSelectedChanges(plan: PrioritizationPlan): Map<String, Priority> =
+        plan.recommendations
+            .filter { it.hasPriorityChange }
+            .associate { it.taskId to it.suggestedPriority }
+
+    private fun togglePriorityProposal(taskId: String, checked: Boolean) {
+        _uiState.update { current ->
+            val plan = current.prioritizationPlan ?: return@update current
+            val rec = plan.recommendations.firstOrNull { it.taskId == taskId } ?: return@update current
+            val next = LinkedHashMap(current.selectedPriorityChanges)
+            if (checked && rec.hasPriorityChange) {
+                next[taskId] = rec.suggestedPriority
+            } else {
+                next.remove(taskId)
+            }
+            current.copy(selectedPriorityChanges = next)
+        }
+    }
+
+    private fun applyPriorityPlan() {
+        val snapshot = _uiState.value
+        val plan = snapshot.prioritizationPlan ?: return
+        val selected = snapshot.selectedPriorityChanges
+
+        viewModelScope.launch {
+            val result = applyPriorityPlanUseCase(snapshot.allTasks, selected)
+            when (result) {
+                is Result.Success -> {
+                    val undo = result.data
+                    lastPriorityUndo = undo.takeIf { it.count > 0 }
+                    _uiState.update { current ->
+                        val ranks = plan.focusRankMap.ifEmpty { current.aiFocusRanks }
+                        val (visible, completed) = splitTasks(
+                            tasks = current.allTasks,
+                            filter = current.selectedFilter,
+                            sort = HomeSort.SMART,
+                            direction = HomeSortDirection.ASCENDING,
+                            selectedDate = current.selectedDate,
+                            aiFocusRanks = ranks
+                        )
+                        current.copy(
+                            showPrioritizeSheet = false,
+                            isPrioritizing = false,
+                            selectedSort = HomeSort.SMART,
+                            sortDirection = HomeSortDirection.ASCENDING,
+                            aiFocusRanks = ranks,
+                            visibleTasks = visible,
+                            completedTasks = completed,
+                            showPriorityUndo = undo.count > 0,
+                            priorityUndoCount = undo.count
+                        )
+                    }
+                }
+                is Result.Error -> {
+                    _uiState.update {
+                        it.copy(
+                            showPrioritizeSheet = false,
+                            isPrioritizing = false,
+                            errorMessage = result.message ?: "Couldn't apply priority changes"
+                        )
+                    }
+                }
+                Result.Loading -> Unit
+            }
+        }
+    }
+
+    private fun undoPriorityPlan() {
+        val undoSnapshot = lastPriorityUndo ?: return
+        lastPriorityUndo = null
+        viewModelScope.launch {
+            applyPriorityPlanUseCase.undo(undoSnapshot)
+            _uiState.update { it.copy(showPriorityUndo = false, priorityUndoCount = 0) }
+        }
+    }
+
+    fun dismissPriorityUndo() {
+        lastPriorityUndo = null
+        _uiState.update { it.copy(showPriorityUndo = false, priorityUndoCount = 0) }
     }
 
     private fun toggleComplete(taskId: String, isCompleted: Boolean) {
         viewModelScope.launch {
             when (val result = toggleCompleteUseCase(taskId, isCompleted)) {
-                // The sub-task guard rejects the tick; without this the row simply
-                // refuses to check off with no explanation.
                 is Result.Error ->
                     _uiState.update { it.copy(errorMessage = result.message) }
                 is Result.Success -> {
-                    // Finishing a habit removes it from Today and puts the next copy
-                    // under Upcoming, which looks like nothing happened. Say where it
-                    // went instead of leaving the user to find it.
                     val next = result.data.nextDueAt
                     if (next != null) {
                         _uiState.update { it.copy(habitNextLabel = habitNextLabel(next)) }
@@ -379,9 +608,6 @@ class HomeViewModel @Inject constructor(
     private fun toggleSubTask(taskId: String, subTaskId: String, isDone: Boolean) {
         viewModelScope.launch {
             val task = _uiState.value.allTasks.find { it.id == taskId } ?: return@launch
-            // The rule lives on the model so Home can ask the same question before it
-            // plays the completion splash: ticking the last sub-task completes the
-            // task, unticking any of them reopens it.
             updateTaskUseCase(task.withSubTaskChecked(subTaskId, isDone))
         }
     }

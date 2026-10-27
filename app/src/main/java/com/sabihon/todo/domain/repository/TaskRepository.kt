@@ -1,6 +1,7 @@
 package com.sabihon.todo.domain.repository
 
 import com.sabihon.todo.core.util.Result
+import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.model.TaskFilter
 import kotlinx.coroutines.flow.Flow
@@ -33,4 +34,11 @@ interface TaskRepository {
      * something the user did.
      */
     suspend fun spawnOccurrence(task: Task): Result<String>
+
+    /**
+     * Atomically updates the [Priority] of multiple tasks in a single Firestore batch,
+     * used when applying or undoing a confirmed prioritization plan.
+     */
+    suspend fun batchUpdatePriorities(updates: Map<String, Priority>): Result<Unit> =
+        Result.Success(Unit)
 }

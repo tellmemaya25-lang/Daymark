@@ -31,7 +31,10 @@ class GetDashboardCountsUseCase @Inject constructor(
                     val startOfDay = getStartOfDay(now)
                     val endOfDay = getEndOfDay(now)
 
-                    val todayCount = tasks.count { it.dueAt != null && it.dueAt in startOfDay..endOfDay && !it.isCompleted }
+                    // Matches HomeTaskSorter's Today view: undated, due today, and open overdue work.
+                    val todayCount = tasks.count {
+                        !it.isCompleted && (it.dueAt == null || it.dueAt <= endOfDay)
+                    }
                     val scheduledCount = tasks.count { it.dueAt != null && it.dueAt > endOfDay && !it.isCompleted }
                     val allCount = tasks.count { !it.isCompleted }
                     val overdueCount = tasks.count { it.dueAt != null && it.dueAt < now && !it.isCompleted }

@@ -5,6 +5,8 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
 import com.sabihon.todo.core.util.Result
+import com.sabihon.todo.data.ai.AiQuotaGuard
+import com.sabihon.todo.data.ai.AiSnapshotCache
 import com.sabihon.todo.data.remote.dto.UserDto
 import com.sabihon.todo.di.IoDispatcher
 import com.sabihon.todo.domain.repository.AuthRepository
@@ -27,6 +29,8 @@ class AuthRepositoryImpl @Inject constructor(
     private val auth: FirebaseAuth,
     private val firestore: FirebaseFirestore,
     private val categoryRepository: CategoryRepository,
+    private val aiSnapshotCache: AiSnapshotCache,
+    private val aiQuotaGuard: AiQuotaGuard,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : AuthRepository {
 
@@ -110,6 +114,10 @@ class AuthRepositoryImpl @Inject constructor(
 
     override suspend fun signOut(): Result<Unit> = withContext(ioDispatcher) {
         try {
+            val previousUid = auth.currentUser?.uid
+            aiSnapshotCache.evictUser(previousUid)
+            aiSnapshotCache.clearAll()
+            aiQuotaGuard.resetRuntimeState()
             auth.signOut()
             Result.Success(Unit)
         } catch (e: Exception) {
@@ -129,6 +137,9 @@ class AuthRepositoryImpl @Inject constructor(
     override suspend fun deleteAccount(): Result<Unit> = withContext(ioDispatcher) {
         try {
             val uid = auth.currentUser?.uid ?: throw IllegalStateException("Not logged in")
+            aiSnapshotCache.evictUser(uid)
+            aiSnapshotCache.clearAll()
+            aiQuotaGuard.resetRuntimeState()
             // Delete user subcollections would require cloud function; for now delete user doc
             firestore.collection("users").document(uid).delete().await()
             auth.currentUser?.delete()?.await()

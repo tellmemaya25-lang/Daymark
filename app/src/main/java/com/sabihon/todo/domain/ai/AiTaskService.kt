@@ -4,18 +4,28 @@ import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.model.Category
 
 /**
- * Turns a typed sentence into editor fields.
+ * Cloud AI boundary for task parsing and prioritization.
  *
- * One method on purpose. The interesting behaviour is not "call a model" - it is what
- * happens when the model is slow, offline, wrong, or switched off, and that decision
- * belongs to a single caller (`ParseQuickAddUseCase`) rather than being spread across
- * implementations.
+ * Implementations stay thin: build the prompt, ask for structured JSON, and map
+ * the wire shape. Timeouts, quota checks, PII scrubbing, closed-world validation,
+ * and deterministic fallbacks live in the domain use cases so they can be tested
+ * deterministically on the JVM without a network.
  */
 interface AiTaskService {
 
     /**
-     * @param input the raw sentence the user typed.
+     * @param input the raw (or PII-scrubbed) sentence the user typed.
      * @param categories the user's own lists - the only ids this may return.
      */
     suspend fun parseQuickAdd(input: String, categories: List<Category>): Result<AiTaskDraft>
+
+    /**
+     * Audits up to 25 scrubbed open tasks and returns candidate focus ranks and
+     * priority calibrations.
+     */
+    suspend fun prioritizeTasks(
+        tasks: List<PromptTaskItem>,
+        modelTier: AiModelTier = AiModelTier.FLASH_LITE
+    ): Result<CloudPrioritizationDraft> =
+        Result.Error(UnsupportedOperationException("Prioritization not supported by this service"))
 }

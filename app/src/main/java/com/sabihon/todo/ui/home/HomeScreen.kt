@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -67,6 +68,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.ui.theme.AccentBlue
+import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
+import com.sabihon.todo.core.ui.components.AiConsentSheet
 import com.sabihon.todo.core.ui.components.BrandHeader
 import com.sabihon.todo.core.ui.components.CompletionSplash
 import com.sabihon.todo.core.ui.components.FilterEmptyState
@@ -144,6 +147,23 @@ fun HomeScreen(
                 viewModel.onAction(HomeAction.UndoDelete)
             } else {
                 viewModel.dismissUndo()
+            }
+        }
+    }
+
+    LaunchedEffect(uiState.showPriorityUndo) {
+        if (uiState.showPriorityUndo) {
+            val count = uiState.priorityUndoCount
+            val label = if (count == 1) "Updated 1 task priority" else "Updated $count task priorities"
+            val result = snackbarHostState.showSnackbar(
+                message = label,
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.onAction(HomeAction.UndoPriorityPlan)
+            } else {
+                viewModel.dismissPriorityUndo()
             }
         }
     }
@@ -299,7 +319,12 @@ fun HomeScreen(
                         showSortMenu = showSortMenu,
                         onSortMenuChange = { showSortMenu = it },
                         onSortSelected = { sort -> viewModel.onAction(HomeAction.SetSort(sort)) },
-                        onDirectionSelected = { dir -> viewModel.onAction(HomeAction.SetSortDirection(dir)) }
+                        onDirectionSelected = { dir -> viewModel.onAction(HomeAction.SetSortDirection(dir)) },
+                        onPrioritizeClick = if (uiState.visibleTasks.size >= 2) {
+                            { viewModel.onAction(HomeAction.RequestPrioritize) }
+                        } else {
+                            null
+                        }
                     )
                 }
 
@@ -632,6 +657,33 @@ fun HomeScreen(
             }
         }
 
+        if (uiState.showAiConsentSheet) {
+            AiConsentSheet(
+                onEnableCloudAi = { viewModel.onAction(HomeAction.DecideAiConsent(true)) },
+                onUseOfflineRules = { viewModel.onAction(HomeAction.DecideAiConsent(false)) },
+                onDismiss = { viewModel.onAction(HomeAction.DismissAiConsent) }
+            )
+        }
+
+        val activePlan = uiState.prioritizationPlan
+        if (uiState.showPrioritizeSheet && activePlan != null) {
+            PrioritizeReviewSheet(
+                plan = activePlan,
+                tasksById = remember(uiState.allTasks) {
+                    uiState.allTasks.associateBy { it.id }
+                },
+                categoryNames = uiState.categoryNames,
+                selectedChanges = uiState.selectedPriorityChanges,
+                isRefining = uiState.isPrioritizing,
+                onToggleProposal = { taskId, checked ->
+                    viewModel.onAction(HomeAction.TogglePriorityProposal(taskId, checked))
+                },
+                onRefresh = { viewModel.onAction(HomeAction.RefreshPrioritize) },
+                onApply = { viewModel.onAction(HomeAction.ApplyPriorityPlan) },
+                onDismiss = { viewModel.onAction(HomeAction.DismissPrioritizeSheet) }
+            )
+        }
+
         // Celebration – fires the moment a task is ticked off
         CompletionSplash(
             visible = splashTaskTitle != null,
@@ -791,7 +843,8 @@ private fun ListHeader(
     showSortMenu: Boolean,
     onSortMenuChange: (Boolean) -> Unit,
     onSortSelected: (HomeSort) -> Unit,
-    onDirectionSelected: (HomeSortDirection) -> Unit
+    onDirectionSelected: (HomeSortDirection) -> Unit,
+    onPrioritizeClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -832,6 +885,35 @@ private fun ListHeader(
             }
         }
         Spacer(Modifier.weight(1f))
+
+        if (onPrioritizeClick != null) {
+            val surfaces = LocalDaymarkSurfaces.current
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(100.dp))
+                    .background(surfaces.accentSurface)
+                    .clickable(onClick = onPrioritizeClick)
+                    .padding(horizontal = 9.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.AutoAwesome,
+                    contentDescription = "Prioritize tasks",
+                    tint = AccentBlue,
+                    modifier = Modifier.size(12.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = "Prioritize",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = surfaces.onAccentSurface
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+        }
 
         Box {
             Row(

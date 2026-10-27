@@ -3,6 +3,7 @@ package com.sabihon.todo.ui.addedit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.ai.AiTaskDraft
 import com.sabihon.todo.domain.model.Category
@@ -44,6 +45,7 @@ class AddEditViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val categoryRepository: CategoryRepository,
     private val parseQuickAddUseCase: ParseQuickAddUseCase,
+    private val aiPreferences: AiPreferenceStore,
     private val auth: FirebaseAuth
 ) : ViewModel() {
 
@@ -339,87 +341,105 @@ class AddEditViewModel @Inject constructor(
         val sentence = snapshot.title.trim()
         if (sentence.isEmpty() || snapshot.isQuickAddBusy) return
 
+        viewModelScope.launch {
+            if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
+                _uiState.update { it.copy(showAiConsentSheet = true) }
+                return@launch
+            }
+            runQuickAdd()
+        }
+    }
+
+    fun onAiConsentDecided(enableCloud: Boolean) {
+        viewModelScope.launch {
+            aiPreferences.setCloudEnabled(enableCloud)
+            _uiState.update { it.copy(showAiConsentSheet = false) }
+            runQuickAdd()
+        }
+    }
+
+    fun onDismissAiConsent() {
+        _uiState.update { it.copy(showAiConsentSheet = false) }
+    }
+
+    private suspend fun runQuickAdd() {
+        val snapshot = _uiState.value
+        val sentence = snapshot.title.trim()
+        if (sentence.isEmpty() || snapshot.isQuickAddBusy) return
+
         quickAddUndo = null
         _uiState.update {
             it.copy(isQuickAddBusy = true, quickAddSummary = null, quickAddError = null)
         }
 
-        viewModelScope.launch {
-            val result = parseQuickAddUseCase(sentence, snapshot.categories)
-            val draft = result.draft
+        val result = parseQuickAddUseCase(sentence, snapshot.categories, auth.currentUser?.uid)
+        val draft = result.draft
 
-            if (!draft.hasDetails) {
-                _uiState.update {
-                    it.copy(
-                        isQuickAddBusy = false,
-                        quickAddError = "Couldn't find anything to fill in from that"
-                    )
-                }
-                return@launch
-            }
-
-            quickAddUndo = QuickAddSnapshot(
-                title = snapshot.title,
-                description = snapshot.description,
-                dueAt = snapshot.dueAt,
-                dueDateMillis = snapshot.dueDateMillis,
-                dueTimeMillis = snapshot.dueTimeMillis,
-                priority = snapshot.priority,
-                categoryId = snapshot.categoryId,
-                repeat = snapshot.repeat,
-                repeatDays = snapshot.repeatDays,
-                subTasks = snapshot.subTasks,
-                reminderEnabled = snapshot.reminderEnabled,
-                reminderAt = snapshot.reminderAt
-            )
-
-            val dueMillis = draft.dueAt
-            _uiState.update { current ->
-                // Sub-tasks are added, never replaced: the sentence names new steps, and
-                // wiping a checklist the user built by hand would be unforgivable.
-                val existing = current.subTasks.map { it.title.lowercase() }.toSet()
-                val extra = draft.subTasks
-                    .filter { it.isNotBlank() && it.lowercase() !in existing }
-                    .map { title ->
-                        SubTask(
-                            id = System.currentTimeMillis().toString() + "_" + (0..999).random(),
-                            title = title,
-                            isDone = false
-                        )
-                    }
-
-                current.copy(
-                    title = draft.title.ifBlank { current.title },
-                    // Only a blank description is filled: the user's own note wins.
-                    description = draft.description?.takeIf {
-                        it.isNotBlank() && current.description.isBlank()
-                    } ?: current.description,
-                    subTasks = current.subTasks + extra,
-                    // All three date fields move together: dueAt is what is saved,
-                    // the other two are what the pickers reopen on.
-                    dueAt = dueMillis ?: current.dueAt,
-                    dueDateMillis = dueMillis ?: current.dueDateMillis,
-                    dueTimeMillis = dueMillis ?: current.dueTimeMillis,
-                    priority = draft.priority ?: current.priority,
-                    categoryId = draft.categoryId ?: current.categoryId,
-                    repeat = if (draft.repeat != RepeatRule.NONE) draft.repeat else current.repeat,
-                    repeatDays = draft.repeatDays.ifEmpty { current.repeatDays },
-                    // Tri-state: true turns the switch on and schedules against the due
-                    // time; false turns it off; null leaves whatever the user chose.
-                    reminderEnabled = draft.reminder ?: current.reminderEnabled,
-                    reminderAt = when (draft.reminder) {
-                        true -> (dueMillis ?: current.dueAt)?.let { due ->
-                            due - (draft.reminderLeadMinutes ?: 0) * 60_000L
-                        } ?: current.reminderAt
-                        false -> null
-                        null -> current.reminderAt
-                    },
+        if (!draft.hasDetails) {
+            _uiState.update {
+                it.copy(
                     isQuickAddBusy = false,
-                    quickAddSummary = summaryOf(draft, result.source, snapshot.categories),
-                    quickAddError = null
+                    quickAddError = "Couldn't find anything to fill in from that"
                 )
             }
+            return
+        }
 
+        quickAddUndo = QuickAddSnapshot(
+            title = snapshot.title,
+            description = snapshot.description,
+            dueAt = snapshot.dueAt,
+            dueDateMillis = snapshot.dueDateMillis,
+            dueTimeMillis = snapshot.dueTimeMillis,
+            priority = snapshot.priority,
+            categoryId = snapshot.categoryId,
+            repeat = snapshot.repeat,
+            repeatDays = snapshot.repeatDays,
+            subTasks = snapshot.subTasks,
+            reminderEnabled = snapshot.reminderEnabled,
+            reminderAt = snapshot.reminderAt
+        )
+
+        val dueMillis = draft.dueAt
+        _uiState.update { current ->
+            // Sub-tasks are added, never replaced: the sentence names new steps, and
+            // wiping a checklist the user built by hand would be unforgivable.
+            val existing = current.subTasks.map { it.title.lowercase() }.toSet()
+            val extra = draft.subTasks
+                .filter { it.isNotBlank() && it.lowercase() !in existing }
+                .map { title ->
+                    SubTask(
+                        id = System.currentTimeMillis().toString() + "_" + (0..999).random(),
+                        title = title,
+                        isDone = false
+                    )
+                }
+
+            current.copy(
+                title = draft.title.ifBlank { current.title },
+                description = draft.description?.takeIf {
+                    it.isNotBlank() && current.description.isBlank()
+                } ?: current.description,
+                subTasks = current.subTasks + extra,
+                dueAt = dueMillis ?: current.dueAt,
+                dueDateMillis = dueMillis ?: current.dueDateMillis,
+                dueTimeMillis = dueMillis ?: current.dueTimeMillis,
+                priority = draft.priority ?: current.priority,
+                categoryId = draft.categoryId ?: current.categoryId,
+                repeat = if (draft.repeat != RepeatRule.NONE) draft.repeat else current.repeat,
+                repeatDays = draft.repeatDays.ifEmpty { current.repeatDays },
+                reminderEnabled = draft.reminder ?: current.reminderEnabled,
+                reminderAt = when (draft.reminder) {
+                    true -> (dueMillis ?: current.dueAt)?.let { due ->
+                        due - (draft.reminderLeadMinutes ?: 0) * 60_000L
+                    } ?: current.reminderAt
+                    false -> null
+                    null -> current.reminderAt
+                },
+                isQuickAddBusy = false,
+                quickAddSummary = summaryOf(draft, result.source, snapshot.categories),
+                quickAddError = null
+            )
         }
     }
 

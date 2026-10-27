@@ -75,6 +75,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.dictation.DictationController
 import com.sabihon.todo.core.dictation.DictationTarget
 import com.sabihon.todo.core.dictation.label
+import com.sabihon.todo.core.ui.components.AiConsentSheet
 import com.sabihon.todo.core.ui.components.ConfirmDialog
 import com.sabihon.todo.core.ui.components.DictationMic
 import com.sabihon.todo.core.ui.components.DictationStrip
@@ -744,6 +745,14 @@ fun AddEditTaskScreen(
                     viewModel.deleteTask(onSaved)
                 },
                 onDismiss = { viewModel.setShowDeleteConfirm(false) }
+            )
+        }
+
+        if (uiState.showAiConsentSheet) {
+            AiConsentSheet(
+                onEnableCloudAi = { viewModel.onAiConsentDecided(true) },
+                onUseOfflineRules = { viewModel.onAiConsentDecided(false) },
+                onDismiss = viewModel::onDismissAiConsent
             )
         }
     }

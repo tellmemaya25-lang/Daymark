@@ -40,5 +40,7 @@ data class AddEditUiState(
     /** "AI filled: Fri 30 Oct, 17:00 · High" - null hides the strip. */
     val quickAddSummary: String? = null,
     /** The one-line failure message, when there was nothing worth filling. */
-    val quickAddError: String? = null
+    val quickAddError: String? = null,
+    /** Shown on the first ✨ tap before any prompt leaves the device. */
+    val showAiConsentSheet: Boolean = false
 )

@@ -1,5 +1,6 @@
 package com.sabihon.todo.ui.home
 
+import com.sabihon.todo.data.ai.LocalPriorityScorer
 import com.sabihon.todo.domain.model.Task
 import java.time.LocalDate
 import java.time.ZoneId
@@ -7,18 +8,12 @@ import java.time.ZoneId
 /**
  * The Home list's filtering and ordering, kept out of the ViewModel so it can be tested.
  *
- * Two rules here used to be wrong or missing:
- *
- *  - **Upcoming** was measured from the day picked in the week strip. Tap a future day,
- *    open Upcoming, and everything due before that day vanished - which reads as "my
- *    upcoming task is missing". It is now measured from today, always.
- *  - **There was no direction.** "Default order" and "Due date" ran the same
- *    `sortedBy { dueAt }`, so one of the two menu rows did nothing at all.
- *
  * Everything is passed in - including today and the zone - so the tests can pin a date
  * instead of depending on when they run.
  */
 object HomeTaskSorter {
+
+    private val localScorer = LocalPriorityScorer()
 
     fun split(
         tasks: List<Task>,
@@ -27,37 +22,56 @@ object HomeTaskSorter {
         direction: HomeSortDirection,
         selectedDate: LocalDate,
         today: LocalDate = LocalDate.now(),
-        zone: ZoneId = ZoneId.systemDefault()
+        zone: ZoneId = ZoneId.systemDefault(),
+        aiFocusRanks: Map<String, Int> = emptyMap(),
+        nowMillis: Long? = null
     ): Pair<List<Task>, List<Task>> {
         val start = startOfDay(selectedDate, zone)
         val end = endOfDay(selectedDate, zone)
-        // Upcoming is about today, not about whichever day the strip is showing.
+        val startOfToday = startOfDay(today, zone)
         val endOfToday = endOfDay(today, zone)
-        // Undated tasks belong to "today", not to whatever day is selected.
         val isTodaySelected = selectedDate == today
+
+        val effectiveNow = nowMillis ?: if (today == LocalDate.now(zone)) {
+            System.currentTimeMillis()
+        } else {
+            // Pin clock to 09:00 on `today` when unit tests supply a synthetic date.
+            startOfToday + 9 * 3_600_000L
+        }
 
         val matching = when (filter) {
             HomeFilter.TODAY -> tasks.filter { task ->
                 (task.dueAt == null && isTodaySelected) ||
-                    (task.dueAt != null && task.dueAt in start..end)
+                    (task.dueAt != null && task.dueAt in start..end) ||
+                    // Open overdue tasks stay visible at the top of Today instead of
+                    // disappearing into All tasks after midnight.
+                    (isTodaySelected && !task.isCompleted && task.dueAt != null && task.dueAt < startOfToday)
             }
             HomeFilter.UPCOMING -> tasks.filter { it.dueAt != null && it.dueAt > endOfToday }
             HomeFilter.ALL -> tasks
         }
 
-        val sorted = when (sort) {
-            HomeSort.DUE_DATE -> matching.sortedWith(dueComparator(direction))
-            HomeSort.PRIORITY -> matching.sortedWith(
-                // Ascending means LOW first, so "Ascending" and "Descending" keep the
-                // same meaning whether you are sorting by date or by priority.
+        val pending = matching.filter { !it.isCompleted }
+        val visible = when (sort) {
+            HomeSort.SMART -> {
+                val ranked = localScorer.rankTasks(
+                    openTasks = pending,
+                    nowMillis = effectiveNow,
+                    today = today,
+                    zone = zone,
+                    aiFocusRanks = aiFocusRanks
+                )
+                if (direction == HomeSortDirection.ASCENDING) ranked else ranked.reversed()
+            }
+            HomeSort.DUE_DATE -> pending.sortedWith(dueComparator(direction))
+            HomeSort.PRIORITY -> pending.sortedWith(
                 compareBy<Task> {
                     if (direction == HomeSortDirection.ASCENDING) it.priority.ordinal else -it.priority.ordinal
                 }.then(dueComparator(HomeSortDirection.ASCENDING))
             )
         }
 
-        val visible = sorted.filter { !it.isCompleted }
-        val completed = sorted
+        val completed = matching
             .filter { it.isCompleted }
             .sortedByDescending { it.completedAt ?: it.updatedAt }
 
@@ -66,8 +80,7 @@ object HomeTaskSorter {
 
     /**
      * Due-date ordering with one rule that must not flip: a task with no date sinks to
-     * the bottom in both directions. Reversing the whole list would otherwise float
-     * every undated task to the top the moment you asked for Descending.
+     * the bottom in both directions.
      */
     private fun dueComparator(direction: HomeSortDirection): Comparator<Task> =
         Comparator { a, b ->
