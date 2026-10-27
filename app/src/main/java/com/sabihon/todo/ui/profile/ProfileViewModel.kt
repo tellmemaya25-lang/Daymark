@@ -12,7 +12,9 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
+import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.datastore.ThemePreferences
+import com.sabihon.todo.data.ai.AiSnapshotCache
 import com.sabihon.todo.data.local.AvatarStore
 import com.sabihon.todo.core.datastore.ThemePref
 import com.sabihon.todo.domain.repository.AuthRepository
@@ -52,7 +54,9 @@ data class ProfileUiState(
     val currentPassword: String = "",
     val newPassword: String = "",
     val confirmNewPassword: String = "",
-    val passwordError: String? = null
+    val passwordError: String? = null,
+    val aiCloudEnabled: Boolean = false,
+    val aiDailyCalls: Int = 0
 )
 
 @HiltViewModel
@@ -63,6 +67,8 @@ class ProfileViewModel @Inject constructor(
     private val storage: FirebaseStorage,
     private val authRepository: AuthRepository,
     private val themePreferences: ThemePreferences,
+    private val aiPreferences: AiPreferenceStore,
+    private val aiSnapshotCache: AiSnapshotCache,
     private val avatarStore: AvatarStore
 ) : ViewModel() {
 
@@ -72,6 +78,7 @@ class ProfileViewModel @Inject constructor(
     init {
         loadProfile()
         observeTheme()
+        observeAiPreferences()
     }
 
     private fun loadProfile() {
@@ -185,6 +192,33 @@ class ProfileViewModel @Inject constructor(
                 _uiState.update { it.copy(theme = theme) }
             }
         }
+    }
+
+    private fun observeAiPreferences() {
+        viewModelScope.launch {
+            aiPreferences.cloudEnabled.collectLatest { enabled ->
+                _uiState.update { it.copy(aiCloudEnabled = enabled) }
+            }
+        }
+        viewModelScope.launch {
+            aiPreferences.observeDailyCalls(auth.currentUser?.uid).collectLatest { calls ->
+                _uiState.update { it.copy(aiDailyCalls = calls) }
+            }
+        }
+    }
+
+    fun setAiCloudEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            aiPreferences.setCloudEnabled(enabled)
+            if (!enabled) {
+                aiSnapshotCache.clearAll()
+            }
+        }
+    }
+
+    fun clearAiCache() {
+        aiSnapshotCache.clearAll()
+        _uiState.update { it.copy(successMessage = "Smart AI cache cleared") }
     }
 
     fun onDisplayNameChange(name: String) {

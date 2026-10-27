@@ -25,10 +25,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,9 +49,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.sabihon.todo.core.datastore.AiPreferences
 import com.sabihon.todo.core.datastore.ThemePref
 import com.sabihon.todo.core.ui.components.BrandHeader
 import com.sabihon.todo.core.ui.components.GroupedCard
+import com.sabihon.todo.core.ui.components.GroupedDivider
 import com.sabihon.todo.core.ui.components.GroupedRow
 import com.sabihon.todo.core.ui.components.ProfileAvatar
 import com.sabihon.todo.core.ui.components.SectionLabel
@@ -83,8 +91,20 @@ fun SettingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showThemeSheet by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
+    LaunchedEffect(uiState.successMessage) {
+        val message = uiState.successMessage
+        if (message != null) {
+            snackbarHostState.showSnackbar(message = message, duration = SnackbarDuration.Short)
+            viewModel.clearError()
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -130,6 +150,54 @@ fun SettingsScreen(
                             supporting = "System, light or dark",
                             value = uiState.theme.label,
                             onClick = { showThemeSheet = true }
+                        )
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    SectionLabel("AI")
+                    GroupedCard {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Smart AI",
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    text = "Prioritize tasks and smart-fill with Gemini. Free-tier prompts may be processed by Google; offline smart rules always stay on-device.",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 12.sp,
+                                        lineHeight = 17.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Switch(
+                                checked = uiState.aiCloudEnabled,
+                                onCheckedChange = viewModel::setAiCloudEnabled,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = AccentBlue
+                                )
+                            )
+                        }
+                        GroupedDivider()
+                        GroupedRow(
+                            label = "Today's cloud requests",
+                            supporting = "Tap to clear cached focus plan",
+                            value = "${uiState.aiDailyCalls} / ${AiPreferences.MAX_DAILY_CLOUD_CALLS}",
+                            onClick = { viewModel.clearAiCache() }
                         )
                     }
 

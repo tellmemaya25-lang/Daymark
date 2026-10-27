@@ -13,6 +13,7 @@ import com.sabihon.todo.data.remote.dto.generateSearchKeywords
 import com.sabihon.todo.data.remote.dto.toDomain
 import com.sabihon.todo.data.remote.dto.toDto
 import com.sabihon.todo.di.IoDispatcher
+import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.model.TaskFilter
 import com.sabihon.todo.domain.model.TaskStatusFilter
@@ -451,6 +452,50 @@ class TaskRepositoryImpl @Inject constructor(
             }
         } catch (e: Exception) {
             Result.Error(e)
+        }
+    }
+
+    override suspend fun batchUpdatePriorities(
+        updates: Map<String, Priority>
+    ): Result<Unit> = withContext(ioDispatcher) {
+        if (updates.isEmpty()) return@withContext Result.Success(Unit)
+        try {
+            userIdOrThrow()
+            val nowStamp = Timestamp(Date())
+            val outcome = boundedWrite {
+                val batch = firestore.batch()
+                for ((taskId, priority) in updates) {
+                    if (taskId.isBlank()) continue
+                    batch.update(
+                        tasksCollection().document(taskId),
+                        mapOf(
+                            "priority" to priority.name,
+                            "updatedAt" to nowStamp
+                        )
+                    )
+                }
+                batch.commit().await()
+            }
+            if (outcome is WriteOutcome.Failed) {
+                return@withContext Result.Error(
+                    outcome.error,
+                    outcome.error.message ?: "Failed to apply priority changes"
+                )
+            }
+            val summaryTitle = if (updates.size == 1) {
+                val singleId = updates.keys.first()
+                readTaskTitle(singleId).ifBlank { "1 task prioritized" }
+            } else {
+                "${updates.size} tasks prioritized"
+            }
+            logActivity(
+                taskId = if (updates.size == 1) updates.keys.first() else "",
+                taskTitle = summaryTitle,
+                action = "UPDATED"
+            )
+            Result.Success(Unit)
+        } catch (e: Exception) {
+            Result.Error(e, e.message ?: "Failed to apply priority changes")
         }
     }
 

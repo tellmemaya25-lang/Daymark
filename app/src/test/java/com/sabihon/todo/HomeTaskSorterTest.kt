@@ -1,6 +1,7 @@
 package com.sabihon.todo
 
 import com.sabihon.todo.domain.model.Priority
+import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.ui.home.HomeFilter
 import com.sabihon.todo.ui.home.HomeSort
@@ -32,15 +33,27 @@ class HomeTaskSorterTest {
         id: String,
         dueAt: Long? = null,
         priority: Priority = Priority.MEDIUM,
-        isCompleted: Boolean = false
-    ) = Task(id = id, title = id, dueAt = dueAt, priority = priority, isCompleted = isCompleted)
+        isCompleted: Boolean = false,
+        repeat: RepeatRule = RepeatRule.NONE,
+        streak: Int = 0
+    ) = Task(
+        id = id,
+        title = id,
+        dueAt = dueAt,
+        priority = priority,
+        isCompleted = isCompleted,
+        repeat = repeat,
+        streak = streak
+    )
 
     private fun split(
         tasks: List<Task>,
         filter: HomeFilter,
         sort: HomeSort = HomeSort.DUE_DATE,
         direction: HomeSortDirection = HomeSortDirection.ASCENDING,
-        selectedDate: LocalDate = today
+        selectedDate: LocalDate = today,
+        aiFocusRanks: Map<String, Int> = emptyMap(),
+        nowMillis: Long? = at(today, hour = 9)
     ) = HomeTaskSorter.split(
         tasks = tasks,
         filter = filter,
@@ -48,7 +61,9 @@ class HomeTaskSorterTest {
         direction = direction,
         selectedDate = selectedDate,
         today = today,
-        zone = utc
+        zone = utc,
+        aiFocusRanks = aiFocusRanks,
+        nowMillis = nowMillis
     )
 
     private fun ids(tasks: List<Task>): List<String> = tasks.map { it.id }
@@ -101,6 +116,21 @@ class HomeTaskSorterTest {
         assertEquals(listOf("undated"), ids(split(listOf(undated), HomeFilter.TODAY).first))
         assertTrue(
             split(listOf(undated), HomeFilter.TODAY, selectedDate = today.plusDays(1)).first.isEmpty()
+        )
+    }
+
+    @Test
+    fun `today surfaces open overdue tasks while today is selected, and hides them on other days`() {
+        val overdue = task("overdue", at(today.minusDays(2)))
+        val doneOverdue = task("done-overdue", at(today.minusDays(1)), isCompleted = true)
+
+        val (visibleToday, completedToday) = split(listOf(overdue, doneOverdue), HomeFilter.TODAY)
+        assertEquals(listOf("overdue"), ids(visibleToday))
+        assertTrue(completedToday.isEmpty())
+
+        // Picking Wednesday in the week strip inspects Wednesday only.
+        assertTrue(
+            split(listOf(overdue), HomeFilter.TODAY, selectedDate = today.plusDays(1)).first.isEmpty()
         )
     }
 
@@ -172,5 +202,41 @@ class HomeTaskSorterTest {
 
         assertEquals(listOf("open"), ids(visible))
         assertEquals(listOf("done"), ids(completed))
+    }
+
+    // ---- Smart focus ordering ----
+
+    @Test
+    fun `smart sort ascending places overdue and streak-at-risk tasks ahead of distant work`() {
+        val distant = task("distant", at(today.plusDays(10)), priority = Priority.LOW)
+        val habit = task(
+            id = "habit",
+            dueAt = at(today, hour = 18),
+            priority = Priority.MEDIUM,
+            repeat = RepeatRule.DAILY,
+            streak = 6
+        )
+        val overdue = task("overdue", at(today.minusDays(1)), priority = Priority.HIGH)
+
+        assertEquals(
+            listOf("overdue", "habit", "distant"),
+            ids(split(listOf(distant, habit, overdue), HomeFilter.ALL, HomeSort.SMART, HomeSortDirection.ASCENDING).first)
+        )
+    }
+
+    @Test
+    fun `smart sort honours validated AI focus ranks and reverses cleanly on descending`() {
+        val first = task("a", at(today.plusDays(2)))
+        val second = task("b", at(today.plusDays(1)))
+        val ranks = mapOf("a" to 1, "b" to 2)
+
+        assertEquals(
+            listOf("a", "b"),
+            ids(split(listOf(second, first), HomeFilter.ALL, HomeSort.SMART, HomeSortDirection.ASCENDING, aiFocusRanks = ranks).first)
+        )
+        assertEquals(
+            listOf("b", "a"),
+            ids(split(listOf(second, first), HomeFilter.ALL, HomeSort.SMART, HomeSortDirection.DESCENDING, aiFocusRanks = ranks).first)
+        )
     }
 }
