@@ -8,6 +8,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
@@ -141,6 +142,192 @@ class QuickAddParserTest {
 
         assertEquals("Buy 2 apples", draft.title)
         assertEquals(millis(monday.plusDays(1), 9), draft.dueAt)
+    }
+
+    // ---- fuzzy reading: times that take more than one word ----
+
+    @Test
+    fun `half past and quarter to are read as times`() {
+        val half = parse("call mom half past five")
+        assertEquals("Call mom", half.title)
+        assertEquals(millis(monday, 5, 30), half.dueAt)
+
+        val quarter = parse("leave quarter to six")
+        assertEquals("Leave", quarter.title)
+        assertEquals(millis(monday, 5, 45), quarter.dueAt)
+    }
+
+    @Test
+    fun `an hour spelled as a word still takes its meridiem`() {
+        val draft = parse("gym at five pm")
+
+        assertEquals("Gym", draft.title)
+        assertEquals(millis(monday, 17), draft.dueAt)
+    }
+
+    @Test
+    fun `tonight and this evening land in the evening`() {
+        assertEquals(millis(monday, 20), parse("call mom tonight").dueAt)
+        assertEquals(millis(monday, 18), parse("call mom this evening").dueAt)
+    }
+
+    @Test
+    fun `a weekday with a part of day uses both`() {
+        val draft = parse("gig friday evening")
+
+        assertEquals("Gig", draft.title)
+        assertEquals(millis(LocalDate.of(2026, 10, 30), 18), draft.dueAt)
+    }
+
+    @Test
+    fun `a part of day with no day spoken is not a time`() {
+        // The guard: "movie night" is a title, not 20:00 today.
+        val draft = parse("movie night")
+
+        assertNull(draft.dueAt)
+        assertEquals("Movie night", draft.title)
+    }
+
+    @Test
+    fun `in thirty minutes is an offset from now`() {
+        val now = Instant.parse("2026-10-26T09:00:00Z")
+        val draft = parser.parse(
+            "take the pasta off in 30 minutes",
+            emptyList(),
+            today = monday,
+            zone = utc,
+            now = now
+        )
+
+        assertEquals(millis(monday, 9, 30), draft.dueAt)
+        assertEquals("Take the pasta off", draft.title)
+    }
+
+    // ---- fuzzy reading: reminders ----
+
+    @Test
+    fun `remind me asks for a reminder and leaves the title clean`() {
+        val draft = parse("remind me to call mom at 5pm")
+
+        assertEquals("Call mom", draft.title)
+        assertEquals(true, draft.reminder)
+        assertNull(draft.reminderLeadMinutes)
+        assertEquals(millis(monday, 17), draft.dueAt)
+    }
+
+    @Test
+    fun `a stated lead time becomes minutes before`() {
+        val draft = parse("standup at 9am remind me 15 minutes before")
+
+        assertEquals(true, draft.reminder)
+        assertEquals(15, draft.reminderLeadMinutes)
+        assertEquals(millis(monday, 9), draft.dueAt)
+    }
+
+    @Test
+    fun `no reminder turns the switch off rather than on`() {
+        // Both words are in the sentence; the negation has to win.
+        val draft = parse("no reminder, call mom tomorrow")
+
+        assertEquals(false, draft.reminder)
+    }
+
+    @Test
+    fun `do not forget still asks for a reminder`() {
+        val draft = parse("don't forget to call mom at 5pm")
+
+        assertEquals(true, draft.reminder)
+        assertEquals("Call mom", draft.title)
+    }
+
+    @Test
+    fun `a sentence with no reminder words says nothing about reminders`() {
+        // null, not false: the editor must not switch off a switch the user set.
+        assertNull(parse("call mom friday 5pm").reminder)
+    }
+
+    // ---- spoken sub-task separators ----
+
+    @Test
+    fun `add subtask starts a sub-task`() {
+        val draft = parse("buy groceries add subtask milk")
+
+        assertEquals("Buy groceries", draft.title)
+        assertEquals(listOf("milk"), draft.subTasks)
+    }
+
+    @Test
+    fun `several separators make several sub-tasks`() {
+        val draft = parse("call mom add subtask book taxi add subtask pack bag")
+
+        assertEquals("Call mom", draft.title)
+        assertEquals(listOf("book taxi", "pack bag"), draft.subTasks)
+    }
+
+    @Test
+    fun `new line and next are separators too`() {
+        val newLine = parse("gym tomorrow new line stretching")
+        assertEquals("Gym", newLine.title)
+        assertEquals(listOf("stretching"), newLine.subTasks)
+        assertEquals(millis(monday.plusDays(1), 9), newLine.dueAt)
+
+        val next = parse("pack next print the tickets next charge the camera")
+        assertEquals("Pack", next.title)
+        assertEquals(listOf("print the tickets", "charge the camera"), next.subTasks)
+    }
+
+    @Test
+    fun `next before a weekday is a date, not a separator`() {
+        // The guard: this must stay one task due a week out.
+        val draft = parse("review goals next monday")
+
+        assertTrue(draft.subTasks.isEmpty())
+        assertEquals("Review goals", draft.title)
+        assertEquals(millis(monday.plusDays(7), 9), draft.dueAt)
+    }
+
+    @Test
+    fun `a comma is not a separator`() {
+        // "call mom, friday 5pm" is one task with a date - splitting it would invent a
+        // sub-task called "friday 5pm".
+        val draft = parse("call mom, friday 5pm")
+
+        assertTrue(draft.subTasks.isEmpty())
+        assertEquals("Call mom", draft.title)
+        assertEquals(millis(LocalDate.of(2026, 10, 30), 17), draft.dueAt)
+    }
+
+    @Test
+    fun `a spoken separator with a comma still cuts`() {
+        val draft = parse("buy groceries add subtask, milk")
+
+        assertEquals("Buy groceries", draft.title)
+        assertEquals(listOf("milk"), draft.subTasks)
+    }
+
+    @Test
+    fun `a trailing separator adds nothing`() {
+        val draft = parse("call mom add subtask")
+
+        assertEquals("Call mom", draft.title)
+        assertTrue(draft.subTasks.isEmpty())
+    }
+
+    @Test
+    fun `sub-tasks are capped at eight`() {
+        val line = "move house" + (1..12).joinToString("") { " add subtask step $it" }
+        val draft = parse(line)
+
+        assertEquals(8, draft.subTasks.size)
+        assertEquals("step 1", draft.subTasks.first())
+    }
+
+    @Test
+    fun `a sentence with no separator has no sub-tasks`() {
+        val draft = parse("call mom friday 5pm")
+
+        assertEquals("Call mom", draft.title)
+        assertTrue(draft.subTasks.isEmpty())
     }
 
     @Test

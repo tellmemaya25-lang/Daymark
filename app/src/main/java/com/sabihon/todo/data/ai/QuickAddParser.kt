@@ -4,6 +4,7 @@ import com.sabihon.todo.domain.ai.AiTaskDraft
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
@@ -28,10 +29,25 @@ class QuickAddParser @Inject constructor() {
         input: String,
         categories: List<Category>,
         today: LocalDate = LocalDate.now(),
-        zone: ZoneId = ZoneId.systemDefault()
+        zone: ZoneId = ZoneId.systemDefault(),
+        /** Only "in 20 minutes" needs the clock; everything else is calendar arithmetic. */
+        now: Instant = Instant.now()
     ): AiTaskDraft {
-        val words = input.trim().split(WHITESPACE).filter { it.isNotEmpty() }
-        if (words.isEmpty()) return AiTaskDraft()
+        // Spoken separators first: everything before the first one is the task, and each
+        // segment after it is a sub-task. Doing this before the readers run keeps a
+        // sub-task from being mined for dates it does not own.
+        val segments = splitSegments(input)
+        val headIndex = segments.indexOfFirst { it.isNotEmpty() }
+        if (headIndex < 0) return AiTaskDraft()
+
+        val words = segments[headIndex]
+        val subTasks = segments
+            .drop(headIndex + 1)
+            .map { it.joinToString(" ").trim().trim(' ', ',', '-', '.', ':', ';') }
+            .filter { it.isNotEmpty() }
+            .map { it.take(MAX_SUBTASK) }
+            .distinctBy { it.lowercase() }
+            .take(MAX_SUB_TASKS)
 
         // A word is "used" once it has been read as something other than the title, so
         // "pay rent friday" keeps "pay rent" and drops "friday" from the title.
@@ -40,12 +56,16 @@ class QuickAddParser @Inject constructor() {
         val priority = readPriority(words, used)
         val categoryId = readCategory(words, used, categories)
         val repeat = readRepeat(words, used)
+        val reminder = readReminder(words, used)
 
+        // An offset ("in 20 minutes") is already an instant, so it wins over a date and a
+        // time that were never spoken.
+        val offset = readOffset(words, used, now)
         val date = readDate(words, used, today)
-        val time = readTime(words, used)
+        val time = readTime(words, used, hasDate = date != null)
 
-        val dueAt = resolveDueAt(date, time, today, zone)
-        val title = remainingTitle(words, used, input)
+        val dueAt = offset ?: resolveDueAt(date, time, today, zone)
+        val title = remainingTitle(words, used, words.joinToString(" "))
 
         return AiTaskDraft(
             title = title,
@@ -53,8 +73,67 @@ class QuickAddParser @Inject constructor() {
             priority = priority,
             categoryId = categoryId,
             repeat = repeat.first,
-            repeatDays = repeat.second
+            repeatDays = repeat.second,
+            reminder = reminder.first,
+            reminderLeadMinutes = reminder.second,
+            subTasks = subTasks
         )
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Spoken separators                                                */
+    /* ---------------------------------------------------------------- */
+
+    /**
+     * Splits a dictated line on the words people actually say to start a new item.
+     *
+     * This is the offline half of sub-task extraction, and it only ever cuts where it was
+     * told to: "add subtask", "new line", "next". A comma is deliberately **not** a
+     * separator - "call mom, friday 5pm" is one task with a date, and splitting it would
+     * invent a sub-task called "friday 5pm".
+     */
+    private fun splitSegments(input: String): List<List<String>> {
+        val tokens = input.trim().split(WHITESPACE).filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return emptyList()
+
+        val segments = mutableListOf<MutableList<String>>(mutableListOf())
+        var index = 0
+        while (index < tokens.size) {
+            val consumed = separatorLengthAt(tokens, index)
+            if (consumed > 0) {
+                segments += mutableListOf<String>()
+                index += consumed
+            } else {
+                segments.last().add(tokens[index])
+                index++
+            }
+        }
+        return segments
+    }
+
+    /**
+     * How many tokens at [index] are a separator, or 0.
+     *
+     * "next" is the risky one: it is an ordinary word in half the dates this app
+     * understands, so it only counts when what follows is not one of them.
+     */
+    private fun separatorLengthAt(tokens: List<String>, index: Int): Int {
+        // Empty string rather than null, so `in` reads the way it looks.
+        fun at(offset: Int): String = tokens.getOrNull(index + offset)?.clean().orEmpty()
+
+        if (at(0) == "add") {
+            var offset = 1
+            if (at(1) == "a") offset = 2
+            if (at(offset) in SUBTASK_WORDS) return offset + 1
+        }
+        if (at(0) == "new" && at(1) == "line") return 2
+        if (at(0) == "new" && at(1) in SUBTASK_WORDS) return 2
+        if (at(0) in NEXT_SEPARATORS) {
+            // "next monday" is a date; "next print the tickets" is a new item.
+            if (at(1).isEmpty()) return 0
+            if (at(1) !in NEXT_FOLLOWERS) return 1
+        }
+        return 0
     }
 
     /* ---------------------------------------------------------------- */
@@ -166,7 +245,12 @@ class QuickAddParser @Inject constructor() {
         return null
     }
 
-    private fun readTime(words: List<String>, used: BooleanArray): LocalTime? {
+    private fun readTime(words: List<String>, used: BooleanArray, hasDate: Boolean): LocalTime? {
+        // Whole phrases first: "half past five", "this evening". The single-token pattern
+        // below would otherwise see "5" and either take it or refuse it for the wrong
+        // reason.
+        readPhraseTime(words, used, hasDate)?.let { return it }
+
         words.forEachIndexed { index, raw ->
             if (used[index]) return@forEachIndexed
             val match = TIME_PATTERN.matchEntire(raw.lowercase()) ?: return@forEachIndexed
@@ -210,6 +294,187 @@ class QuickAddParser @Inject constructor() {
         return null
     }
 
+    /**
+     * "remind me", "don't forget", and the lead time if the line gives one.
+     *
+     * A reminder is only ever asked for, never inferred: a sentence with no reminder
+     * words returns null, so the editor leaves whatever switch the user already set.
+     */
+    private fun readReminder(words: List<String>, used: BooleanArray): Pair<Boolean?, Int?> {
+        fun reminderWordNear(from: Int, span: Int): Boolean =
+            (from..(from + span - 1)).any { index ->
+                index in words.indices && words[index].clean() in REMIND_WORDS_ONLY
+            }
+
+        // "no reminder" and "don't remind me" contain the word "reminder", so the
+        // negation has to be checked before the ask - otherwise the one sentence that
+        // turns reminders off would turn them on.
+        val negated = words.indices.any { index ->
+            val word = words[index].clean()
+            (word in REMINDER_OFF && reminderWordNear(index + 1, span = 2)) ||
+                (word in DONT_WORDS && reminderWordNear(index + 1, span = 1))
+        }
+
+        val asked = words.any { it.clean() in REMINDER_WORDS } ||
+            words.indices.any { i ->
+                words[i].clean() in DONT_WORDS &&
+                    (i + 1).takeIf { it < words.size }?.let { words[it].clean() } == "forget"
+            }
+
+        if (negated) {
+            words.forEachIndexed { index, raw ->
+                if (raw.clean() in REMINDER_WORDS || raw.clean() in REMINDER_OFF ||
+                    raw.clean() in DONT_WORDS || raw.clean() in REMINDER_FILLER
+                ) {
+                    used[index] = true
+                }
+            }
+            return false to null
+        }
+
+        if (!asked) return null to null
+
+        // The words that only exist to say "remind me" must not survive into the title.
+        words.forEachIndexed { index, raw ->
+            if (raw.clean() in REMINDER_WORDS || raw.clean() in REMINDER_FILLER) used[index] = true
+        }
+
+        // "30 minutes before" / "an hour before" -> 30 / 60. `before` is the marker.
+        var lead: Int? = null
+        val beforeIndex = words.indexOfFirst { it.clean() == "before" }
+        if (beforeIndex > 0) {
+            val count = numberAt(words, beforeIndex - 2)?.takeIf { beforeIndex - 2 >= 0 }
+            val unit = words[beforeIndex - 1].clean()
+            if (count != null && unit in MINUTE_UNITS) lead = count
+            if (count != null && unit in HOUR_UNITS) lead = count * 60
+            if (count != null) {
+                for (index in (beforeIndex - 2).coerceAtLeast(0)..beforeIndex) used[index] = true
+            }
+        }
+
+        return true to lead
+    }
+
+    /**
+     * "in 20 minutes", "in 3 hours", "in 2 days".
+     *
+     * Returns an instant rather than a date and a time, because "+3 hours" at 22:00 is
+     * tomorrow, and nothing else in the parser is allowed to do that arithmetic.
+     */
+    private fun readOffset(words: List<String>, used: BooleanArray, now: Instant): Long? {
+        for (index in 0 until words.size - 2) {
+            if (used[index] || words[index].clean() !in IN_WORDS) continue
+            val count = numberAt(words, index + 1) ?: continue
+            if (used[index + 1] || used[index + 2]) continue
+            val unit = words[index + 2].clean()
+            val millis = when (unit) {
+                in MINUTE_UNITS -> count * 60_000L
+                in HOUR_UNITS -> count * 3_600_000L
+                in DAY_UNITS -> count * 86_400_000L
+                in WEEK_UNITS -> count * 7 * 86_400_000L
+                else -> continue
+            }
+            used[index] = true
+            used[index + 1] = true
+            used[index + 2] = true
+            return now.toEpochMilli() + millis
+        }
+        return null
+    }
+
+    /** A count as digits ("2") or as a word ("two"), at a given position. */
+    private fun numberAt(words: List<String>, index: Int): Int? {
+        if (index < 0 || index >= words.size) return null
+        val word = words[index].clean()
+        return word.toIntOrNull()?.takeIf { it > 0 } ?: NUMBER_WORDS[word]
+    }
+
+    /**
+     * Times that take more than one word.
+     *
+     *  - "half past five", "quarter to six", "quarter past 5"
+     *  - "five pm" (the hour spelled out)
+     *  - "noon", "midnight", "tonight"
+     *  - "this evening", and "friday evening" - a part of a day only counts as a time
+     *    when a day was already spoken or "this" is in front of it, otherwise "movie
+     *    night" would silently become 20:00 today.
+     */
+    private fun readPhraseTime(words: List<String>, used: BooleanArray, hasDate: Boolean): LocalTime? {
+        // quarter to six / half past five
+        for (index in 0 until words.size - 2) {
+            if (used[index] || used[index + 1] || used[index + 2]) continue
+            val step = when (words[index].clean()) {
+                "half" -> 30
+                "quarter" -> 15
+                else -> continue
+            }
+            val direction = words[index + 1].clean()
+            if (direction !in setOf("past", "after", "to")) continue
+            val hour = numberAt(words, index + 2)?.takeIf { it in 1..12 } ?: continue
+
+            // 1..12 stays 1..12, so "half past twelve" is 12:30 rather than 00:30.
+            var base = hour
+            val minutes = if (direction == "to") {
+                base = if (hour == 1) 12 else hour - 1
+                60 - step
+            } else {
+                step
+            }
+            val meridiem = words.getOrNull(index + 3)?.clean()?.let { MERIDIEMS[it] }
+            val hour24 = when {
+                meridiem == "pm" && base < 12 -> base + 12
+                meridiem == "am" && base == 12 -> 0
+                else -> base
+            }
+            for (consumed in index..(index + 2)) used[consumed] = true
+            if (meridiem != null && index + 3 < words.size) used[index + 3] = true
+            return LocalTime.of(hour24, minutes)
+        }
+
+        // five pm / "at five pm"
+        for (index in 0 until words.size - 1) {
+            if (used[index] || used[index + 1]) continue
+            val hour = NUMBER_WORDS[words[index].clean()]?.takeIf { it in 1..12 } ?: continue
+            val meridiem = MERIDIEMS[words[index + 1].clean()] ?: continue
+            val hour24 = when {
+                meridiem == "pm" && hour < 12 -> hour + 12
+                meridiem == "am" && hour == 12 -> 0
+                else -> hour
+            }
+            used[index] = true
+            used[index + 1] = true
+            // "at five pm" must not leave the "at" behind in the title.
+            if (index > 0 && !used[index - 1] && words[index - 1].clean() in TIME_PREPOSITIONS) {
+                used[index - 1] = true
+            }
+            return LocalTime.of(hour24, 0)
+        }
+
+        for (index in words.indices) {
+            if (used[index]) continue
+            val word = words[index].clean()
+
+            PART_OF_DAY[word]?.let { hour ->
+                val precededByThis = index > 0 && !used[index - 1] && words[index - 1].clean() in THIS_WORDS
+                if (!precededByThis && !hasDate) return@let
+                if (precededByThis) {
+                    used[index - 1] = true
+                    // "in the evening"
+                    if (index > 1 && words[index - 2].clean() == "the") used[index - 2] = true
+                }
+                used[index] = true
+                return LocalTime.of(hour, 0)
+            }
+
+            PART_OF_DAY_UNIQUE[word]?.let { hour ->
+                used[index] = true
+                return LocalTime.of(hour, 0)
+            }
+        }
+
+        return null
+    }
+
     /* ---------------------------------------------------------------- */
     /* Assembly                                                         */
     /* ---------------------------------------------------------------- */
@@ -233,6 +498,9 @@ class QuickAddParser @Inject constructor() {
             .replace(WHITESPACE, " ")
             .trim()
             .trim(' ', ',', '-', '.', ':', ';')
+            // "remind me to call mom" leaves "to call mom"; the "to" is not part of the title.
+            .removePrefix("to ")
+            .trim()
         // "friday 5pm" has no title in it; keep the user's words rather than an empty box.
         val resolved = joined.ifBlank { fallback.trim() }
         return resolved.replaceFirstChar { it.uppercase() }
@@ -290,5 +558,48 @@ class QuickAddParser @Inject constructor() {
         val ALL_UNITS = DAILY_UNITS + WEEKDAY_UNITS + UNSUPPORTED_UNITS
         val DAY_MODIFIERS = setOf("on", "this", "next", "coming", "by")
         val NEXT_WORDS = setOf("next", "coming")
+
+        /** Hours spelled as words, for "five pm" and "quarter to six". */
+        val NUMBER_WORDS = mapOf(
+            "one" to 1, "two" to 2, "three" to 3, "four" to 4, "five" to 5, "six" to 6,
+            "seven" to 7, "eight" to 8, "nine" to 9, "ten" to 10, "eleven" to 11,
+            "twelve" to 12
+        )
+
+        /** A part of a day only becomes a time when the day is already known. */
+        val PART_OF_DAY = mapOf("morning" to 9, "afternoon" to 14, "evening" to 18, "night" to 20)
+
+        /** Unambiguous on their own. */
+        val PART_OF_DAY_UNIQUE = mapOf("noon" to 12, "midnight" to 0, "tonight" to 20)
+
+        val THIS_WORDS = setOf("this", "tomorrow", "today")
+
+        val IN_WORDS = setOf("in")
+        val MINUTE_UNITS = setOf("minute", "minutes", "min", "mins")
+        val HOUR_UNITS = setOf("hour", "hours", "hr", "hrs")
+        val DAY_UNITS = setOf("day", "days")
+        val WEEK_UNITS = setOf("week", "weeks")
+
+        val REMINDER_WORDS = setOf("remind", "reminder", "alert", "notify")
+
+        /** Ways of saying "sub-task" out loud, punctuation already stripped by clean(). */
+        val SUBTASK_WORDS = setOf("subtask", "subtasks", "sub-task", "sub-tasks")
+
+        val NEXT_SEPARATORS = setOf("next")
+
+        /** After these, "next" is part of a date, not a separator. */
+        val NEXT_FOLLOWERS = setOf(
+            "week", "weeks", "month", "months", "year", "years", "day", "days",
+            "time", "one", "minute", "minutes", "hour", "hours"
+        ) + WEEKDAYS.keys
+
+        const val MAX_SUBTASK = 80
+        const val MAX_SUB_TASKS = 8
+        val REMINDER_OFF = setOf("no", "without")
+        val DONT_WORDS = setOf("don't", "dont")
+
+        /** The words that can be negated: "forget" is not one of them. */
+        val REMIND_WORDS_ONLY = setOf("remind", "reminder", "alert", "notify")
+        val REMINDER_FILLER = setOf("me", "us", "forget", "don't", "dont")
     }
 }
