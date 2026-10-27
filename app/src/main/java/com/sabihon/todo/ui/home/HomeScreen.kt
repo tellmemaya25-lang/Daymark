@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyColumn
@@ -74,6 +75,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -214,37 +216,70 @@ fun HomeScreen(
             /*
              * When scrolling downward reaches the weekly calendar (`HEADER_ITEM_KEY` and
              * `MOMENTUM_ITEM_KEY` have scrolled clear above the viewport), smoothly glide
-             * the weekly calendar down from the top of the viewport onto the bottom of
-             * HomeScreen (directly above the bottom navigation bar).
+             * the weekly calendar down onto the bottom of HomeScreen (flush above the
+             * bottom navigation bar).
              *
-             * `isSuccessfullyAtBottom` becomes true only once the downward spring animation
-             * has arrived at the bottom, arming:
-             *   - Swipe left / right -> move forward / backward in the calendar
-             *   - Swipe upward       -> open the full monthly calendar sheet
+             * When scrolling back up, track the live Y position of `WEEK_ITEM_KEY` so the
+             * floating calendar decelerates directly onto its inline slot without ever
+             * overshooting upward into `MomentumCard` or `HomeHeader`.
              */
-            val reachedWeeklyCalendar by remember {
+            var isWeeklyDocked by remember { mutableStateOf(false) }
+            val scrollDockSignal by remember {
                 derivedStateOf {
                     val info = listState.layoutInfo
                     val visible = info.visibleItemsInfo
-                    if (visible.isEmpty()) return@derivedStateOf false
+                    if (visible.isEmpty()) return@derivedStateOf 0
                     val headerVisible = visible.any { it.key == HEADER_ITEM_KEY }
                     val momentum = visible.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
                     val momentumStillVisible = momentum != null &&
                         momentum.offset + momentum.size > info.viewportStartOffset + 8
-                    !headerVisible && !momentumStillVisible
+                    val momentumFullyBack = momentum != null &&
+                        momentum.offset >= info.viewportStartOffset
+                    when {
+                        !headerVisible && !momentumStillVisible -> 1 // dock at bottom
+                        headerVisible || momentumFullyBack -> -1 // return to inline slot
+                        else -> 0 // keep current state in transition band
+                    }
                 }
             }
+            LaunchedEffect(scrollDockSignal) {
+                if (scrollDockSignal == 1) isWeeklyDocked = true
+                else if (scrollDockSignal == -1) isWeeklyDocked = false
+            }
+
+            val inlineWeekTopPx by remember {
+                derivedStateOf {
+                    val info = listState.layoutInfo
+                    val visible = info.visibleItemsInfo
+                    val week = visible.firstOrNull { it.key == WEEK_ITEM_KEY }
+                    val rawOffset = when {
+                        week != null -> week.offset - info.viewportStartOffset
+                        else -> {
+                            val momentum = visible.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
+                            val header = visible.firstOrNull { it.key == HEADER_ITEM_KEY }
+                            when {
+                                momentum != null -> momentum.offset + momentum.size - info.viewportStartOffset
+                                header != null -> header.offset + header.size - info.viewportStartOffset
+                                else -> 0
+                            }
+                        }
+                    }
+                    rawOffset.coerceAtLeast(0)
+                }
+            }
+
             val dockProgress by animateFloatAsState(
-                targetValue = if (reachedWeeklyCalendar) 1f else 0f,
+                targetValue = if (isWeeklyDocked) 1f else 0f,
                 animationSpec = tween(
                     durationMillis = 780,
-                    easing = FastOutSlowInEasing
+                    easing = if (isWeeklyDocked) FastOutSlowInEasing else LinearOutSlowInEasing
                 ),
                 label = "weekCalendarDockProgress"
             )
-            val isSuccessfullyAtBottom = reachedWeeklyCalendar && dockProgress >= 0.99f
+            val isSuccessfullyAtBottom = isWeeklyDocked && dockProgress >= 0.99f
             var containerHeightPx by remember { mutableIntStateOf(0) }
             var dockedBarHeightPx by remember { mutableIntStateOf(0) }
+            val dayPillAlignOffsetPx = with(LocalDensity.current) { 15.dp.toPx() }
 
             PullToRefreshBox(
                 isRefreshing = uiState.isRefreshing,
@@ -444,13 +479,17 @@ fun HomeScreen(
                 }
 
                 if (dockProgress > 0.005f) {
-                    val travelDistancePx = (containerHeightPx - dockedBarHeightPx)
+                    val bottomRestY = (containerHeightPx - dockedBarHeightPx)
                         .coerceAtLeast(0)
                         .toFloat()
+                    val inlineTargetY = (inlineWeekTopPx.toFloat() - dayPillAlignOffsetPx)
+                        .coerceIn(0f, bottomRestY)
+                    val travelDistancePx = (bottomRestY - inlineTargetY).coerceAtLeast(0f)
                     DockedWeeklyCalendarBar(
                         days = uiState.weekDays,
                         selectedDate = uiState.selectedDate,
                         isDockedAtBottom = isSuccessfullyAtBottom,
+                        dockProgress = dockProgress,
                         onSelectDate = { date ->
                             viewModel.onAction(HomeAction.SelectDate(date))
                         },
@@ -465,7 +504,7 @@ fun HomeScreen(
                             .onSizeChanged { dockedBarHeightPx = it.height }
                             .graphicsLayer {
                                 translationY = -travelDistancePx * (1f - dockProgress)
-                                alpha = (dockProgress * 5f).coerceIn(0f, 1f)
+                                alpha = (dockProgress * 3.2f).coerceIn(0f, 1f)
                             }
                     )
                 }

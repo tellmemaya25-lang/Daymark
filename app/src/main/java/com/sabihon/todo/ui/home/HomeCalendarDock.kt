@@ -90,7 +90,8 @@ fun DockedWeeklyCalendarBar(
     onSelectDate: (LocalDate) -> Unit,
     onShiftDays: (Long) -> Unit,
     onExpandMonthCalendar: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    dockProgress: Float = 1f
 ) {
     val haptics = LocalHapticFeedback.current
 
@@ -99,12 +100,18 @@ fun DockedWeeklyCalendarBar(
 
     val visualOffsetX by animateFloatAsState(
         targetValue = if (isDockedAtBottom) (dragX * 0.22f).coerceIn(-36f, 36f) else 0f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
         label = "dockVisualDragX"
     )
     val visualOffsetY by animateFloatAsState(
         targetValue = if (isDockedAtBottom) (dragY * 0.20f).coerceIn(-24f, 0f) else 0f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
         label = "dockVisualDragY"
     )
 
@@ -193,6 +200,7 @@ fun DockedWeeklyCalendarBar(
             // Subtle pull-up header cue – also tappable to open the full month calendar.
             Row(
                 modifier = Modifier
+                    .graphicsLayer { alpha = dockProgress.coerceIn(0f, 1f) }
                     .clip(RoundedCornerShape(100.dp))
                     .clickable(enabled = isDockedAtBottom) { onExpandMonthCalendar() }
                     .padding(horizontal = 12.dp, vertical = 1.dp),
