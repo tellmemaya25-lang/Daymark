@@ -124,7 +124,11 @@ data class HomeUiState(
     val nextTaskSuggestions: List<SuggestedTaskCandidate> = emptyList(),
     val isSuggestingNext: Boolean = false,
     /** Collapsible card state; remembered per screen lifetime. */
-    val suggestionsExpanded: Boolean = true
+    val suggestionsExpanded: Boolean = true,
+
+    // ---- live global system notice (Admin Dashboard) ----
+    val announcementBanner: String = "",
+    val maintenanceMode: Boolean = false
 )
 
 sealed interface HomeAction {

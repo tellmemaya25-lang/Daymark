@@ -22,7 +22,7 @@ import javax.inject.Inject
 /**
  * Where the splash hands off to.
  */
-enum class StartDestination { HOME, ONBOARDING, LOGIN }
+enum class StartDestination { HOME, ADMIN, ONBOARDING, LOGIN }
 
 /**
  * Cold-start route: the branded launch screen, then wherever this install belongs.
@@ -101,6 +101,7 @@ class SplashViewModel @Inject constructor(
             val loggedIn = authRepository.isUserLoggedIn()
             val seenOnboarding = onboardingPreferences.hasSeenOnboardingNow()
             _startDestination.value = when {
+                loggedIn && authRepository.isCurrentUserAdmin() -> StartDestination.ADMIN
                 loggedIn -> StartDestination.HOME
                 !seenOnboarding -> StartDestination.ONBOARDING
                 else -> StartDestination.LOGIN

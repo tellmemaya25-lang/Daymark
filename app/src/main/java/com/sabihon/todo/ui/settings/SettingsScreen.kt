@@ -105,6 +105,7 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     onNavigateToHistory: () -> Unit = {},
     onNavigateToProfile: () -> Unit = {},
+    onNavigateToAdmin: () -> Unit = {},
     viewModel: ProfileViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -279,6 +280,20 @@ fun SettingsScreen(
                                         }
                                     }
                                 }
+                            )
+                        }
+                    }
+
+                    if (uiState.isAdmin) {
+                        Spacer(Modifier.height(12.dp))
+
+                        SectionLabel("ADMIN")
+                        GroupedCard {
+                            GroupedRow(
+                                label = "Admin Dashboard",
+                                supporting = "Platform analytics, users, AI config & audit log",
+                                value = "Open",
+                                onClick = onNavigateToAdmin
                             )
                         }
                     }

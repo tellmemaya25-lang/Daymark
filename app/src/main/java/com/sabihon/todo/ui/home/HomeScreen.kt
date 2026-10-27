@@ -321,6 +321,27 @@ fun HomeScreen(
                 }
 
                 item(key = MOMENTUM_ITEM_KEY) {
+                    if (uiState.announcementBanner.isNotBlank()) {
+                        val bannerAccent = if (uiState.maintenanceMode) Color(0xFFF2994A) else AccentBlue
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 6.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(bannerAccent.copy(alpha = 0.12f))
+                                .border(1.dp, bannerAccent.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Text(
+                                text = uiState.announcementBanner,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                     MomentumCard(
                         total = uiState.momentum.total,
                         done = uiState.momentum.done,

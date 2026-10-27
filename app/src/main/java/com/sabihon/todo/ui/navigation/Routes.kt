@@ -50,6 +50,9 @@ sealed interface Route {
     @Serializable
     data object Categories : Route
 
+    @Serializable
+    data object AdminDashboard : Route
+
 }
 
 // Legacy string routes for fallback

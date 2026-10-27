@@ -31,6 +31,7 @@ import com.sabihon.todo.ui.categories.CategoryDetailScreen
 import com.sabihon.todo.ui.profile.ProfileScreen
 import com.sabihon.todo.ui.projects.AllTasksScreen
 import com.sabihon.todo.ui.search.SearchScreen
+import com.sabihon.todo.ui.admin.AdminDashboardScreen
 import com.sabihon.todo.ui.addedit.AddEditTaskScreen
 
 @Composable
@@ -57,6 +58,7 @@ fun SabihonNavHost(
                 onFinished = { destination ->
                     val next: Route = when (destination) {
                         StartDestination.HOME -> Route.Home
+                        StartDestination.ADMIN -> Route.AdminDashboard
                         StartDestination.ONBOARDING -> Route.Onboarding
                         StartDestination.LOGIN -> Route.Login
                     }
@@ -101,6 +103,25 @@ fun SabihonNavHost(
                     navController.navigate(Route.Home) {
                         popUpTo(Route.Login) { inclusive = true }
                     }
+                },
+                onLoginSuccessAdmin = {
+                    navController.navigate(Route.AdminDashboard) {
+                        popUpTo(Route.Login) { inclusive = true }
+                    }
+                }
+            )
+        }
+        composable<Route.AdminDashboard> {
+            AdminDashboardScreen(
+                onOpenWorkspace = {
+                    navController.navigate(Route.Home) {
+                        launchSingleTop = true
+                    }
+                },
+                onSignedOut = {
+                    navController.navigate(Route.Login) {
+                        popUpTo(0) { inclusive = true }
+                    }
                 }
             )
         }
@@ -109,6 +130,11 @@ fun SabihonNavHost(
                 onNavigateBack = { navController.popBackStack() },
                 onSignUpSuccess = {
                     navController.navigate(Route.Home) {
+                        popUpTo(Route.SignUp) { inclusive = true }
+                    }
+                },
+                onSignUpSuccessAdmin = {
+                    navController.navigate(Route.AdminDashboard) {
                         popUpTo(Route.SignUp) { inclusive = true }
                     }
                 }

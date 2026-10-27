@@ -59,7 +59,8 @@ data class ProfileUiState(
     val passwordError: String? = null,
     val aiCloudEnabled: Boolean = false,
     val aiDailyCalls: Int = 0,
-    val geminiApiKey: String = ""
+    val geminiApiKey: String = "",
+    val isAdmin: Boolean = false
 )
 
 @HiltViewModel
@@ -88,6 +89,8 @@ class ProfileViewModel @Inject constructor(
     private fun loadProfile() {
         val user = auth.currentUser
         viewModelScope.launch {
+            val adminFlag = runCatching { authRepository.isCurrentUserAdmin() }.getOrDefault(false)
+            _uiState.update { it.copy(isAdmin = adminFlag) }
             try {
                 val uid = user?.uid
                 val localPath = loadLocalPhotoPath(uid)

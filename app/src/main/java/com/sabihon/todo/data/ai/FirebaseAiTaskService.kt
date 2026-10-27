@@ -7,7 +7,10 @@ import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.type.generationConfig
+import com.google.firebase.firestore.FirebaseFirestore
 import com.sabihon.todo.BuildConfig
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.ai.AiModelTier
@@ -73,6 +76,31 @@ class FirebaseAiTaskService @Inject constructor(
     @Volatile
     private var preferProjectRestFallback: Boolean = false
 
+    @Volatile
+    private var cachedGlobalAiEnabled: Boolean = true
+
+    @Volatile
+    private var globalAiCheckedAtMillis: Long = 0L
+
+    private suspend fun isGlobalCloudAiEnabled(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - globalAiCheckedAtMillis < 60_000L) {
+            return cachedGlobalAiEnabled
+        }
+        val enabled = runCatching {
+            withTimeoutOrNull(1_500L) {
+                FirebaseFirestore.getInstance()
+                    .collection("system_config")
+                    .document("global")
+                    .get()
+                    .await()
+            }?.getBoolean("cloudAiGlobalEnabled") ?: true
+        }.getOrDefault(true)
+        cachedGlobalAiEnabled = enabled
+        globalAiCheckedAtMillis = now
+        return enabled
+    }
+
     private fun getOrBuildModel(modelName: String) =
         modelCache.getOrPut(modelName) {
             Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
@@ -85,6 +113,9 @@ class FirebaseAiTaskService @Inject constructor(
         }
 
     private suspend fun generateJsonText(prompt: String, tier: AiModelTier): String? {
+        if (!isGlobalCloudAiEnabled()) {
+            throw IllegalStateException("Cloud AI temporarily disabled by administrator.")
+        }
         val candidates = when (tier) {
             AiModelTier.FLASH -> listOf(
                 resolvedFlashModelId,

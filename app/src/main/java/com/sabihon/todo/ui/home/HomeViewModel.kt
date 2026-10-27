@@ -3,6 +3,8 @@ package com.sabihon.todo.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiSnapshotCache
@@ -90,6 +92,7 @@ class HomeViewModel @Inject constructor(
 
     /** Live collectors, kept so a pull-to-refresh can restart them. */
     private val observeJobs = mutableListOf<Job>()
+    private var systemBannerReg: ListenerRegistration? = null
 
     private var categoriesList: List<Category> = emptyList()
     private var lastPriorityUndo: PrioritizationUndoSnapshot? = null
@@ -110,6 +113,27 @@ class HomeViewModel @Inject constructor(
         startObserving()
         observeAvatar()
         observeAiCloudEnabled()
+        observeSystemAnnouncement()
+    }
+
+    private fun observeSystemAnnouncement() {
+        runCatching {
+            systemBannerReg = FirebaseFirestore.getInstance()
+                .collection("system_config")
+                .document("global")
+                .addSnapshotListener { snap, _ ->
+                    val banner = snap?.getString("announcementBanner").orEmpty()
+                    val maint = snap?.getBoolean("maintenanceMode") ?: false
+                    _uiState.update {
+                        it.copy(announcementBanner = banner, maintenanceMode = maint)
+                    }
+                }
+        }
+    }
+
+    override fun onCleared() {
+        runCatching { systemBannerReg?.remove() }
+        super.onCleared()
     }
 
     private fun observeAiCloudEnabled() {

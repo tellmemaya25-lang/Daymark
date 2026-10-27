@@ -29,6 +29,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 fun SignUpScreen(
     onNavigateBack: () -> Unit,
     onSignUpSuccess: () -> Unit,
+    onSignUpSuccessAdmin: () -> Unit = onSignUpSuccess,
     viewModel: AuthViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -89,7 +90,7 @@ fun SignUpScreen(
         AuthPrimaryButton(
             text = "Create account",
             isLoading = uiState.isLoading,
-            onClick = { viewModel.signUp(onSignUpSuccess) }
+            onClick = { viewModel.signUp(onSuccess = onSignUpSuccess, onAdminSuccess = onSignUpSuccessAdmin) }
         )
 
         Spacer(Modifier.height(22.dp))
@@ -99,7 +100,13 @@ fun SignUpScreen(
         Spacer(Modifier.height(16.dp))
 
         GoogleAuthButton(
-            onIdTokenReceived = { token -> viewModel.signInWithGoogle(token, onSignUpSuccess) },
+            onIdTokenReceived = { token ->
+                viewModel.signInWithGoogle(
+                    idToken = token,
+                    onSuccess = onSignUpSuccess,
+                    onAdminSuccess = onSignUpSuccessAdmin
+                )
+            },
             onError = { err -> viewModel.setError(err) },
             isLoading = uiState.isLoading,
             buttonText = "Sign up with Google"
