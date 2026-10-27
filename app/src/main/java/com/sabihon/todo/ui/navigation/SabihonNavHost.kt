@@ -29,6 +29,7 @@ import com.sabihon.todo.ui.onboarding.OnboardingViewModel
 import com.sabihon.todo.ui.categories.CategoriesScreen
 import com.sabihon.todo.ui.categories.CategoryDetailScreen
 import com.sabihon.todo.ui.profile.ProfileScreen
+import com.sabihon.todo.ui.projects.AllTasksScreen
 import com.sabihon.todo.ui.search.SearchScreen
 import com.sabihon.todo.ui.addedit.AddEditTaskScreen
 
@@ -152,9 +153,9 @@ fun SabihonNavHost(
         }
         composable<Route.AllTasks> {
             MainScaffold(navController = navController) { _ ->
-                CategoriesScreen(
+                AllTasksScreen(
                     onBack = { navController.popBackStack() },
-                    onCategoryClick = { catId -> navController.navigate(Route.CategoryDetail(catId)) }
+                    onTaskClick = { taskId -> navController.navigate(Route.AddEditTask(taskId)) }
                 )
             }
         }

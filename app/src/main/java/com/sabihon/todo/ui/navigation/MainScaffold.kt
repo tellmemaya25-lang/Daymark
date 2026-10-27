@@ -29,8 +29,8 @@ import kotlinx.coroutines.launch
 private val TAB_ORDER = listOf("home", "projects", "activity", "settings")
 
 private fun tabMatches(key: String, route: String): Boolean = when (key) {
-    "home" -> route.contains("Home") || route.contains("AllTasks") || route.contains("Categories")
-    "projects" -> route.contains("Projects") || route.contains("Categories")
+    "home" -> route.contains("Home")
+    "projects" -> route.contains("Projects") || route.contains("AllTasks") || route.contains("Categories")
     "activity" -> route.contains("History") || route.contains("Activity")
     "settings" -> route.contains("Settings") || route.contains("Profile")
     else -> false
