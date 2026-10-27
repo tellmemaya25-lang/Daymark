@@ -1,6 +1,5 @@
 package com.sabihon.todo.ui.home
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -86,16 +85,12 @@ import com.sabihon.todo.core.ui.util.isCompactHeight
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.Task
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-/** Item keys the sticky-strip detection looks items up by. */
-private const val MOMENTUM_ITEM_KEY = "momentum"
-private const val WEEK_ITEM_KEY = "week"
-private const val PRIORITIZE_ITEM_KEY = "prioritize"
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onNavigateToCategories: () -> Unit = {},
@@ -206,23 +201,6 @@ fun HomeScreen(
                 label = "headerDivider"
             )
 
-            // The week strip is a sticky header, so once the momentum card scrolls away
-            // the strip parks at the top and stays there. `stripStuck` is that moment,
-            // and it is what arms the day swipe: while the strip is still at rest the
-            // horizontal drag belongs to the tab pager, which lives one level above this
-            // screen. Two horizontal drags competing for the same pixels is how you get
-            // a date that changes when you meant to swipe to Projects.
-            val stripStuck by remember {
-                derivedStateOf {
-                    val info = listState.layoutInfo
-                    val week = info.visibleItemsInfo.firstOrNull { it.key == WEEK_ITEM_KEY }
-                        ?: return@derivedStateOf false
-                    if (week.offset > info.viewportStartOffset) return@derivedStateOf false
-                    val momentum = info.visibleItemsInfo.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
-                    momentum == null || momentum.offset + momentum.size <= info.viewportStartOffset
-                }
-            }
-
             // Read here, not inside the LazyColumn builder: that lambda is not
             // @Composable, so MaterialTheme cannot be touched from within it.
             val stripBg = MaterialTheme.colorScheme.background
@@ -266,6 +244,22 @@ fun HomeScreen(
                                     )
                                 )
                         )
+                        // The week strip is part of the top bar now, so it is always on
+                        // screen: no scroll needed to reach it, and no sticky header
+                        // doing the same job from inside the list.
+                        WeekStripBar(
+                            days = uiState.weekDays,
+                            selected = uiState.selectedDate,
+                            onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
+                            onShiftDay = shiftDay,
+                            modifier = Modifier.background(stripBg)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f))
+                        )
                     }
                 }
 
@@ -285,49 +279,24 @@ fun HomeScreen(
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
                     }
+                    // Short windows cannot spare a pinned strip, so here it stays a
+                    // normal item and scrolls. Tapping a day still works; the drag does
+                    // not, because a scrolling strip belongs to the list's vertical drags.
+                    item {
+                        WeekStrip(
+                            days = uiState.weekDays,
+                            selected = uiState.selectedDate,
+                            onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
+                            modifier = Modifier.background(stripBg)
+                        )
+                    }
                 }
 
-                item(key = MOMENTUM_ITEM_KEY) {
+                item {
                     MomentumCard(
                         total = uiState.momentum.total,
                         done = uiState.momentum.done,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
-                    )
-                }
-
-                stickyHeader(key = WEEK_ITEM_KEY) {
-                    WeekStrip(
-                        days = uiState.weekDays,
-                        selected = uiState.selectedDate,
-                        onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
-                        // Opaque either way: a sticky header without a background lets
-                        // the task cards scroll through the gaps between the day pills.
-                        modifier = Modifier
-                            .background(stripBg)
-                            .then(
-                                // Armed only while pinned. With no handler attached the
-                                // drag falls through to the tab pager, which is exactly
-                                // what should happen when the strip is still at rest.
-                                if (stripStuck) {
-                                    Modifier.pointerInput(uiState.selectedDate) {
-                                        // toPx() has to happen out here: onDragEnd is a
-                                        // plain lambda, not a Density scope.
-                                        val threshold = 48.dp.toPx()
-                                        var dragged = 0f
-                                        detectHorizontalDragGestures(
-                                            onDragStart = { dragged = 0f },
-                                            onDragEnd = {
-                                                when {
-                                                    dragged > threshold -> shiftDay(-1)
-                                                    dragged < -threshold -> shiftDay(1)
-                                                }
-                                            }
-                                        ) { _, amount -> dragged += amount }
-                                    }
-                                } else {
-                                    Modifier
-                                }
-                            )
                     )
                 }
 
@@ -336,7 +305,7 @@ fun HomeScreen(
                 // ways to change what you are looking at was one too many. "All tasks"
                 // moved to the Projects tab, which is where you go to see everything.
                 if (uiState.visibleTasks.size >= 2) {
-                    item(key = PRIORITIZE_ITEM_KEY) {
+                    item {
                         PrioritizeTaskButton(
                             onClick = { viewModel.onAction(HomeAction.RequestPrioritize) },
                             modifier = Modifier.padding(
@@ -872,6 +841,51 @@ private fun SearchCircleButton(
  * Only drawn when there are at least two open tasks: a plan that ranks one task is not
  * a plan, and offering it on an empty list is offering nothing.
  */
+/**
+ * The week strip, pinned in the top bar, with a horizontal drag that moves the
+ * selected day by one.
+ *
+ * The gesture is always live here – the whole point of moving the strip out of the list
+ * is that it is permanently on screen, so there is no "only when pinned" state left to
+ * wait for. The cost is honest: a horizontal drag started *on the strip* moves the day
+ * instead of the tabs, because this handler consumes it before the pager sees it. Tab
+ * swiping still works everywhere else on the screen – the header, the momentum card and
+ * the task list all still belong to the pager.
+ *
+ * Right is yesterday, left is tomorrow: the direction a paper calendar moves when you
+ * flip back and then forward again.
+ */
+@Composable
+private fun WeekStripBar(
+    days: List<WeekDay>,
+    selected: LocalDate,
+    onSelect: (LocalDate) -> Unit,
+    onShiftDay: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    WeekStrip(
+        days = days,
+        selected = selected,
+        onSelect = onSelect,
+        modifier = modifier.pointerInput(selected) {
+            // toPx() lives out here: the gesture callbacks are plain lambdas, not a
+            // Density scope. Re-keyed on `selected` so a drag always resolves against
+            // the day that is on screen.
+            val threshold = 48.dp.toPx()
+            var dragged = 0f
+            detectHorizontalDragGestures(
+                onDragStart = { dragged = 0f },
+                onDragEnd = {
+                    when {
+                        dragged > threshold -> onShiftDay(-1)
+                        dragged < -threshold -> onShiftDay(1)
+                    }
+                }
+            ) { _, amount -> dragged += amount }
+        }
+    )
+}
+
 /**
  * "Prioritize Task" – a full-width row of its own.
  *
