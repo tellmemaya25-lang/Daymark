@@ -194,14 +194,59 @@ class HomeTaskSorterTest {
     }
 
     @Test
-    fun `completed tasks keep their own order and never join the visible list`() {
+    fun `completed tasks stay separated from visible tasks and follow selected sort and direction`() {
         val open = task("open", at(today.plusDays(1)))
-        val done = task("done", at(today.plusDays(1)), isCompleted = true)
+        val doneLow = task("done-low", at(today.plusDays(3)), priority = Priority.LOW, isCompleted = true)
+        val doneUrgent = task("done-urgent", at(today.plusDays(1)), priority = Priority.URGENT, isCompleted = true)
 
-        val (visible, completed) = split(listOf(open, done), HomeFilter.ALL)
+        val (visibleDueAsc, completedDueAsc) = split(
+            listOf(open, doneLow, doneUrgent),
+            HomeFilter.ALL,
+            HomeSort.DUE_DATE,
+            HomeSortDirection.ASCENDING
+        )
+        assertEquals(listOf("open"), ids(visibleDueAsc))
+        assertEquals(listOf("done-urgent", "done-low"), ids(completedDueAsc))
 
-        assertEquals(listOf("open"), ids(visible))
-        assertEquals(listOf("done"), ids(completed))
+        val (_, completedDueDesc) = split(
+            listOf(open, doneLow, doneUrgent),
+            HomeFilter.ALL,
+            HomeSort.DUE_DATE,
+            HomeSortDirection.DESCENDING
+        )
+        assertEquals(listOf("done-low", "done-urgent"), ids(completedDueDesc))
+
+        val (_, completedPrioAsc) = split(
+            listOf(doneUrgent, doneLow),
+            HomeFilter.ALL,
+            HomeSort.PRIORITY,
+            HomeSortDirection.ASCENDING
+        )
+        assertEquals(listOf("done-low", "done-urgent"), ids(completedPrioAsc))
+
+        val (_, completedPrioDesc) = split(
+            listOf(doneLow, doneUrgent),
+            HomeFilter.ALL,
+            HomeSort.PRIORITY,
+            HomeSortDirection.DESCENDING
+        )
+        assertEquals(listOf("done-urgent", "done-low"), ids(completedPrioDesc))
+
+        val (_, completedSmartAsc) = split(
+            listOf(doneLow, doneUrgent),
+            HomeFilter.ALL,
+            HomeSort.SMART,
+            HomeSortDirection.ASCENDING
+        )
+        assertEquals(listOf("done-urgent", "done-low"), ids(completedSmartAsc))
+
+        val (_, completedSmartDesc) = split(
+            listOf(doneLow, doneUrgent),
+            HomeFilter.ALL,
+            HomeSort.SMART,
+            HomeSortDirection.DESCENDING
+        )
+        assertEquals(listOf("done-low", "done-urgent"), ids(completedSmartDesc))
     }
 
     // ---- Smart focus ordering ----

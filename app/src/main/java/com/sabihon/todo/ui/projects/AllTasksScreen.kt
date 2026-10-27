@@ -2,9 +2,7 @@ package com.sabihon.todo.ui.projects
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.sabihon.todo.core.ui.components.CompletionSplash
 import com.sabihon.todo.core.ui.components.EmptyState
 import com.sabihon.todo.core.ui.components.RevealCoordinator
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
@@ -92,6 +91,7 @@ fun AllTasksScreen(
     val revealCoordinator = remember { RevealCoordinator() }
     var showSortMenu by remember { mutableStateOf(false) }
     var completedExpanded by rememberSaveable { mutableStateOf(true) }
+    var splashTaskTitle by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(listState.isScrollInProgress) {
         if (listState.isScrollInProgress) {
@@ -113,6 +113,7 @@ fun AllTasksScreen(
         viewModel.clearSnackbar()
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -264,9 +265,15 @@ fun AllTasksScreen(
                                     categoryName = task.categoryId?.let { uiState.categoryNames[it] },
                                     revealCoordinator = revealCoordinator,
                                     onCheckedChange = { checked ->
+                                        if (checked && !task.isCompleted && task.subTasksDone) {
+                                            splashTaskTitle = task.title
+                                        }
                                         viewModel.toggleComplete(task.id, checked)
                                     },
                                     onSubTaskChecked = { subId, done ->
+                                        if (!task.isCompleted && task.withSubTaskChecked(subId, done).isCompleted) {
+                                            splashTaskTitle = task.title
+                                        }
                                         viewModel.toggleSubTask(task, subId, done)
                                     },
                                     onOpen = { onTaskClick(task.id) },
@@ -340,6 +347,13 @@ fun AllTasksScreen(
                 }
             }
         }
+    }
+
+    CompletionSplash(
+        visible = splashTaskTitle != null,
+        subtitle = splashTaskTitle,
+        onFinished = { splashTaskTitle = null }
+    )
     }
 }
 

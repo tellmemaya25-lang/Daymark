@@ -51,31 +51,54 @@ object HomeTaskSorter {
             HomeFilter.ALL -> tasks
         }
 
-        val pending = matching.filter { !it.isCompleted }
-        val visible = when (sort) {
-            HomeSort.SMART -> {
-                val ranked = localScorer.rankTasks(
-                    openTasks = pending,
-                    nowMillis = effectiveNow,
-                    today = today,
-                    zone = zone,
-                    aiFocusRanks = aiFocusRanks
-                )
-                if (direction == HomeSortDirection.ASCENDING) ranked else ranked.reversed()
-            }
-            HomeSort.DUE_DATE -> pending.sortedWith(dueComparator(direction))
-            HomeSort.PRIORITY -> pending.sortedWith(
-                compareBy<Task> {
-                    if (direction == HomeSortDirection.ASCENDING) it.priority.ordinal else -it.priority.ordinal
-                }.then(dueComparator(HomeSortDirection.ASCENDING))
+        val pending = orderTasks(
+            list = matching.filter { !it.isCompleted },
+            sort = sort,
+            direction = direction,
+            effectiveNow = effectiveNow,
+            today = today,
+            zone = zone,
+            aiFocusRanks = aiFocusRanks
+        )
+
+        val completed = orderTasks(
+            list = matching.filter { it.isCompleted },
+            sort = sort,
+            direction = direction,
+            effectiveNow = effectiveNow,
+            today = today,
+            zone = zone,
+            aiFocusRanks = aiFocusRanks
+        )
+
+        return pending to completed
+    }
+
+    private fun orderTasks(
+        list: List<Task>,
+        sort: HomeSort,
+        direction: HomeSortDirection,
+        effectiveNow: Long,
+        today: LocalDate,
+        zone: ZoneId,
+        aiFocusRanks: Map<String, Int>
+    ): List<Task> = when (sort) {
+        HomeSort.SMART -> {
+            val ranked = localScorer.rankTasks(
+                openTasks = list,
+                nowMillis = effectiveNow,
+                today = today,
+                zone = zone,
+                aiFocusRanks = aiFocusRanks
             )
+            if (direction == HomeSortDirection.ASCENDING) ranked else ranked.reversed()
         }
-
-        val completed = matching
-            .filter { it.isCompleted }
-            .sortedByDescending { it.completedAt ?: it.updatedAt }
-
-        return visible to completed
+        HomeSort.DUE_DATE -> list.sortedWith(dueComparator(direction))
+        HomeSort.PRIORITY -> list.sortedWith(
+            compareBy<Task> {
+                if (direction == HomeSortDirection.ASCENDING) it.priority.ordinal else -it.priority.ordinal
+            }.then(dueComparator(HomeSortDirection.ASCENDING))
+        )
     }
 
     /**

@@ -10,6 +10,7 @@ import com.sabihon.todo.domain.model.TaskStatusFilter
 import com.sabihon.todo.domain.repository.CategoryRepository
 import com.sabihon.todo.domain.repository.TaskRepository
 import com.sabihon.todo.domain.usecase.ObserveTasksUseCase
+import com.sabihon.todo.domain.usecase.ToggleCompleteUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,7 +19,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -27,6 +27,7 @@ import javax.inject.Inject
 @HiltViewModel
 class SearchViewModel @Inject constructor(
     private val observeTasksUseCase: ObserveTasksUseCase,
+    private val toggleCompleteUseCase: ToggleCompleteUseCase,
     private val taskRepository: TaskRepository,
     private val categoryRepository: CategoryRepository
 ) : ViewModel() {
@@ -108,18 +109,21 @@ class SearchViewModel @Inject constructor(
         queryFlow.value = ""
     }
 
+    fun toggleComplete(taskId: String, isCompleted: Boolean) {
+        viewModelScope.launch {
+            when (val res = toggleCompleteUseCase(taskId, isCompleted)) {
+                is Result.Error -> _uiState.update { it.copy(error = res.message) }
+                else -> Unit
+            }
+        }
+    }
+
     /** Ticking a sub-task in an expanded search result writes through immediately. */
     fun toggleSubTask(taskId: String, subTaskId: String, isDone: Boolean) {
         viewModelScope.launch {
             try {
-                val stored = taskRepository.observeTaskById(taskId).first()
-                if (stored is Result.Success) {
-                    val task = stored.data
-                    val updated = task.subTasks.map {
-                        if (it.id == subTaskId) it.copy(isDone = isDone) else it
-                    }
-                    taskRepository.updateTask(task.copy(subTasks = updated))
-                }
+                val task = _uiState.value.tasks.find { it.id == taskId } ?: return@launch
+                taskRepository.updateTask(task.withSubTaskChecked(subTaskId, isDone))
             } catch (e: Exception) {
                 android.util.Log.w("SearchVM", "sub-task toggle failed: ${e.message}")
             }
