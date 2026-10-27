@@ -1,5 +1,8 @@
 package com.sabihon.todo.data.ai
 
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.GenerativeBackend
@@ -18,12 +21,14 @@ import com.sabihon.todo.domain.ai.SuggestionContext
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.net.URL
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -38,10 +43,12 @@ import javax.net.ssl.HttpsURLConnection
  *  1. Direct Google AI Studio Gemini API (`aistudio.google.com/apikey`) when a free key is
  *     configured in `Settings > AI` or gitignored `local.properties` (`GEMINI_API_KEY=...`) —
  *     works on Firebase Spark without upgrading to the Blaze billing plan.
- *  2. Firebase AI Logic (`Firebase.ai`) when no direct AI Studio key is set.
+ *  2. Firebase AI Logic (`Firebase.ai`), with automatic fallback to the project's
+ *     `Gemini Developer API` endpoint if debug App Check blocks the first SDK call.
  */
 @Singleton
 class FirebaseAiTaskService @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val aiPreferences: AiPreferenceStore
 ) : AiTaskService {
 
@@ -93,6 +100,7 @@ class FirebaseAiTaskService @Inject constructor(
         val directApiKey = aiPreferences.getGeminiApiKeyNow()
             .trim()
             .ifBlank { BuildConfig.GEMINI_API_KEY.trim() }
+        val projectApiKey = firebaseGoogleApiKey()
 
         var lastError: Exception? = null
         for (candidateId in candidates) {
@@ -101,10 +109,40 @@ class FirebaseAiTaskService @Inject constructor(
                     callGoogleAiStudioRest(
                         apiKey = directApiKey,
                         modelName = candidateId,
-                        prompt = prompt
+                        prompt = prompt,
+                        includeAndroidCertHeaders = false
                     )
                 } else {
-                    getOrBuildModel(candidateId).generateContent(prompt).text
+                    try {
+                        getOrBuildModel(candidateId).generateContent(prompt).text
+                    } catch (sdkErr: Exception) {
+                        val sdkMsg = sdkErr.message.orEmpty().lowercase()
+                        val authOrAppCheckRejected = "401" in sdkMsg ||
+                            "403" in sdkMsg ||
+                            "app check" in sdkMsg ||
+                            "appcheck" in sdkMsg ||
+                            "permission_denied" in sdkMsg ||
+                            "firebaseai" in sdkMsg ||
+                            "firebasevertexai" in sdkMsg
+                        if (authOrAppCheckRejected && !projectApiKey.isNullOrBlank()) {
+                            runCatching {
+                                callGoogleAiStudioRest(
+                                    apiKey = projectApiKey,
+                                    modelName = candidateId,
+                                    prompt = prompt,
+                                    includeAndroidCertHeaders = true
+                                )
+                            }.getOrElse { restErr ->
+                                val restMsg = restErr.message.orEmpty().lowercase()
+                                if ("404" in restMsg || "not_found" in restMsg || "not found" in restMsg) {
+                                    throw restErr
+                                }
+                                throw sdkErr
+                            }
+                        } else {
+                            throw sdkErr
+                        }
+                    }
                 }
                 if (tier == AiModelTier.FLASH) {
                     resolvedFlashModelId = candidateId
@@ -131,14 +169,14 @@ class FirebaseAiTaskService @Inject constructor(
     }
 
     /**
-     * Calls the free-tier Google AI Studio Gemini Developer REST endpoint directly over
-     * HTTPS (`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`)
-     * so Spark-plan developers never need to upgrade Firebase to Blaze.
+     * Calls the free-tier Google AI Studio / Gemini Developer REST endpoint directly over
+     * HTTPS (`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`).
      */
     private suspend fun callGoogleAiStudioRest(
         apiKey: String,
         modelName: String,
-        prompt: String
+        prompt: String,
+        includeAndroidCertHeaders: Boolean = false
     ): String? = withContext(Dispatchers.IO) {
         val endpoint = URL("https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent")
         val bodyJson = json.encodeToString(
@@ -155,6 +193,12 @@ class FirebaseAiTaskService @Inject constructor(
             doOutput = true
             setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             setRequestProperty("x-goog-api-key", apiKey)
+            if (includeAndroidCertHeaders) {
+                setRequestProperty("X-Android-Package", appContext.packageName)
+                signingSha1Hex()?.let { sha1 ->
+                    setRequestProperty("X-Android-Cert", sha1)
+                }
+            }
         }
         try {
             conn.outputStream.use { out ->
@@ -178,6 +222,34 @@ class FirebaseAiTaskService @Inject constructor(
             conn.disconnect()
         }
     }
+
+    private fun firebaseGoogleApiKey(): String? = runCatching {
+        val id = appContext.resources.getIdentifier("google_api_key", "string", appContext.packageName)
+        if (id != 0) appContext.getString(id).trim().takeIf { it.isNotEmpty() } else null
+    }.getOrNull()
+
+    @Suppress("DEPRECATION")
+    private fun signingSha1Hex(): String? = runCatching {
+        val pm = appContext.packageManager
+        val certBytes: ByteArray? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val info = pm.getPackageInfo(appContext.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            val signingInfo = info.signingInfo
+            val sigs = if (signingInfo != null && signingInfo.hasMultipleSigners()) {
+                signingInfo.apkContentsSigners
+            } else {
+                signingInfo?.signingCertificateHistory
+            }
+            sigs?.firstOrNull()?.toByteArray()
+        } else {
+            val info = pm.getPackageInfo(appContext.packageName, PackageManager.GET_SIGNATURES)
+            info.signatures?.firstOrNull()?.toByteArray()
+        }
+        certBytes?.let { bytes ->
+            MessageDigest.getInstance("SHA-1")
+                .digest(bytes)
+                .joinToString("") { "%02X".format(it) }
+        }
+    }.getOrNull()
 
     override suspend fun parseQuickAdd(
         input: String,
