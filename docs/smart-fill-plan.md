@@ -62,9 +62,26 @@ filler ("around", "sometime", "maybe", "later"), resolve relative phrases agains
 given "now", split sub-tasks out of one sentence, treat a clause after a dash or comma as
 the description, and answer `null` rather than guessing.
 
-**What on-device still will not do**, deliberately: split sub-tasks out of prose, or
-understand "the usual". Splitting is a semantic judgement, and a wrong split is worse
-than no split.
+**On-device sub-tasks, from spoken separators.** The parser splits only where it was
+told to:
+
+| Said | Means |
+|---|---|
+| `add subtask` / `add a subtask` | start the next sub-task |
+| `new line` | start the next sub-task |
+| `next` | start the next sub-task — unless it is part of a date |
+
+`buy groceries add subtask milk add subtask eggs` → title *Buy groceries*, sub-tasks
+*milk*, *eggs*. The first segment is the task and is read for dates and priority as
+before; later segments become sub-tasks and are not mined for fields they do not own.
+
+A **comma is deliberately not a separator**: "call mom, friday 5pm" is one task with a
+date, and splitting it would invent a sub-task called "friday 5pm". "next" is guarded the
+same way — "next monday" is a date, not a new item.
+
+**What on-device still will not do**, deliberately: split sub-tasks out of *prose* - "pack,
+print the tickets and charge the camera" - because there is no spoken separator in it.
+That stays the model's job.
 
 ## 5. Files
 

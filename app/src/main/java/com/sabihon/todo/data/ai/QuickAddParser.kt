@@ -33,8 +33,21 @@ class QuickAddParser @Inject constructor() {
         /** Only "in 20 minutes" needs the clock; everything else is calendar arithmetic. */
         now: Instant = Instant.now()
     ): AiTaskDraft {
-        val words = input.trim().split(WHITESPACE).filter { it.isNotEmpty() }
-        if (words.isEmpty()) return AiTaskDraft()
+        // Spoken separators first: everything before the first one is the task, and each
+        // segment after it is a sub-task. Doing this before the readers run keeps a
+        // sub-task from being mined for dates it does not own.
+        val segments = splitSegments(input)
+        val headIndex = segments.indexOfFirst { it.isNotEmpty() }
+        if (headIndex < 0) return AiTaskDraft()
+
+        val words = segments[headIndex]
+        val subTasks = segments
+            .drop(headIndex + 1)
+            .map { it.joinToString(" ").trim().trim(' ', ',', '-', '.', ':', ';') }
+            .filter { it.isNotEmpty() }
+            .map { it.take(MAX_SUBTASK) }
+            .distinctBy { it.lowercase() }
+            .take(MAX_SUB_TASKS)
 
         // A word is "used" once it has been read as something other than the title, so
         // "pay rent friday" keeps "pay rent" and drops "friday" from the title.
@@ -52,7 +65,7 @@ class QuickAddParser @Inject constructor() {
         val time = readTime(words, used, hasDate = date != null)
 
         val dueAt = offset ?: resolveDueAt(date, time, today, zone)
-        val title = remainingTitle(words, used, input)
+        val title = remainingTitle(words, used, words.joinToString(" "))
 
         return AiTaskDraft(
             title = title,
@@ -62,8 +75,65 @@ class QuickAddParser @Inject constructor() {
             repeat = repeat.first,
             repeatDays = repeat.second,
             reminder = reminder.first,
-            reminderLeadMinutes = reminder.second
+            reminderLeadMinutes = reminder.second,
+            subTasks = subTasks
         )
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Spoken separators                                                */
+    /* ---------------------------------------------------------------- */
+
+    /**
+     * Splits a dictated line on the words people actually say to start a new item.
+     *
+     * This is the offline half of sub-task extraction, and it only ever cuts where it was
+     * told to: "add subtask", "new line", "next". A comma is deliberately **not** a
+     * separator - "call mom, friday 5pm" is one task with a date, and splitting it would
+     * invent a sub-task called "friday 5pm".
+     */
+    private fun splitSegments(input: String): List<List<String>> {
+        val tokens = input.trim().split(WHITESPACE).filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return emptyList()
+
+        val segments = mutableListOf<MutableList<String>>(mutableListOf())
+        var index = 0
+        while (index < tokens.size) {
+            val consumed = separatorLengthAt(tokens, index)
+            if (consumed > 0) {
+                segments += mutableListOf<String>()
+                index += consumed
+            } else {
+                segments.last().add(tokens[index])
+                index++
+            }
+        }
+        return segments
+    }
+
+    /**
+     * How many tokens at [index] are a separator, or 0.
+     *
+     * "next" is the risky one: it is an ordinary word in half the dates this app
+     * understands, so it only counts when what follows is not one of them.
+     */
+    private fun separatorLengthAt(tokens: List<String>, index: Int): Int {
+        // Empty string rather than null, so `in` reads the way it looks.
+        fun at(offset: Int): String = tokens.getOrNull(index + offset)?.clean().orEmpty()
+
+        if (at(0) == "add") {
+            var offset = 1
+            if (at(1) == "a") offset = 2
+            if (at(offset) in SUBTASK_WORDS) return offset + 1
+        }
+        if (at(0) == "new" && at(1) == "line") return 2
+        if (at(0) == "new" && at(1) in SUBTASK_WORDS) return 2
+        if (at(0) in NEXT_SEPARATORS) {
+            // "next monday" is a date; "next print the tickets" is a new item.
+            if (at(1).isEmpty()) return 0
+            if (at(1) !in NEXT_FOLLOWERS) return 1
+        }
+        return 0
     }
 
     /* ---------------------------------------------------------------- */
@@ -511,6 +581,20 @@ class QuickAddParser @Inject constructor() {
         val WEEK_UNITS = setOf("week", "weeks")
 
         val REMINDER_WORDS = setOf("remind", "reminder", "alert", "notify")
+
+        /** Ways of saying "sub-task" out loud, punctuation already stripped by clean(). */
+        val SUBTASK_WORDS = setOf("subtask", "subtasks", "sub-task", "sub-tasks")
+
+        val NEXT_SEPARATORS = setOf("next")
+
+        /** After these, "next" is part of a date, not a separator. */
+        val NEXT_FOLLOWERS = setOf(
+            "week", "weeks", "month", "months", "year", "years", "day", "days",
+            "time", "one", "minute", "minutes", "hour", "hours"
+        ) + WEEKDAYS.keys
+
+        const val MAX_SUBTASK = 80
+        const val MAX_SUB_TASKS = 8
         val REMINDER_OFF = setOf("no", "without")
         val DONT_WORDS = setOf("don't", "dont")
 
