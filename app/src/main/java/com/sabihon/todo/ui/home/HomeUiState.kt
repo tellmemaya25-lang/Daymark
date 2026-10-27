@@ -101,6 +101,7 @@ data class HomeUiState(
     val habitNextLabel: String? = null,
 
     // ---- Smart AI prioritization ----
+    val aiCloudEnabled: Boolean = false,
     val showAiConsentSheet: Boolean = false,
     val showPrioritizeSheet: Boolean = false,
     val isPrioritizing: Boolean = false,
@@ -162,6 +163,7 @@ sealed interface HomeAction {
 
     // ---- Smart AI prioritization ----
     data object RequestPrioritize : HomeAction
+    data object EnableCloudAiFromSheet : HomeAction
     data class DecideAiConsent(val enableCloud: Boolean) : HomeAction
     data object DismissAiConsent : HomeAction
     data object RefreshPrioritize : HomeAction

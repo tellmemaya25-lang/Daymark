@@ -5,7 +5,6 @@ import android.content.pm.ApplicationInfo
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.google.firebase.appcheck.FirebaseAppCheck
-import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 import com.sabihon.todo.notifications.NotificationHelper
 import dagger.hilt.android.HiltAndroidApp
@@ -41,26 +40,22 @@ class SabihonApp : Application(), Configuration.Provider {
     }
 
     /**
-     * App Check, installed before anything can make a request.
+     * App Check for release builds via Play Integrity.
      *
-     * Firebase enforces it for AI Logic from 2026-11-02 and it cannot be switched off
-     * afterwards, so a build without this would call the model successfully today and
-     * be blocked on that date. Play Integrity attests release builds; the debug provider
-     * prints a token to Logcat that has to be registered in the Firebase console before
-     * AI calls work on a debug build.
-     *
-     * Wrapped because a failure here must not stop the app from starting - every other
-     * feature still works without App Check.
+     * On local debug builds we intentionally avoid installing an unregistered
+     * `DebugAppCheckProviderFactory`: an unregistered debug secret fails
+     * `exchangeDebugToken` with HTTP 403 and causes `firebase-ai` requests to be
+     * rejected before reaching Gemini whenever the developer has not manually copied a
+     * per-device UUID from Logcat into Firebase Console.
      */
     private fun installAppCheck() {
         try {
             val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-            val factory = if (debuggable) {
-                DebugAppCheckProviderFactory.getInstance()
-            } else {
-                PlayIntegrityAppCheckProviderFactory.getInstance()
+            if (!debuggable) {
+                FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+                    PlayIntegrityAppCheckProviderFactory.getInstance()
+                )
             }
-            FirebaseAppCheck.getInstance().installAppCheckProviderFactory(factory)
         } catch (e: Exception) {
             android.util.Log.e("SabihonApp", "App Check not installed", e)
         }

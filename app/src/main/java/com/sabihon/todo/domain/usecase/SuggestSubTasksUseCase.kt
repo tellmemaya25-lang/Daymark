@@ -302,7 +302,7 @@ class SuggestSubTasksUseCase private constructor(
 
     private companion object {
         const val TAG = "SuggestSteps"
-        const val TIMEOUT_MS = 10_000L
+        const val TIMEOUT_MS = 15_000L
 
         const val MAX_STEPS = 6
         const val MAX_STEP_CHARS = 80

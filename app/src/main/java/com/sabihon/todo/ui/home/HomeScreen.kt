@@ -805,6 +805,8 @@ fun HomeScreen(
                 categoryNames = uiState.categoryNames,
                 selectedChanges = uiState.selectedPriorityChanges,
                 isRefining = uiState.isPrioritizing,
+                cloudEnabled = uiState.aiCloudEnabled,
+                onEnableCloudAi = { viewModel.onAction(HomeAction.EnableCloudAiFromSheet) },
                 onToggleProposal = { taskId, checked ->
                     viewModel.onAction(HomeAction.TogglePriorityProposal(taskId, checked))
                 },

@@ -109,6 +109,15 @@ class HomeViewModel @Inject constructor(
         }
         startObserving()
         observeAvatar()
+        observeAiCloudEnabled()
+    }
+
+    private fun observeAiCloudEnabled() {
+        viewModelScope.launch {
+            aiPreferences.cloudEnabled.collectLatest { enabled ->
+                _uiState.update { it.copy(aiCloudEnabled = enabled) }
+            }
+        }
     }
 
     /**
@@ -438,6 +447,7 @@ class HomeViewModel @Inject constructor(
                 }
             }
             HomeAction.RequestPrioritize -> onRequestPrioritize()
+            HomeAction.EnableCloudAiFromSheet -> onEnableCloudAiFromSheet()
             is HomeAction.DecideAiConsent -> onDecideAiConsent(action.enableCloud)
             HomeAction.DismissAiConsent -> {
                 pendingAiIntent = null
@@ -492,6 +502,15 @@ class HomeViewModel @Inject constructor(
             } else {
                 suggestSteps(taskId)
             }
+        }
+    }
+
+    private fun onEnableCloudAiFromSheet() {
+        viewModelScope.launch {
+            aiPreferences.setCloudEnabled(true)
+            aiSnapshotCache.clearAll()
+            _uiState.update { it.copy(aiCloudEnabled = true) }
+            runPrioritization(forceRefresh = true)
         }
     }
 

@@ -280,7 +280,7 @@ class SuggestNextTasksUseCase private constructor(
 
     private companion object {
         const val TAG = "SuggestNext"
-        const val TIMEOUT_MS = 12_000L
+        const val TIMEOUT_MS = 15_000L
 
         const val MAX_SUGGESTIONS = 3
         const val MAX_TITLE_CHARS = 60
