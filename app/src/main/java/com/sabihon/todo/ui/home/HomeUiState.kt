@@ -2,6 +2,7 @@ package com.sabihon.todo.ui.home
 
 import com.sabihon.todo.domain.ai.PrioritizationPlan
 import com.sabihon.todo.domain.model.Priority
+import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.usecase.DashboardCounts
 import java.time.LocalDate
@@ -116,7 +117,13 @@ data class HomeUiState(
     val suggestedSteps: List<String> = emptyList(),
     val isSuggestingSteps: Boolean = false,
     /** Why there are none, when that is worth saying. */
-    val suggestedStepsMessage: String? = null
+    val suggestedStepsMessage: String? = null,
+
+    // ---- suggested next tasks (Phase 4) ----
+    val nextTaskSuggestions: List<SuggestedTaskCandidate> = emptyList(),
+    val isSuggestingNext: Boolean = false,
+    /** Collapsible card state; remembered per screen lifetime. */
+    val suggestionsExpanded: Boolean = true
 )
 
 sealed interface HomeAction {
@@ -138,6 +145,15 @@ sealed interface HomeAction {
     data class AcceptSuggestedStep(val taskId: String, val step: String) : HomeAction
 
     object DismissSuggestedSteps : HomeAction
+
+    /** Asks for next-task suggestions (the card's Refresh, and the first load). */
+    object RequestSuggestions : HomeAction
+
+    data class AcceptSuggestion(val suggestion: SuggestedTaskCandidate) : HomeAction
+
+    data class DismissSuggestion(val suggestion: SuggestedTaskCandidate) : HomeAction
+
+    object ToggleSuggestionsExpanded : HomeAction
     data class ToggleSubTask(val taskId: String, val subTaskId: String, val isDone: Boolean) : HomeAction
     data class SetFilter(val filter: HomeFilter) : HomeAction
     data class SetSort(val sort: HomeSort) : HomeAction

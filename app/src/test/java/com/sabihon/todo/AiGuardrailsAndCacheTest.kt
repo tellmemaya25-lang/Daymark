@@ -256,6 +256,18 @@ internal class FakeAiPreferenceStore(
     override suspend fun getDailyQuota(uid: String, epochDay: Long): DailyAiQuotaSnapshot =
         quotas["$uid:$epochDay"] ?: DailyAiQuotaSnapshot(epochDay = epochDay, calls = 0, estimatedTokens = 0)
 
+    private val dismissed = linkedSetOf<String>()
+
+    override suspend fun getDismissedSuggestionIds(): Set<String> = dismissed.toSet()
+
+    override suspend fun dismissSuggestion(id: String) {
+        dismissed += id
+    }
+
+    override suspend fun clearDismissedSuggestions() {
+        dismissed.clear()
+    }
+
     override suspend fun recordCloudUsage(uid: String, epochDay: Long, estimatedTokens: Int) {
         val key = "$uid:$epochDay"
         val prev = getDailyQuota(uid, epochDay)

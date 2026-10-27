@@ -45,4 +45,17 @@ interface AiTaskService {
         existingSubTasks: List<String>
     ): Result<List<String>> =
         Result.Error(UnsupportedOperationException("Step suggestions not supported by this service"))
+
+    /**
+     * Suggests up to three things worth doing next.
+     *
+     * @param context only titles and list names - see [SuggestionContext].
+     * @return raw candidates. Whitelisting the list id, dropping anything the user
+     *   already has open or has muted, and capping the count are the use case's job, so
+     *   the local heuristics and the cloud answer are judged by identical rules.
+     */
+    suspend fun suggestNextTasks(
+        context: SuggestionContext
+    ): Result<List<SuggestedTaskCandidate>> =
+        Result.Error(UnsupportedOperationException("Next-task suggestions not supported by this service"))
 }

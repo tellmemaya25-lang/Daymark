@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.ui.components.CategoryCard
 import com.sabihon.todo.core.ui.components.EmptyState
+import com.sabihon.todo.ui.home.SuggestedTasksCard
 import com.sabihon.todo.core.ui.components.SabihonFab
 import com.sabihon.todo.core.ui.components.TaskRow
 import com.sabihon.todo.core.ui.theme.CategoryPaletteHex
@@ -281,6 +282,23 @@ fun CategoryDetailScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
+                // Inside one project, the card only offers work for that project.
+                if (uiState.suggestions.isNotEmpty() || uiState.isSuggesting) {
+                    item {
+                        SuggestedTasksCard(
+                            suggestions = uiState.suggestions,
+                            expanded = uiState.suggestionsExpanded,
+                            isRefreshing = uiState.isSuggesting,
+                            onToggleExpanded = { viewModel.toggleSuggestionsExpanded() },
+                            onAccept = { viewModel.acceptSuggestion(it) },
+                            onDismiss = { viewModel.dismissSuggestion(it) },
+                            onRefresh = { viewModel.loadSuggestions(force = true) },
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            title = "Suggested for this project"
+                        )
+                    }
+                }
+
                 if (uiState.tasks.isEmpty()) {
                     item {
                         EmptyState(title = "No tasks in this category", description = "Add tasks to ${uiState.category?.name ?: "this category"}")

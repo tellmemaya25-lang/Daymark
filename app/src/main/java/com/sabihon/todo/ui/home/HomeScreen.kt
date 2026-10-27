@@ -309,6 +309,30 @@ fun HomeScreen(
                     }
                 }
 
+                // Suggestions sit directly under the strip: near enough to be the first
+                // thing read when the list is nearly clear, and gone entirely once the
+                // user collapses them.
+                if (uiState.nextTaskSuggestions.isNotEmpty() || uiState.isSuggestingNext) {
+                    item {
+                        SuggestedTasksCard(
+                            suggestions = uiState.nextTaskSuggestions,
+                            expanded = uiState.suggestionsExpanded,
+                            isRefreshing = uiState.isSuggestingNext,
+                            onToggleExpanded = {
+                                viewModel.onAction(HomeAction.ToggleSuggestionsExpanded)
+                            },
+                            onAccept = { suggestion ->
+                                viewModel.onAction(HomeAction.AcceptSuggestion(suggestion))
+                            },
+                            onDismiss = { suggestion ->
+                                viewModel.onAction(HomeAction.DismissSuggestion(suggestion))
+                            },
+                            onRefresh = { viewModel.onAction(HomeAction.RequestSuggestions) },
+                            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp)
+                        )
+                    }
+                }
+
                 // Today / Upcoming / All tasks used to live here. They are gone: with a
                 // sticky week strip and a day swipe, the strip is the browser, and two
                 // ways to change what you are looking at was one too many. "All tasks"

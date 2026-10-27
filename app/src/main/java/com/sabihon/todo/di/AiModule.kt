@@ -2,6 +2,8 @@ package com.sabihon.todo.di
 
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.datastore.AiPreferences
+import com.sabihon.todo.core.telemetry.AiTelemetry
+import com.sabihon.todo.core.telemetry.FirebaseAiTelemetry
 import com.sabihon.todo.data.ai.FirebaseAiTaskService
 import com.sabihon.todo.domain.ai.AiTaskService
 import dagger.Binds
@@ -28,4 +30,8 @@ abstract class AiModule {
     @Binds
     @Singleton
     abstract fun bindAiPreferenceStore(impl: AiPreferences): AiPreferenceStore
+
+    @Binds
+    @Singleton
+    abstract fun bindAiTelemetry(impl: FirebaseAiTelemetry): AiTelemetry
 }

@@ -17,7 +17,10 @@ enum class AiFeature {
      * per-feature single-flight lock and cooldown are what stop "Suggest steps" being
      * tapped five times in a row into five parallel calls.
      */
-    SUB_TASKS
+    SUB_TASKS,
+
+    /** Next-task suggestions, shown on Home and inside a project. */
+    SUGGEST_NEXT
 }
 
 /**
