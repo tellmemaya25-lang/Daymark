@@ -12,7 +12,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -93,7 +92,6 @@ fun DockedWeeklyCalendarBar(
     onExpandMonthCalendar: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val surfaces = LocalDaymarkSurfaces.current
     val haptics = LocalHapticFeedback.current
 
     var dragX by remember { mutableFloatStateOf(0f) }
@@ -125,15 +123,11 @@ fun DockedWeeklyCalendarBar(
                 translationY = visualOffsetY
             }
             .shadow(
-                elevation = 8.dp,
+                elevation = 5.dp,
                 shape = dockShape,
-                ambientColor = Color.Black.copy(alpha = 0.20f),
-                spotColor = Color.Black.copy(alpha = 0.20f)
-            )
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                shape = dockShape
+                clip = false,
+                ambientColor = Color.Black.copy(alpha = 0.15f),
+                spotColor = Color.Black.copy(alpha = 0.15f)
             )
             .pointerInput(selectedDate, isDockedAtBottom) {
                 if (!isDockedAtBottom) return@pointerInput
@@ -164,15 +158,15 @@ fun DockedWeeklyCalendarBar(
                             onExpandMonthCalendar()
                         } else if (abs(dx) >= abs(dy)) {
                             when {
-                                // Swipe left -> move forward in the calendar (+1 week)
+                                // Swipe left -> move forward in the calendar (+1 day)
                                 dx < -horizontalThreshold -> {
                                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onShiftDays(7L)
+                                    onShiftDays(1L)
                                 }
-                                // Swipe right -> move backward in the calendar (-1 week)
+                                // Swipe right -> move backward in the calendar (-1 day)
                                 dx > horizontalThreshold -> {
                                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onShiftDays(-7L)
+                                    onShiftDays(-1L)
                                 }
                             }
                         }
@@ -186,8 +180,9 @@ fun DockedWeeklyCalendarBar(
                 }
             },
         shape = dockShape,
-        color = surfaces.card,
-        tonalElevation = 0.dp
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        shadowElevation = 5.dp
     ) {
         Column(
             modifier = Modifier
