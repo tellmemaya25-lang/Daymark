@@ -354,7 +354,7 @@ class PrioritizeTasksUseCase internal constructor(
                 "api_not_activated" in lower ||
                 "is disabled" in lower ||
                 "not been enabled" in lower ->
-                "No Blaze plan needed: get a free key at aistudio.google.com/apikey, paste it in Settings > AI > Gemini API key, then tap ↻."
+                "Enable 'Gemini Developer API' on project sabihon-todo in Firebase Console > AI Logic, or paste a free key in Settings > AI > Gemini API key, then tap ↻."
             "app check" in lower || "appcheck" in lower || "attestation" in lower ->
                 "App Check debug token needed — go to Settings > AI > tap 'App Check debug token' to copy it, add it in Firebase Console > App Check > Apps > Manage debug tokens, then tap ↻."
             "api_key_service_blocked" in lower ||
