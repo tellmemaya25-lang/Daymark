@@ -16,9 +16,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Dedicated DataStore file for AI settings, per-user daily quota counters, and
- * dismissed suggestion fingerprints. Kept separate from `sabihon_prefs` and
- * `daymark_onboarding` so only one DataStore instance ever owns this file in process.
+ * Dedicated DataStore file for AI settings and per-user daily quota counters.
+ * Kept separate from `sabihon_prefs` and `daymark_onboarding` so only one
+ * DataStore instance ever owns this file in the process.
  */
 private val Context.aiDataStore by preferencesDataStore(name = "daymark_ai_prefs")
 
@@ -29,8 +29,8 @@ data class DailyAiQuotaSnapshot(
 )
 
 /**
- * Seam for AI preferences, quota persistence, and suggestion dismissal state so
- * pure-JVM tests can supply an in-memory implementation without an Android [Context].
+ * Seam for AI preferences and quota persistence so pure-JVM tests can supply an
+ * in-memory implementation without an Android [Context].
  */
 interface AiPreferenceStore {
     val cloudEnabled: Flow<Boolean>
@@ -52,12 +52,18 @@ interface AiPreferenceStore {
 
     suspend fun recordCloudUsage(uid: String, epochDay: Long, estimatedTokens: Int)
 
-    /** Dismissed `suggestionId` hashes for [uid] so rejected next-task ideas never reappear. */
-    suspend fun getDismissedSuggestionIds(uid: String?): Set<String> = emptySet()
+    /**
+     * Ids of suggestions the user has muted with `×`.
+     *
+     * Defaults are provided so existing fakes keep compiling: a store that cannot
+     * remember dismissals is a store whose suggestions come back, and that is the
+     * failure mode this whole set of methods exists to prevent.
+     */
+    suspend fun getDismissedSuggestionIds(): Set<String> = emptySet()
 
-    suspend fun dismissSuggestion(uid: String?, suggestionId: String) = Unit
+    suspend fun dismissSuggestion(id: String) = Unit
 
-    suspend fun clearDismissedSuggestions(uid: String?) = Unit
+    suspend fun clearDismissedSuggestions() = Unit
 }
 
 @Singleton
@@ -67,11 +73,11 @@ class AiPreferences @Inject constructor(
 
     private val cloudEnabledKey = booleanPreferencesKey("ai_cloud_enabled")
     private val consentPromptedKey = booleanPreferencesKey("ai_consent_prompted")
+    private val dismissedSuggestionsKey = stringSetPreferencesKey("ai_dismissed_suggestions")
 
     private fun dayKey(uid: String) = longPreferencesKey("ai_quota_${sanitizeKey(uid)}_day")
     private fun callsKey(uid: String) = intPreferencesKey("ai_quota_${sanitizeKey(uid)}_calls")
     private fun tokensKey(uid: String) = intPreferencesKey("ai_quota_${sanitizeKey(uid)}_tokens")
-    private fun dismissedKey(uid: String) = stringSetPreferencesKey("ai_dismissed_${sanitizeKey(uid)}")
 
     override val cloudEnabled: Flow<Boolean> = context.aiDataStore.data.map { prefs ->
         prefs[cloudEnabledKey] ?: false
@@ -133,31 +139,24 @@ class AiPreferences @Inject constructor(
         }
     }
 
-    override suspend fun getDismissedSuggestionIds(uid: String?): Set<String> {
-        val safeUid = uid?.takeIf { it.isNotBlank() } ?: "anon"
+    override suspend fun getDismissedSuggestionIds(): Set<String> {
         val prefs = context.aiDataStore.data.first()
-        return prefs[dismissedKey(safeUid)] ?: emptySet()
+        return prefs[dismissedSuggestionsKey]?.toSet() ?: emptySet()
     }
 
-    override suspend fun dismissSuggestion(uid: String?, suggestionId: String) {
-        if (suggestionId.isBlank()) return
-        val safeUid = uid?.takeIf { it.isNotBlank() } ?: "anon"
-        val key = dismissedKey(safeUid)
+    override suspend fun dismissSuggestion(id: String) {
+        val safeId = id.trim().take(MAX_DISMISSED_ID_CHARS)
+        if (safeId.isEmpty()) return
         context.aiDataStore.edit { prefs ->
-            val current = prefs[key].orEmpty().toList()
-            val updated = (current + suggestionId)
-                .distinct()
-                .takeLast(MAX_DISMISSED_SUGGESTIONS)
-                .toSet()
-            prefs[key] = updated
+            val current = prefs[dismissedSuggestionsKey] ?: emptySet()
+            // Capped: the set is a mute list, not a history. Anything past the cap is
+            // old enough that the user has forgotten what it was anyway.
+            prefs[dismissedSuggestionsKey] = (current + safeId).toList().takeLast(MAX_DISMISSED).toSet()
         }
     }
 
-    override suspend fun clearDismissedSuggestions(uid: String?) {
-        val safeUid = uid?.takeIf { it.isNotBlank() } ?: "anon"
-        context.aiDataStore.edit { prefs ->
-            prefs.remove(dismissedKey(safeUid))
-        }
+    override suspend fun clearDismissedSuggestions() {
+        context.aiDataStore.edit { prefs -> prefs.remove(dismissedSuggestionsKey) }
     }
 
     private fun sanitizeKey(uid: String): String =
@@ -166,6 +165,7 @@ class AiPreferences @Inject constructor(
     companion object {
         const val MAX_DAILY_CLOUD_CALLS = 25
         const val MAX_DAILY_TOKENS = 40_000
-        const val MAX_DISMISSED_SUGGESTIONS = 100
+        private const val MAX_DISMISSED = 200
+        private const val MAX_DISMISSED_ID_CHARS = 64
     }
 }

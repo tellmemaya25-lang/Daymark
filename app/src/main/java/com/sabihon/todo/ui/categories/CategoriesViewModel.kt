@@ -2,9 +2,9 @@ package com.sabihon.todo.ui.categories
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.firebase.auth.FirebaseAuth
 import com.sabihon.todo.core.datastore.AiPreferenceStore
-import com.sabihon.todo.core.telemetry.AiTelemetryLogger
+import com.sabihon.todo.core.telemetry.AiTelemetry
+import com.sabihon.todo.core.telemetry.FirebaseAiTelemetry
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
 import com.sabihon.todo.domain.model.Category
@@ -14,6 +14,7 @@ import com.sabihon.todo.domain.repository.CategoryRepository
 import com.sabihon.todo.domain.repository.TaskRepository
 import com.sabihon.todo.domain.usecase.AddTaskUseCase
 import com.sabihon.todo.domain.usecase.SuggestNextTasksUseCase
+import com.google.firebase.auth.FirebaseAuth
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -100,13 +101,100 @@ class CategoryDetailViewModel @Inject constructor(
     private val suggestNextTasksUseCase: SuggestNextTasksUseCase,
     private val addTaskUseCase: AddTaskUseCase,
     private val aiPreferences: AiPreferenceStore,
-    private val telemetry: AiTelemetryLogger,
+    private val telemetry: AiTelemetry,
     private val auth: FirebaseAuth
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(CategoryDetailUiState())
     val uiState: StateFlow<CategoryDetailUiState> = _uiState.asStateFlow()
 
-    private var activeCategoryId: String? = null
+    private var suggestionsRequested = false
+
+    /**
+     * Suggestions for this project only, asked for once per visit.
+     *
+     * Scoped to the project on purpose: inside a list, "what next?" means what next
+     * *here*, and a suggestion belonging to another list would be an invitation to
+     * leave the screen the user just opened.
+     */
+    fun loadSuggestions(force: Boolean = false) {
+        if (_uiState.value.isSuggesting) return
+        if (suggestionsRequested && !force) return
+        suggestionsRequested = true
+        _uiState.update { it.copy(isSuggesting = true) }
+
+        viewModelScope.launch {
+            try {
+                val state = _uiState.value
+                val result = suggestNextTasksUseCase(
+                    openTasks = state.tasks.filter { !it.isCompleted },
+                    recentCompleted = state.tasks.filter { it.isCompleted },
+                    categories = listOfNotNull(state.category),
+                    uid = auth.currentUser?.uid
+                )
+                // A candidate for another project is dropped rather than re-homed: the
+                // card lives inside one project and must not suggest work elsewhere.
+                val scoped = result.candidates.filter {
+                    it.categoryId == null || it.categoryId == state.category?.id
+                }
+                _uiState.update { it.copy(isSuggesting = false, suggestions = scoped) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isSuggesting = false) }
+            }
+        }
+    }
+
+    fun acceptSuggestion(suggestion: SuggestedTaskCandidate) {
+        val categoryId = _uiState.value.category?.id
+        viewModelScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                addTaskUseCase(
+                    Task(
+                        title = suggestion.title,
+                        categoryId = suggestion.categoryId ?: categoryId,
+                        priority = suggestion.priority,
+                        dueAt = suggestion.dueOffsetHours?.let { hours ->
+                            now + hours.toLong() * 60L * 60L * 1000L
+                        }
+                    )
+                )
+                telemetry.logOutcome(
+                    FirebaseAiTelemetry.FEATURE_SUGGEST_NEXT,
+                    FirebaseAiTelemetry.ACTION_ACCEPTED
+                )
+            } catch (e: Exception) {
+                android.util.Log.w("CategoryDetailVM", "suggestion add failed: ${e.message}")
+            }
+            _uiState.update { state ->
+                state.copy(suggestions = state.suggestions.filterNot {
+                    it.suggestionId == suggestion.suggestionId
+                })
+            }
+        }
+    }
+
+    fun dismissSuggestion(suggestion: SuggestedTaskCandidate) {
+        viewModelScope.launch {
+            try {
+                aiPreferences.dismissSuggestion(suggestion.suggestionId)
+                telemetry.logOutcome(
+                    FirebaseAiTelemetry.FEATURE_SUGGEST_NEXT,
+                    FirebaseAiTelemetry.ACTION_DISMISSED
+                )
+            } catch (e: Exception) {
+                android.util.Log.w("CategoryDetailVM", "suggestion dismiss failed: ${e.message}")
+            }
+            _uiState.update { state ->
+                state.copy(suggestions = state.suggestions.filterNot {
+                    it.suggestionId == suggestion.suggestionId
+                })
+            }
+        }
+    }
+
+    fun toggleSuggestionsExpanded() {
+        _uiState.update { it.copy(suggestionsExpanded = !it.suggestionsExpanded) }
+    }
 
     /** Ticking a sub-task in the expanded card writes through immediately. */
     fun toggleSubTask(taskId: String, subTaskId: String, isDone: Boolean) {
@@ -127,7 +215,6 @@ class CategoryDetailViewModel @Inject constructor(
     }
 
     fun loadCategory(categoryId: String) {
-        activeCategoryId = categoryId
         viewModelScope.launch {
             combine(
                 categoryRepository.observeCategories(),
@@ -136,126 +223,10 @@ class CategoryDetailViewModel @Inject constructor(
                 .collectLatest { (catRes, taskRes) ->
                     if (catRes is Result.Success && taskRes is Result.Success) {
                         val cat = catRes.data.find { it.id == categoryId }
-                        val filteredTasks = taskRes.data.filter { !it.isDeleted }
-                        _uiState.update { state ->
-                            state.copy(
-                                isLoading = false,
-                                category = cat,
-                                allCategories = catRes.data,
-                                tasks = filteredTasks,
-                                suggestedTasks = state.suggestedTasks.filterNot { cand ->
-                                    filteredTasks.any { !it.isCompleted && it.title.equals(cand.title, ignoreCase = true) }
-                                }
-                            )
-                        }
+                        _uiState.update { it.copy(isLoading = false, category = cat, tasks = taskRes.data) }
+                        loadSuggestions()
                     }
                 }
         }
-    }
-
-    fun requestSuggestions(forceRefresh: Boolean = false) {
-        if (_uiState.value.isSuggesting) return
-        viewModelScope.launch {
-            if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
-                _uiState.update { it.copy(showAiConsentSheet = true) }
-            } else {
-                runSuggestions(forceRefresh = forceRefresh)
-            }
-        }
-    }
-
-    fun onAiConsentDecided(enableCloud: Boolean) {
-        viewModelScope.launch {
-            aiPreferences.setCloudEnabled(enableCloud)
-            _uiState.update { it.copy(showAiConsentSheet = false) }
-            runSuggestions(forceRefresh = false)
-        }
-    }
-
-    fun dismissAiConsent() {
-        _uiState.update { it.copy(showAiConsentSheet = false) }
-    }
-
-    private fun runSuggestions(forceRefresh: Boolean) {
-        val catId = activeCategoryId ?: _uiState.value.category?.id
-        _uiState.update {
-            it.copy(
-                showSuggestionsCard = true,
-                isSuggesting = true
-            )
-        }
-        viewModelScope.launch {
-            val snapshot = _uiState.value
-            val categories = snapshot.allCategories.ifEmpty {
-                listOfNotNull(snapshot.category)
-            }
-            val result = suggestNextTasksUseCase(
-                uid = auth.currentUser?.uid,
-                allTasks = snapshot.tasks,
-                categories = categories,
-                targetCategoryId = catId,
-                forceRefresh = forceRefresh
-            )
-            _uiState.update {
-                it.copy(
-                    isSuggesting = false,
-                    suggestedTasks = result.candidates,
-                    suggestionsSource = result.source
-                )
-            }
-        }
-    }
-
-    fun closeSuggestions() {
-        _uiState.update { it.copy(showSuggestionsCard = false, isSuggesting = false) }
-    }
-
-    fun quickAddSuggestedTask(candidate: SuggestedTaskCandidate) {
-        viewModelScope.launch {
-            val catId = candidate.categoryId ?: activeCategoryId ?: _uiState.value.category?.id
-            val newTask = Task(
-                title = candidate.title,
-                description = candidate.description.orEmpty(),
-                categoryId = catId,
-                priority = candidate.priority,
-                dueAt = candidate.dueAt
-            )
-            when (val res = addTaskUseCase(newTask)) {
-                is Result.Success -> {
-                    telemetry.logSuggestionAction(kind = "next_task", action = "added", count = 1)
-                    _uiState.update { state ->
-                        state.copy(
-                            suggestedTasks = state.suggestedTasks.filterNot {
-                                it.suggestionId == candidate.suggestionId
-                            },
-                            toastMessage = "Added \"${candidate.title}\""
-                        )
-                    }
-                }
-                is Result.Error -> {
-                    _uiState.update {
-                        it.copy(toastMessage = res.message ?: "Couldn't add suggested task")
-                    }
-                }
-                Result.Loading -> Unit
-            }
-        }
-    }
-
-    fun dismissSuggestedTask(suggestionId: String) {
-        viewModelScope.launch {
-            suggestNextTasksUseCase.dismiss(auth.currentUser?.uid, suggestionId)
-            _uiState.update { state ->
-                state.copy(
-                    suggestedTasks = state.suggestedTasks.filterNot {
-                        it.suggestionId == suggestionId
-                    }
-                )
-            }
-        }
-    }
-
-    fun clearToast() {
-        _uiState.update { it.copy(toastMessage = null) }
     }
 }

@@ -20,7 +20,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Delete
@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -40,6 +39,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +73,17 @@ import com.sabihon.todo.core.ui.theme.CategoryPaletteHex
 fun ProjectsScreen(
     onProjectClick: (String) -> Unit = {},
     onProfileClick: () -> Unit = {},
+    /** Opens the flat list of every task, whatever project it belongs to. */
+    onAllTasksClick: () -> Unit = {},
+    /**
+     * Incremented by the tab host each time the bottom bar's "+" is tapped while this
+     * page is showing. A plain Int rather than a lambda because the bar lives above the
+     * pager, and a counter is all the state this needs: every value but the first one
+     * means "open the dialog".
+     */
+    addRequest: Int = 0,
+    /** Tells the tab host the request has been dealt with, so it is not replayed. */
+    onAddRequestHandled: () -> Unit = {},
     viewModel: ProjectsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -81,6 +92,16 @@ fun ProjectsScreen(
     var actionProject by remember { mutableStateOf<Category?>(null) }
     var confirmDelete by remember { mutableStateOf<Category?>(null) }
     val sheetState = rememberModalBottomSheetState()
+
+    // key(addRequest) restarts the effect on every tap; the guard keeps the very first
+    // composition from opening a dialog nobody asked for, and the callback clears the
+    // request so returning to this page later does not replay it.
+    LaunchedEffect(addRequest) {
+        if (addRequest > 0) {
+            viewModel.showAddDialog(true)
+            onAddRequestHandled()
+        }
+    }
 
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         if (uiState.isLoading) {
@@ -106,19 +127,9 @@ fun ProjectsScreen(
                         avatarInitials = uiState.userInitials,
                         avatarUrl = uiState.userPhotoUrl,
                         onAvatarClick = onProfileClick,
-                        actions = {
-                            IconButton(
-                                onClick = { viewModel.showAddDialog(true) },
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Icon(
-                                    Icons.Filled.Add,
-                                    contentDescription = "New project",
-                                    tint = MaterialTheme.colorScheme.onBackground,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        },
+                        // No "+" up here any more: on this tab the bottom bar's "+"
+                        // creates a project, and two buttons for one job is one too
+                        // many. The header is the brand mark and the account only.
                         modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp)
                     )
                 }
@@ -155,6 +166,11 @@ fun ProjectsScreen(
                         Spacer(Modifier.height(18.dp))
                     }
                 }
+
+                // "All tasks" used to be a tab on Home. It lives here now, because a
+                // strip of tabs was too much furniture for one list, and this screen is
+                // already the place you come to look at everything at once.
+                item { AllTasksRow(onClick = onAllTasksClick) }
 
                 if (uiState.projects.isEmpty()) {
                     item { EmptyProjects() }
@@ -267,6 +283,72 @@ private fun ProjectActionRow(
 }
 
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * Flat "everything" entry – same metrics as a project row so the list reads as one
+ * column, but with a neutral tile instead of a tinted project colour: it is not a
+ * project, and it should not pretend to be one.
+ */
+@Composable
+private fun AllTasksRow(onClick: () -> Unit) {
+    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onClick)
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.List,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Spacer(Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "All tasks",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = "Everything, across every project",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+        )
+    }
+}
+
 @Composable
 private fun ProjectRow(
     project: Category,
@@ -373,7 +455,7 @@ private fun EmptyProjects() {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "Add one with the + up top to group your tasks.",
+            text = "Tap + to create one and group your tasks.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

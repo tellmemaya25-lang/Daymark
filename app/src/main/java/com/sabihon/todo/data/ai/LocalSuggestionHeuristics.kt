@@ -3,299 +3,169 @@ package com.sabihon.todo.data.ai
 import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
+import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.Task
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Rung 0 offline suggestion heuristics (`docs/02-daymark-ai-system-design.md` §7 & §11.1).
+ * Suggestions without the network (`docs/ai-task-prioritization-and-suggestions-plan.md`
+ * Phase 4).
  *
- * Runs in `< 2 ms` with `0` tokens whenever Cloud AI is disabled, the device is offline,
- * or daily quota / circuit breaker is active.
+ * Unlike the step splitter, this layer *does* invent tasks - that is the whole point of
+ * a "what next?" card. So every rule here is grounded in something already in the
+ * database rather than in a guess about the user's life, and each one is narrow enough
+ * to state in a sentence:
+ *
+ *  - **Slipped:** a task that was due more than two days ago and is still open. The
+ *    suggestion is not "do it now" - it is "decide about it", because work this stale
+ *    needs a new date more than another reminder.
+ *  - **Streak:** a habit that has been going for at least three days and is not open
+ *    today. Breaking a streak costs more than a day's work, and the app already knows
+ *    the number.
+ *  - **Neglected list:** a project where the user has finished at least three things
+ *    and has nothing open. Something is clearly happening there; the next step is worth
+ *    naming.
+ *
+ * Ordered by how much the user loses by ignoring them: streak first, then the list they
+ * are actively working, then the thing that slipped.
  */
 @Singleton
 class LocalSuggestionHeuristics @Inject constructor() {
 
-    /**
-     * Generates 3–5 concrete checklist steps offline from compound phrases or domain
-     * intent templates, deduplicated against [existingSubTasks].
-     */
-    fun suggestSubTasks(
-        title: String,
-        description: String = "",
-        existingSubTasks: List<String> = emptyList()
-    ): List<String> {
-        val cleanTitle = title.trim()
-        if (cleanTitle.length < 3) return emptyList()
+    fun suggest(
+        openTasks: List<Task>,
+        recentCompleted: List<Task>,
+        categories: List<Category>,
+        today: LocalDate = LocalDate.now(),
+        zone: ZoneId = ZoneId.systemDefault(),
+        limit: Int = MAX_SUGGESTIONS
+    ): List<SuggestedTaskCandidate> {
+        val open = openTasks.filter { !it.isCompleted && !it.isDeleted }
+        val openTitles = open.mapTo(mutableSetOf()) { it.title.normalized() }
 
-        val existingLower = existingSubTasks.map { it.trim().lowercase() }.toSet()
-        val combinedLower = "$cleanTitle ${description.trim()}".lowercase()
+        val candidates = mutableListOf<SuggestedTaskCandidate>()
 
-        // 1. If the title/description explicitly lists comma/conjunction clauses, split them first.
-        val explicitParts = extractExplicitClauses(cleanTitle, description)
-        val templateSteps = when {
-            explicitParts.size >= 2 -> explicitParts
-            matchesAny(combinedLower, "slide", "deck", "presentation", "pitch", "demo") -> listOf(
-                "Outline key talking points and flow",
-                "Draft core slides and visuals",
-                "Run a timed rehearsal",
-                "Export PDF backup and share link"
-            )
-            matchesAny(combinedLower, "exam", "quiz", "test", "study", "lecture", "midterm", "final") -> listOf(
-                "Review syllabus topics and weak areas",
-                "Summarize key formulas and concepts",
-                "Work through practice problems",
-                "Do a 15-minute recall check"
-            )
-            matchesAny(combinedLower, "report", "essay", "paper", "proposal", "doc", "spec", "thesis") -> listOf(
-                "Outline sections and main takeaway",
-                "Gather supporting data and references",
-                "Write first complete draft",
-                "Proofread and format final version"
-            )
-            matchesAny(combinedLower, "trip", "travel", "flight", "pack", "hotel", "vacation") -> listOf(
-                "Confirm bookings and travel times",
-                "Pack essentials and chargers",
-                "Download tickets and offline maps",
-                "Set departure reminder"
-            )
-            matchesAny(combinedLower, "meeting", "retro", "standup", "sync", "interview", "call") -> listOf(
-                "Prepare agenda and top questions",
-                "Confirm time and meeting link",
-                "Capture decisions and action items",
-                "Send brief follow-up summary"
-            )
-            matchesAny(combinedLower, "bill", "invoice", "tax", "budget", "rent", "pay", "reimburse") -> listOf(
-                "Verify amount due and account details",
-                "Submit payment or transfer",
-                "Save receipt or confirmation number"
-            )
-            matchesAny(combinedLower, "bug", "deploy", "release", "refactor", "pr", "feature", "code") -> listOf(
-                "Reproduce issue and confirm scope",
-                "Implement fix and edge-case checks",
-                "Run unit tests and verify build",
-                "Open PR with concise summary"
-            )
-            matchesAny(combinedLower, "grocery", "groceries", "shop", "market", "buy", "supplies") -> listOf(
-                "Check pantry and list missing items",
-                "Group items by store section",
-                "Pick up essentials and put away"
-            )
-            matchesAny(combinedLower, "clean", "organize", "declutter", "laundry", "tidy", "move") -> listOf(
-                "Clear surfaces and sort items to keep",
-                "Wipe down and organize main area",
-                "Put away or donate remaining items"
-            )
-            else -> listOf(
-                "Clarify the goal and first small step",
-                "Complete the main part of $cleanTitle".take(MAX_STEP_CHARS),
-                "Review details and wrap up"
-            )
-        }
+        streakSuggestions(open, today).forEach { candidates += it }
+        neglectedListSuggestions(open, recentCompleted, categories).forEach { candidates += it }
+        slippedSuggestions(open, today, zone).forEach { candidates += it }
 
-        return templateSteps
-            .map { sentenceCase(it.trim()).take(MAX_STEP_CHARS) }
-            .filter { it.length >= 3 && it.lowercase() != cleanTitle.lowercase() }
-            .filter { it.lowercase() !in existingLower }
-            .distinctBy { it.lowercase() }
-            .take(MAX_SUBTASK_SUGGESTIONS)
+        return candidates
+            .filter { it.title.normalized() !in openTitles }
+            .distinctBy { it.suggestionId }
+            .take(limit)
     }
 
     /**
-     * Generates up to 3 grounded next-task candidates offline from recent completions,
-     * project state, and overdue work.
+     * A habit with a streak worth protecting that is not on today's list. Repeating
+     * tasks that are already open today are skipped by the caller's title filter, so
+     * this only fires for a habit the user has not been shown yet.
      */
-    fun suggestNextTasks(
-        openTasks: List<Task>,
-        completedTasks: List<Task>,
-        categories: List<Category>,
-        targetCategoryId: String? = null,
-        dismissedIds: Set<String> = emptySet(),
-        nowMillis: Long = System.currentTimeMillis(),
-        today: LocalDate = LocalDate.now(),
-        zone: ZoneId = ZoneId.systemDefault()
-    ): List<SuggestedTaskCandidate> {
-        val validCategoryIds = categories.map { it.id }.toSet()
-        val categoryNames = categories.associate { it.id to it.name }
-        val activeOpen = openTasks.filter { !it.isCompleted && !it.isDeleted }
-        val scopedOpen = if (targetCategoryId != null) {
-            activeOpen.filter { it.categoryId == targetCategoryId }
-        } else {
-            activeOpen
-        }
-        val scopedCompleted = completedTasks
-            .filter { it.isCompleted && !it.isDeleted }
-            .filter { targetCategoryId == null || it.categoryId == targetCategoryId }
-            .sortedByDescending { it.completedAt ?: it.updatedAt }
-
-        val openTitleTokens = activeOpen.map { AiSnapshotCache.normalizeSemanticTokens(it.title) }
-        val rawCandidates = mutableListOf<SuggestedTaskCandidate>()
-
-        val tomorrowNineAm = today.plusDays(1)
-            .atTime(9, 0)
-            .atZone(zone)
-            .toInstant()
-            .toEpochMilli()
-            .coerceAtLeast(nowMillis + HOUR_MS)
-
-        // 1. Follow-up from recent completions (e.g. "Draft X" -> "Review and finalize X")
-        for (doneTask in scopedCompleted.take(5)) {
-            val followUpTitle = deriveFollowUpFromCompleted(doneTask.title) ?: continue
-            val catId = (targetCategoryId ?: doneTask.categoryId)?.takeIf { it in validCategoryIds }
-            rawCandidates += buildCandidate(
-                title = followUpTitle,
-                categoryId = catId,
-                priority = Priority.MEDIUM,
-                dueAt = tomorrowNineAm,
-                reason = "Follows '${doneTask.title.take(36)}' you completed recently"
-            )
-            if (rawCandidates.size >= 4) break
-        }
-
-        // 2. Overdue triage suggestion when >= 2 open tasks have slipped past their due time
-        val startOfToday = today.atStartOfDay(zone).toInstant().toEpochMilli()
-        val overdueTasks = scopedOpen.filter { it.dueAt != null && it.dueAt < minOf(nowMillis, startOfToday) }
-        if (overdueTasks.size >= 2) {
-            val catId = targetCategoryId?.takeIf { it in validCategoryIds }
-            rawCandidates += buildCandidate(
-                title = "Review and reschedule ${overdueTasks.size} overdue tasks",
-                categoryId = catId,
-                priority = Priority.HIGH,
-                dueAt = nowMillis + 2 * HOUR_MS,
-                reason = "${overdueTasks.size} open tasks slipped past their due time"
-            )
-        }
-
-        // 3. Project milestone kick-off when a project has completions or 0 open tasks
-        if (targetCategoryId != null && targetCategoryId in validCategoryIds && scopedOpen.isEmpty()) {
-            val projectName = categoryNames[targetCategoryId] ?: "this project"
-            rawCandidates += buildCandidate(
-                title = "Outline next milestone for $projectName",
-                categoryId = targetCategoryId,
-                priority = Priority.MEDIUM,
-                dueAt = tomorrowNineAm,
-                reason = "No open tasks left in $projectName"
-            )
-        } else {
-            val emptyActiveProject = categories.firstOrNull { cat ->
-                activeOpen.none { it.categoryId == cat.id } &&
-                    completedTasks.any { it.isCompleted && !it.isDeleted && it.categoryId == cat.id }
-            }
-            if (emptyActiveProject != null && targetCategoryId == null) {
-                rawCandidates += buildCandidate(
-                    title = "Plan next step for ${emptyActiveProject.name}",
-                    categoryId = emptyActiveProject.id,
-                    priority = Priority.MEDIUM,
-                    dueAt = tomorrowNineAm,
-                    reason = "All current tasks in ${emptyActiveProject.name} are complete"
+    private fun streakSuggestions(open: List<Task>, today: LocalDate): List<SuggestedTaskCandidate> =
+        open.asSequence()
+            .filter { it.repeat != RepeatRule.NONE && it.streak >= MIN_STREAK }
+            .filter { it.lastCompletedDay != today.toEpochDay() }
+            .sortedByDescending { it.streak }
+            .map { habit ->
+                val title = "Do ${habit.title.trim()} today"
+                SuggestedTaskCandidate(
+                    suggestionId = SuggestedTaskCandidate.idFor(title, habit.categoryId),
+                    title = title.take(MAX_TITLE_CHARS),
+                    categoryId = habit.categoryId,
+                    priority = Priority.HIGH,
+                    dueOffsetHours = EVENING_OFFSET_HOURS,
+                    reason = "${habit.streak}-day streak - don't break it"
                 )
             }
-        }
+            .toList()
 
-        // 4. Calm starter fallback so an explicit tap never comes back empty-handed
-        if (rawCandidates.isEmpty()) {
-            val fallbackCat = targetCategoryId?.takeIf { it in validCategoryIds }
-            val label = fallbackCat?.let { categoryNames[it] }
-            rawCandidates += buildCandidate(
-                title = if (label != null) {
-                    "Pick top priority for $label this week"
-                } else {
-                    "Block 15 minutes to plan tomorrow's top 3 tasks"
-                },
-                categoryId = fallbackCat,
-                priority = Priority.LOW,
-                dueAt = tomorrowNineAm,
-                reason = "Keeps your upcoming schedule clear and realistic"
-            )
-        }
+    /**
+     * A project with real recent activity and nothing planned. Counted from the recent
+     * completions rather than all history, so the suggestion tracks what the user is
+     * working on this week, not what they finished in March.
+     */
+    private fun neglectedListSuggestions(
+        open: List<Task>,
+        recentCompleted: List<Task>,
+        categories: List<Category>
+    ): List<SuggestedTaskCandidate> {
+        if (categories.isEmpty()) return emptyList()
 
-        val accepted = mutableListOf<SuggestedTaskCandidate>()
-        for (candidate in rawCandidates) {
-            if (candidate.suggestionId in dismissedIds) continue
-            val candTokens = AiSnapshotCache.normalizeSemanticTokens(candidate.title)
-            val duplicatesOpen = activeOpen.any {
-                it.title.trim().equals(candidate.title.trim(), ignoreCase = true)
-            } || openTitleTokens.any { existing ->
-                AiSnapshotCache.jaccardSimilarity(candTokens, existing) >= 0.80
+        val openPerCategory = open.mapNotNull { it.categoryId }
+            .groupingBy { it }
+            .eachCount()
+        val donePerCategory = recentCompleted
+            .filter { it.isCompleted && !it.isDeleted }
+            .mapNotNull { it.categoryId }
+            .groupingBy { it }
+            .eachCount()
+
+        return categories.asSequence()
+            // Only lists with real recent activity: an unused list is not neglected, it
+            // is simply not interesting yet. One filter, not two - the first draft had
+            // both and the looser one made the stricter one dead code.
+            .filter { (donePerCategory[it.id] ?: 0) >= MIN_COMPLETIONS }
+            .filter { (openPerCategory[it.id] ?: 0) == 0 }
+            .map { category ->
+                val finished = donePerCategory[category.id] ?: 0
+                val title = "Plan the next step for ${category.name}"
+                SuggestedTaskCandidate(
+                    suggestionId = SuggestedTaskCandidate.idFor(title, category.id),
+                    title = title.take(MAX_TITLE_CHARS),
+                    categoryId = category.id,
+                    priority = Priority.MEDIUM,
+                    dueOffsetHours = null,
+                    reason = "$finished finished, nothing planned"
+                )
             }
-            val duplicatesAccepted = accepted.any {
-                it.suggestionId == candidate.suggestionId ||
-                    it.title.equals(candidate.title, ignoreCase = true)
+            .toList()
+    }
+
+    /** Open work that is stale enough that a new date is the real next action. */
+    private fun slippedSuggestions(
+        open: List<Task>,
+        today: LocalDate,
+        zone: ZoneId
+    ): List<SuggestedTaskCandidate> =
+        open.asSequence()
+            .filter { it.dueAt != null }
+            .mapNotNull { task -> task to daysOverdue(task.dueAt!!, today, zone) }
+            .filter { (_, days) -> days >= MIN_DAYS_OVERDUE }
+            .sortedByDescending { (_, days) -> days }
+            .map { (task, days) ->
+                val title = "Reschedule ${task.title.trim()}"
+                SuggestedTaskCandidate(
+                    suggestionId = SuggestedTaskCandidate.idFor(title, task.categoryId),
+                    title = title.take(MAX_TITLE_CHARS),
+                    categoryId = task.categoryId,
+                    // Not HIGH: the point of this suggestion is to make a decision, and
+                    // marking it urgent is how you get the same stale task shouted about
+                    // for another week.
+                    priority = Priority.MEDIUM,
+                    dueOffsetHours = TODAY_OFFSET_HOURS,
+                    reason = "Overdue by $days ${if (days == 1L) "day" else "days"} - pick a new date"
+                )
             }
-            if (!duplicatesOpen && !duplicatesAccepted) {
-                accepted += candidate
-            }
-            if (accepted.size >= MAX_NEXT_TASK_SUGGESTIONS) break
-        }
+            .toList()
 
-        return accepted
+    private fun daysOverdue(dueAt: Long, today: LocalDate, zone: ZoneId): Long {
+        val dueDate = Instant.ofEpochMilli(dueAt).atZone(zone).toLocalDate()
+        return today.toEpochDay() - dueDate.toEpochDay()
     }
 
-    private fun buildCandidate(
-        title: String,
-        categoryId: String?,
-        priority: Priority,
-        dueAt: Long?,
-        reason: String
-    ): SuggestedTaskCandidate {
-        val cleanTitle = sentenceCase(title.trim()).take(MAX_STEP_CHARS)
-        return SuggestedTaskCandidate(
-            suggestionId = SuggestedTaskCandidate.computeId(cleanTitle, categoryId),
-            title = cleanTitle,
-            description = null,
-            categoryId = categoryId,
-            priority = priority,
-            dueAt = dueAt,
-            reason = reason.trim().take(MAX_REASON_CHARS)
-        )
-    }
-
-    private fun deriveFollowUpFromCompleted(completedTitle: String): String? {
-        val trimmed = completedTitle.trim()
-        if (trimmed.length < 4) return null
-        val lower = trimmed.lowercase()
-        return when {
-            lower.startsWith("draft ") -> "Review and share ${trimmed.drop(6)}"
-            lower.startsWith("write ") -> "Proofread and send ${trimmed.drop(6)}"
-            lower.startsWith("prepare ") -> "Deliver or review ${trimmed.drop(8)}"
-            lower.startsWith("outline ") -> "Draft full version of ${trimmed.drop(8)}"
-            lower.startsWith("buy ") || lower.startsWith("order ") -> null
-            matchesAny(lower, "meeting", "sync", "call", "interview", "retro") ->
-                "Send follow-up action items from $trimmed"
-            else -> null
-        }
-    }
-
-    private fun extractExplicitClauses(title: String, description: String): List<String> {
-        val source = if (description.contains(",") || description.contains("\n")) {
-            description
-        } else if (title.contains(",") && (" and " in title.lowercase())) {
-            title
-        } else {
-            return emptyList()
-        }
-
-        return source
-            .split(CLAUSE_SPLIT_REGEX)
-            .map { it.replace(LEADING_BULLET_REGEX, "").trim() }
-            .filter { it.length in 4..MAX_STEP_CHARS }
-    }
-
-    private fun matchesAny(haystack: String, vararg needles: String): Boolean =
-        needles.any { haystack.contains(it) }
-
-    private fun sentenceCase(text: String): String =
-        text.replaceFirstChar { ch -> if (ch.isLowerCase()) ch.titlecase() else ch.toString() }
+    private fun String.normalized(): String = trim().lowercase()
 
     companion object {
-        const val MAX_SUBTASK_SUGGESTIONS = 6
-        const val MAX_NEXT_TASK_SUGGESTIONS = 3
-        private const val MAX_STEP_CHARS = 80
-        private const val MAX_REASON_CHARS = 90
-        private const val HOUR_MS = 60 * 60 * 1000L
-        private val CLAUSE_SPLIT_REGEX = Regex("""(?:\r?\n|;|,\s+(?:and\s+)?|\s+and\s+)""", RegexOption.IGNORE_CASE)
-        private val LEADING_BULLET_REGEX = Regex("""^[\-\*\u2022\d]+[\.\)\:\-\s]*""")
+        const val MAX_SUGGESTIONS = 3
+        const val MIN_STREAK = 3
+        const val MIN_COMPLETIONS = 3
+        const val MIN_DAYS_OVERDUE = 2L
+
+        private const val MAX_TITLE_CHARS = 60
+        private const val EVENING_OFFSET_HOURS = 8
+        private const val TODAY_OFFSET_HOURS = 2
     }
 }

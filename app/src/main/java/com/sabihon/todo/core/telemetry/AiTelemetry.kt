@@ -1,125 +1,89 @@
 package com.sabihon.todo.core.telemetry
 
-import android.content.Context
 import android.os.Bundle
 import com.google.firebase.analytics.FirebaseAnalytics
-import com.sabihon.todo.domain.ai.AiModelTier
-import com.sabihon.todo.domain.ai.AiSource
-import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Privacy-safe observability contract (`docs/02-daymark-ai-system-design.md` §9.1).
+ * Zero-PII product telemetry for the AI features (`docs/02-daymark-ai-system-design.md`
+ * §9.1).
  *
- * Strictly forbids task titles, descriptions, or category names in telemetry payloads;
- * logs only operational latency, cache/fallback provenance, and human-in-the-loop
- * acceptance vs. undo/dismiss counters.
+ * Two events, and neither of them carries anything the user typed:
+ *
+ *  - `daymark_ai_call` - `feature`, `source`, `status`, `latency_ms`. This is the event
+ *    that answers "is the cloud path working at all?", which took three rounds of
+ *    guessing to answer by hand.
+ *  - `daymark_ai_outcome` - `feature`, `action` (`accepted` / `dismissed`), `count`.
+ *    The rate of these two is the only real measure of whether the suggestions are
+ *    good. A card that is always dismissed is a card that should not exist.
+ *
+ * Kept behind an interface so ViewModels are testable without Firebase, and so the whole
+ * thing can be a no-op in unit tests without stubbing Analytics.
  */
-interface AiTelemetryLogger {
+interface AiTelemetry {
+    fun logCall(feature: String, source: String, status: String, latencyMs: Long)
+    fun logOutcome(feature: String, action: String, count: Int = 1)
 
-    fun logRequest(
-        feature: String,
-        modelTier: AiModelTier,
-        source: AiSource,
-        latencyMs: Long,
-        errorType: String? = null
-    )
-
-    fun logPrioritizationDecision(
-        proposedCount: Int,
-        acceptedCount: Int,
-        dismissed: Boolean
-    )
-
-    fun logPrioritizationUndo(revertedCount: Int)
-
-    fun logSuggestionAction(
-        kind: String,
-        action: String,
-        count: Int = 1
-    )
-}
-
-object NoOpAiTelemetry : AiTelemetryLogger {
-    override fun logRequest(
-        feature: String,
-        modelTier: AiModelTier,
-        source: AiSource,
-        latencyMs: Long,
-        errorType: String?
-    ) = Unit
-
-    override fun logPrioritizationDecision(
-        proposedCount: Int,
-        acceptedCount: Int,
-        dismissed: Boolean
-    ) = Unit
-
-    override fun logPrioritizationUndo(revertedCount: Int) = Unit
-
-    override fun logSuggestionAction(kind: String, action: String, count: Int) = Unit
+    /** Swallows everything: a telemetry failure must never surface to the user. */
+    object NoOp : AiTelemetry {
+        override fun logCall(feature: String, source: String, status: String, latencyMs: Long) = Unit
+        override fun logOutcome(feature: String, action: String, count: Int) = Unit
+    }
 }
 
 @Singleton
 class FirebaseAiTelemetry @Inject constructor(
-    @ApplicationContext private val context: Context
-) : AiTelemetryLogger {
+    private val analytics: FirebaseAnalytics
+) : AiTelemetry {
 
-    private val analytics: FirebaseAnalytics by lazy {
-        FirebaseAnalytics.getInstance(context)
-    }
-
-    override fun logRequest(
-        feature: String,
-        modelTier: AiModelTier,
-        source: AiSource,
-        latencyMs: Long,
-        errorType: String?
-    ) {
-        safeLog("daymark_ai_request") {
-            putString("feature", feature.take(32))
-            putString("model_tier", modelTier.name.lowercase())
-            putString("source", source.name.lowercase())
-            putLong("latency_ms", latencyMs.coerceAtLeast(0L))
-            if (!errorType.isNullOrBlank()) {
-                putString("error_type", errorType.take(32))
-            }
+    override fun logCall(feature: String, source: String, status: String, latencyMs: Long) {
+        // Wrapped because Analytics is a third-party SDK on a background path: if it
+        // throws, the user loses their suggestion, which is not a trade worth making.
+        runCatching {
+            analytics.logEvent(
+                EVENT_CALL,
+                Bundle().apply {
+                    putString(PARAM_FEATURE, feature)
+                    putString(PARAM_SOURCE, source)
+                    putString(PARAM_STATUS, status)
+                    putLong(PARAM_LATENCY_MS, latencyMs)
+                }
+            )
         }
     }
 
-    override fun logPrioritizationDecision(
-        proposedCount: Int,
-        acceptedCount: Int,
-        dismissed: Boolean
-    ) {
-        safeLog("daymark_ai_prio_decision") {
-            putInt("proposed_count", proposedCount.coerceAtLeast(0))
-            putInt("accepted_count", acceptedCount.coerceAtLeast(0))
-            putInt("dismissed", if (dismissed) 1 else 0)
+    override fun logOutcome(feature: String, action: String, count: Int) {
+        runCatching {
+            analytics.logEvent(
+                EVENT_OUTCOME,
+                Bundle().apply {
+                    putString(PARAM_FEATURE, feature)
+                    putString(PARAM_ACTION, action)
+                    putInt(PARAM_COUNT, count)
+                }
+            )
         }
     }
 
-    override fun logPrioritizationUndo(revertedCount: Int) {
-        safeLog("daymark_ai_prio_undo") {
-            putInt("reverted_count", revertedCount.coerceAtLeast(0))
-        }
-    }
+    companion object {
+        const val EVENT_CALL = "daymark_ai_call"
+        const val EVENT_OUTCOME = "daymark_ai_outcome"
 
-    override fun logSuggestionAction(kind: String, action: String, count: Int) {
-        safeLog("daymark_ai_suggestion_action") {
-            putString("kind", kind.take(24))
-            putString("action", action.take(24))
-            putInt("count", count.coerceAtLeast(0))
-        }
-    }
+        const val PARAM_FEATURE = "feature"
+        const val PARAM_SOURCE = "source"
+        const val PARAM_STATUS = "status"
+        const val PARAM_LATENCY_MS = "latency_ms"
+        const val PARAM_ACTION = "action"
+        const val PARAM_COUNT = "count"
 
-    private inline fun safeLog(eventName: String, build: Bundle.() -> Unit) {
-        try {
-            val bundle = Bundle().apply(build)
-            analytics.logEvent(eventName, bundle)
-        } catch (_: Throwable) {
-            // Telemetry must never disrupt user workflows or preview/test environments.
-        }
+        /** Feature names, kept as constants so a dashboard query cannot drift. */
+        const val FEATURE_QUICK_ADD = "quick_add"
+        const val FEATURE_PRIORITIZE = "prioritize"
+        const val FEATURE_SUB_TASKS = "sub_tasks"
+        const val FEATURE_SUGGEST_NEXT = "suggest_next"
+
+        const val ACTION_ACCEPTED = "accepted"
+        const val ACTION_DISMISSED = "dismissed"
     }
 }

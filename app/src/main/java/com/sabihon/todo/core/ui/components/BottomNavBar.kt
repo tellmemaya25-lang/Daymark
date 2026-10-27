@@ -70,6 +70,11 @@ fun RoundedBottomNavBar(
     /** Tab the user is swiping towards – lights up before the commit lands. */
     previewTab: String? = null
 ) {
+    // On Projects the "+" creates a project, so the spoken label has to say so - a
+    // button that announces "Add Task" and then opens a project dialog is a lie told to
+    // the one group of users who cannot see which is which.
+    val addDescription = if (currentRoute == "Projects") "New project" else "Add task"
+
     val tabs = listOf(
         BottomNavTab("Home", Icons.Filled.Home, "home"),
         BottomNavTab("Projects", Icons.Filled.GridView, "projects"),
@@ -151,7 +156,7 @@ fun RoundedBottomNavBar(
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Add,
-                            contentDescription = "Add Task",
+                            contentDescription = addDescription,
                             tint = Color.White,
                             modifier = Modifier.size(28.dp)
                         )

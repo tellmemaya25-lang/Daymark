@@ -142,7 +142,7 @@ class AuthRepositoryImpl @Inject constructor(
             aiSnapshotCache.evictUser(uid)
             aiSnapshotCache.clearAll()
             aiQuotaGuard.resetRuntimeState()
-            aiPreferences.clearDismissedSuggestions(uid)
+            aiPreferences.clearDismissedSuggestions()
             // Delete user subcollections would require cloud function; for now delete user doc
             firestore.collection("users").document(uid).delete().await()
             auth.currentUser?.delete()?.await()

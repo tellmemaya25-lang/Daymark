@@ -1,91 +1,55 @@
 package com.sabihon.todo.domain.ai
 
+import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
 import java.security.MessageDigest
 
 /**
- * Compact, PII-scrubbed request sent to [AiTaskService.suggestSubTasks] (`Phase 3`).
- */
-data class PromptSubTaskRequest(
-    val title: String,
-    val description: String? = null,
-    val existingSubTasks: List<String> = emptyList()
-)
-
-/**
- * Validated checklist breakdown result ready for `AddEditTaskScreen` and `HomeScreen`.
- */
-data class SubTaskSuggestionsResult(
-    val steps: List<String>,
-    val source: AiSource,
-    val modelTier: AiModelTier = AiModelTier.LOCAL
-)
-
-data class PromptCategoryItem(
-    val id: String,
-    val name: String
-)
-
-/**
- * Compact, PII-scrubbed context sent to [AiTaskService.suggestNextTasks] (`Phase 4`).
- */
-data class PromptNextTaskContext(
-    val openTasks: List<PromptTaskItem>,
-    val recentlyCompletedTitles: List<String>,
-    val categories: List<PromptCategoryItem>,
-    val targetCategoryId: String? = null,
-    val targetCategoryName: String? = null
-)
-
-/**
- * Raw unvalidated suggestion returned by the cloud adapter before closed-world
- * category whitelisting, open-task deduplication, and date clamping.
- */
-data class CloudSuggestedTaskItem(
-    val title: String,
-    val description: String? = null,
-    val categoryId: String? = null,
-    val priority: Priority? = null,
-    val dueOffsetHours: Int? = null,
-    val reason: String? = null
-)
-
-/**
- * One validated, actionable next-task candidate (`docs/02-daymark-ai-system-design.md` §5.1).
+ * A task the app thinks you might want next, and why.
+ *
+ * Suggestions are never tasks. Nothing is written until the user taps `+ Add`, and
+ * [suggestionId] is what a `×` writes down so the same idea is not offered again -
+ * a dismissal the user cannot take back is a reason to stop reading the card.
  */
 data class SuggestedTaskCandidate(
-    /** Deterministic hash of normalized title + categoryId used for permanent dismissal. */
+    /** Stable across runs: a hash of the title, never the title itself. */
     val suggestionId: String,
     val title: String,
-    val description: String? = null,
+    /** One of the user's own lists, or null. Validated in the use case, not here. */
     val categoryId: String? = null,
     val priority: Priority = Priority.MEDIUM,
-    val dueAt: Long? = null,
-    /** Concise single-line rationale (max 90 chars). */
-    val reason: String
+    /** Hours from now, or null for undated. Clamped before it is ever shown. */
+    val dueOffsetHours: Int? = null,
+    /** Short, plain reason printed under the title: "Overdue 3 days". */
+    val reason: String = ""
 ) {
     companion object {
-        fun computeId(title: String, categoryId: String?): String {
-            val normalizedTitle = title
-                .lowercase()
-                .replace(NON_ALNUM_REGEX, " ")
-                .trim()
-                .replace(MULTI_SPACE_REGEX, " ")
-            val raw = "${categoryId?.trim().orEmpty()}::$normalizedTitle"
-            val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
-            return digest.take(12).joinToString("") { "%02x".format(it) }
+        /**
+         * Deterministic id for one suggestion.
+         *
+         * Hashed rather than used verbatim: dismissals are persisted, and the setting
+         * file should not become a list of the user's task titles in plain text.
+         */
+        fun idFor(title: String, categoryId: String?): String {
+            val raw = "${title.trim().lowercase()}::${categoryId.orEmpty()}"
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(raw.toByteArray(Charsets.UTF_8))
+            return digest.joinToString("") { "%02x".format(it) }.take(ID_LENGTH)
         }
 
-        private val NON_ALNUM_REGEX = Regex("[^a-z0-9\\s]")
-        private val MULTI_SPACE_REGEX = Regex("\\s+")
+        private const val ID_LENGTH = 16
     }
 }
 
 /**
- * Validated next-task suggestions ready for `SuggestedTasksCard` on Home & Project screens.
+ * The privacy-safe picture the model is allowed to see when it is asked what to do
+ * next: what is still open, what the user just finished, and the names of their own
+ * lists. No ids, no notes, no timestamps - there is nothing in here it needs.
  */
-data class TaskSuggestionsResult(
-    val candidates: List<SuggestedTaskCandidate>,
-    val source: AiSource,
-    val modelTier: AiModelTier = AiModelTier.LOCAL
+data class SuggestionContext(
+    /** At most 10 open titles, most pressing first. */
+    val openTitles: List<String> = emptyList(),
+    /** At most 8 recently completed titles - what the user has been working on. */
+    val recentCompletedTitles: List<String> = emptyList(),
+    val categories: List<Category> = emptyList()
 )

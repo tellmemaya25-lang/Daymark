@@ -238,7 +238,6 @@ internal class FakeAiPreferenceStore(
     private val cloudFlow = MutableStateFlow(cloudEnabledInitial)
     private val consentFlow = MutableStateFlow(consentPromptedInitial)
     private val quotas = LinkedHashMap<String, DailyAiQuotaSnapshot>()
-    private val dismissedByUid = LinkedHashMap<String, MutableSet<String>>()
 
     override val cloudEnabled: Flow<Boolean> = cloudFlow
     override val consentPrompted: Flow<Boolean> = consentFlow
@@ -257,6 +256,18 @@ internal class FakeAiPreferenceStore(
     override suspend fun getDailyQuota(uid: String, epochDay: Long): DailyAiQuotaSnapshot =
         quotas["$uid:$epochDay"] ?: DailyAiQuotaSnapshot(epochDay = epochDay, calls = 0, estimatedTokens = 0)
 
+    private val dismissed = linkedSetOf<String>()
+
+    override suspend fun getDismissedSuggestionIds(): Set<String> = dismissed.toSet()
+
+    override suspend fun dismissSuggestion(id: String) {
+        dismissed += id
+    }
+
+    override suspend fun clearDismissedSuggestions() {
+        dismissed.clear()
+    }
+
     override suspend fun recordCloudUsage(uid: String, epochDay: Long, estimatedTokens: Int) {
         val key = "$uid:$epochDay"
         val prev = getDailyQuota(uid, epochDay)
@@ -264,18 +275,5 @@ internal class FakeAiPreferenceStore(
             calls = prev.calls + 1,
             estimatedTokens = prev.estimatedTokens + estimatedTokens
         )
-    }
-
-    override suspend fun getDismissedSuggestionIds(uid: String?): Set<String> =
-        dismissedByUid[uid ?: "anon"]?.toSet().orEmpty()
-
-    override suspend fun dismissSuggestion(uid: String?, suggestionId: String) {
-        if (suggestionId.isBlank()) return
-        val set = dismissedByUid.getOrPut(uid ?: "anon") { LinkedHashSet() }
-        set += suggestionId
-    }
-
-    override suspend fun clearDismissedSuggestions(uid: String?) {
-        dismissedByUid.remove(uid ?: "anon")
     }
 }

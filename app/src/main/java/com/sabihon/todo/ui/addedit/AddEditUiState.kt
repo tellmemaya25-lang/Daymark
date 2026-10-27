@@ -1,6 +1,5 @@
 package com.sabihon.todo.ui.addedit
 
-import com.sabihon.todo.domain.ai.AiSource
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
@@ -45,9 +44,11 @@ data class AddEditUiState(
     /** Shown on the first ✨ tap before any prompt leaves the device. */
     val showAiConsentSheet: Boolean = false,
 
-    // ---- Phase 3: AI sub-task step suggestions ----
-    val isSuggestingSubTasks: Boolean = false,
+    // ---- suggested steps ----
+    /** Steps offered for this task, not yet accepted. Empty hides the chip row. */
     val suggestedSubTasks: List<String> = emptyList(),
-    val suggestedSubTasksSource: AiSource? = null,
-    val canUndoSuggestedSubTasks: Boolean = false
+    /** A suggestion call is in flight; the ✨ button shows a spinner and ignores taps. */
+    val isSuggestingSubTasks: Boolean = false,
+    /** Why there are no steps, when that is worth saying - never a generic failure. */
+    val subTaskSuggestionMessage: String? = null
 )

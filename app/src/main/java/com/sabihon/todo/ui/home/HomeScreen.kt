@@ -1,13 +1,16 @@
 package com.sabihon.todo.ui.home
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,7 +27,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
@@ -67,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -80,36 +83,38 @@ import com.sabihon.todo.core.ui.components.FilterEmptyState
 import com.sabihon.todo.core.ui.components.LoadingShimmer
 import com.sabihon.todo.core.ui.components.MomentumCard
 import com.sabihon.todo.core.ui.components.RevealCoordinator
-import com.sabihon.todo.core.ui.components.NotelyEmptyState
-import com.sabihon.todo.core.ui.components.SegmentedTabs
+import com.sabihon.todo.core.ui.components.SuggestedStepChip
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
-import com.sabihon.todo.core.ui.components.TabItem
 import com.sabihon.todo.core.ui.components.WeekStrip
-import com.sabihon.todo.domain.ai.AiSource
 import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.core.ui.util.isCompactHeight
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.Task
 import java.text.SimpleDateFormat
+import java.time.LocalDate
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/** Item keys the stuck-strip detection looks items up by. */
+private const val HEADER_ITEM_KEY = "header"
+private const val MOMENTUM_ITEM_KEY = "momentum"
+private const val WEEK_ITEM_KEY = "week"
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
-    onNavigateToAllTasks: () -> Unit = {},
     onNavigateToCategories: () -> Unit = {},
     onNavigateToTaskDetail: (String) -> Unit = {},
     onNavigateToEditTask: (String) -> Unit = {},
     onNavigateToAddTask: () -> Unit = {},
-    onNavigateToPrefilledAddTask: (SuggestedTaskCandidate) -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
     onNavigateToHistory: () -> Unit = {},
     onNavigateToProfile: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
     onNavigateToCategory: (String) -> Unit = {},
+    onNavigateToAddTaskPrefilled: (SuggestedTaskCandidate) -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -175,14 +180,6 @@ fun HomeScreen(
         }
     }
 
-    LaunchedEffect(uiState.suggestionToastMessage) {
-        val message = uiState.suggestionToastMessage
-        if (message != null) {
-            snackbarHostState.showSnackbar(message = message, duration = SnackbarDuration.Short)
-            viewModel.onAction(HomeAction.ClearSuggestionToast)
-        }
-    }
-
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background
@@ -199,23 +196,50 @@ fun HomeScreen(
                 // the rotation; start both layouts from the top rather than mid-list.
                 listState.scrollToItem(0)
             }
-            // Header stays put; a hairline fades in as soon as the list moves under it.
-            // In compact mode the header is an item, so index > 0 is true immediately
-            // and the divider would fire before the user has scrolled at all.
-            val isScrolled by remember {
-                derivedStateOf {
-                    !compactHeader &&
-                        (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0)
-                }
-            }
             LaunchedEffect(listState.isScrollInProgress) {
                 if (listState.isScrollInProgress) revealCoordinator.closeAll()
             }
-            val headerDividerAlpha by animateFloatAsState(
-                targetValue = if (isScrolled) 1f else 0f,
+
+            /*
+             * Everything on this page scrolls, header included, and the week strip pins
+             * itself when it reaches the top.
+             *
+             * `stripStuck` is that moment, and it does two jobs: it fades in the strip's
+             * divider so the pinned band reads as a separate surface, and it arms the
+             * day swipe. Arming is the important half - Home is page 0 of the tab pager,
+             * so an always-on horizontal drag here would steal the swipe that changes
+             * tabs. Until the strip is pinned, that drag belongs to the pager.
+             */
+            val stripStuck by remember {
+                derivedStateOf {
+                    val info = listState.layoutInfo
+                    val week = info.visibleItemsInfo.firstOrNull { it.key == WEEK_ITEM_KEY }
+                        ?: return@derivedStateOf false
+                    if (week.offset > info.viewportStartOffset) return@derivedStateOf false
+                    // The strip is pinned once the card above it has scrolled clear. If
+                    // that card is still on screen the strip is only part-way up, and a
+                    // horizontal drag there is still the user's attempt to change tabs.
+                    val momentum = info.visibleItemsInfo.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
+                    momentum == null || momentum.offset + momentum.size <= info.viewportStartOffset
+                }
+            }
+            val stripDividerAlpha by animateFloatAsState(
+                targetValue = if (stripStuck) 1f else 0f,
                 animationSpec = tween(180),
-                label = "headerDivider"
+                label = "stripDivider"
             )
+
+            // Read here, not inside the LazyColumn builder: that lambda is not
+            // @Composable, so MaterialTheme cannot be touched from within it.
+            val stripBg = MaterialTheme.colorScheme.background
+
+            // Right is yesterday, left is tomorrow – the direction a paper calendar moves
+            // when you flip back and then forward again.
+            val shiftDay: (Int) -> Unit = { days ->
+                viewModel.onAction(
+                    HomeAction.SelectDate(uiState.selectedDate.plusDays(days.toLong()))
+                )
+            }
 
             PullToRefreshBox(
                 isRefreshing = uiState.isRefreshing,
@@ -225,40 +249,17 @@ fun HomeScreen(
                     .padding(innerPadding)
             ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                if (!compactHeader) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.background)
-                    ) {
-                        HomeHeader(
-                            greetingName = uiState.greetingName,
-                            avatarInitials = uiState.avatarInitials,
-                            avatarUrl = uiState.avatarUrl,
-                            onSearchClick = onNavigateToSearch,
-                            onAvatarClick = onNavigateToProfile
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(
-                                    MaterialTheme.colorScheme.onSurface.copy(
-                                        alpha = 0.10f * headerDividerAlpha
-                                    )
-                                )
-                        )
-                    }
-                }
-
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                 ) {
-                if (compactHeader) {
-                    item {
+                // The header scrolls with everything else. A short window gets the
+                // compact variant, which is about the height available, not about what
+                // sticks - nothing in this list is exempt from scrolling except the strip.
+                item(key = HEADER_ITEM_KEY) {
+                    if (compactHeader) {
                         HomeHeaderCompact(
                             avatarInitials = uiState.avatarInitials,
                             avatarUrl = uiState.avatarUrl,
@@ -266,10 +267,18 @@ fun HomeScreen(
                             onAvatarClick = onNavigateToProfile,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
+                    } else {
+                        HomeHeader(
+                            greetingName = uiState.greetingName,
+                            avatarInitials = uiState.avatarInitials,
+                            avatarUrl = uiState.avatarUrl,
+                            onSearchClick = onNavigateToSearch,
+                            onAvatarClick = onNavigateToProfile
+                        )
                     }
                 }
 
-                item {
+                item(key = MOMENTUM_ITEM_KEY) {
                     MomentumCard(
                         total = uiState.momentum.total,
                         done = uiState.momentum.done,
@@ -277,47 +286,72 @@ fun HomeScreen(
                     )
                 }
 
-                item {
-                    WeekStrip(
-                        days = uiState.weekDays,
-                        selected = uiState.selectedDate,
-                        onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) }
-                    )
+                stickyHeader(key = WEEK_ITEM_KEY) {
+                    Column(modifier = Modifier.background(stripBg)) {
+                        WeekStripBar(
+                            days = uiState.weekDays,
+                            selected = uiState.selectedDate,
+                            onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
+                            onShiftDay = shiftDay,
+                            // The drag only exists while pinned. With no handler
+                            // attached the gesture falls through to the tab pager,
+                            // which is what should happen while the strip is at rest.
+                            swipeEnabled = stripStuck
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.onSurface.copy(
+                                        alpha = 0.10f * stripDividerAlpha
+                                    )
+                                )
+                        )
+                    }
                 }
 
-                item {
-                    SegmentedTabs(
-                        tabs = listOf(
-                            // When another day is picked the badge follows that day, not today's count.
-                            TabItem(
-                                "today",
-                                "Today",
-                                if (uiState.selectedDate == java.time.LocalDate.now()) {
-                                    uiState.counts.today
-                                } else {
-                                    uiState.visibleTasks.size + uiState.completedTasks.size
-                                }
-                            ),
-                            TabItem("upcoming", "Upcoming", null),
-                            TabItem("all", "All tasks", uiState.counts.all)
-                        ),
-                        selectedId = when (uiState.selectedFilter) {
-                            HomeFilter.TODAY -> "today"
-                            HomeFilter.UPCOMING -> "upcoming"
-                            HomeFilter.ALL -> "all"
-                        },
-                        onSelect = { id ->
-                            viewModel.onAction(
-                                HomeAction.SetFilter(
-                                    when (id) {
-                                        "today" -> HomeFilter.TODAY
-                                        "upcoming" -> HomeFilter.UPCOMING
-                                        else -> HomeFilter.ALL
-                                    }
-                                )
+                // Suggestions sit directly under the strip: near enough to be the first
+                // thing read when the list is nearly clear, and gone entirely once the
+                // user collapses them.
+                if (uiState.nextTaskSuggestions.isNotEmpty() || uiState.isSuggestingNext) {
+                    item {
+                        SuggestedTasksCard(
+                            suggestions = uiState.nextTaskSuggestions,
+                            expanded = uiState.suggestionsExpanded,
+                            isRefreshing = uiState.isSuggestingNext,
+                            onToggleExpanded = {
+                                viewModel.onAction(HomeAction.ToggleSuggestionsExpanded)
+                            },
+                            onAccept = { suggestion ->
+                                viewModel.onAction(HomeAction.AcceptSuggestion(suggestion))
+                            },
+                            onDismiss = { suggestion ->
+                                viewModel.onAction(HomeAction.DismissSuggestion(suggestion))
+                            },
+                            onRefresh = { viewModel.onAction(HomeAction.RequestSuggestions) },
+                            onEdit = onNavigateToAddTaskPrefilled,
+                            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp)
+                        )
+                    }
+                }
+
+                // Today / Upcoming / All tasks used to live here. They are gone: with a
+                // sticky week strip and a day swipe, the strip is the browser, and two
+                // ways to change what you are looking at was one too many. "All tasks"
+                // moved to the Projects tab, which is where you go to see everything.
+                if (uiState.visibleTasks.size >= 2) {
+                    item {
+                        PrioritizeTaskButton(
+                            onClick = { viewModel.onAction(HomeAction.RequestPrioritize) },
+                            modifier = Modifier.padding(
+                                start = 20.dp,
+                                end = 20.dp,
+                                top = 4.dp,
+                                bottom = 10.dp
                             )
-                        }
-                    )
+                        )
+                    }
                 }
 
                 item {
@@ -334,61 +368,21 @@ fun HomeScreen(
                         showSortMenu = showSortMenu,
                         onSortMenuChange = { showSortMenu = it },
                         onSortSelected = { sort -> viewModel.onAction(HomeAction.SetSort(sort)) },
-                        onDirectionSelected = { dir -> viewModel.onAction(HomeAction.SetSortDirection(dir)) },
-                        onPrioritizeClick = if (uiState.visibleTasks.size >= 2) {
-                            { viewModel.onAction(HomeAction.RequestPrioritize) }
-                        } else {
-                            null
-                        },
-                        onSuggestTasksClick = {
-                            viewModel.onAction(HomeAction.RequestNextTaskSuggestions)
-                        }
+                        onDirectionSelected = { dir -> viewModel.onAction(HomeAction.SetSortDirection(dir)) }
                     )
-                }
-
-                if (uiState.showSuggestedTasksCard) {
-                    item(key = "ai_suggested_next_tasks") {
-                        SuggestedTasksCard(
-                            candidates = uiState.suggestedNextTasks,
-                            categoryNames = uiState.categoryNames,
-                            source = uiState.suggestedNextTasksSource,
-                            isLoading = uiState.isSuggestingNextTasks,
-                            onAddCandidate = { candidate ->
-                                viewModel.onAction(HomeAction.QuickAddSuggestedTask(candidate))
-                            },
-                            onEditCandidate = { candidate ->
-                                onNavigateToPrefilledAddTask(candidate)
-                            },
-                            onDismissCandidate = { id ->
-                                viewModel.onAction(HomeAction.DismissSuggestedTask(id))
-                            },
-                            onRefresh = {
-                                viewModel.onAction(HomeAction.RefreshNextTaskSuggestions)
-                            },
-                            onClose = {
-                                viewModel.onAction(HomeAction.CloseSuggestedTasksCard)
-                            },
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
-                        )
-                    }
                 }
 
                 if (uiState.visibleTasks.isEmpty() && uiState.completedTasks.isEmpty()) {
                     item {
-                        when (uiState.selectedFilter) {
-                            HomeFilter.TODAY -> FilterEmptyState(
-                                filterName = if (uiState.selectedDate == java.time.LocalDate.now()) {
-                                    "Today"
-                                } else {
-                                    formatLocalDate(uiState.selectedDate, "EEEE")
-                                }
-                            )
-                            HomeFilter.UPCOMING -> FilterEmptyState(filterName = "Upcoming")
-                            HomeFilter.ALL -> NotelyEmptyState(
-                                title = "Get started with daymark .",
-                                subtitle = "Add notes, calendar events, tasks files and more with the action bar"
-                            )
-                        }
+                        // Selecting a day always means "that day", so there is only one
+                        // empty state left to show.
+                        FilterEmptyState(
+                            filterName = if (uiState.selectedDate == java.time.LocalDate.now()) {
+                                "Today"
+                            } else {
+                                formatLocalDate(uiState.selectedDate, "EEEE")
+                            }
+                        )
                     }
                 }
 
@@ -406,7 +400,6 @@ fun HomeScreen(
                         onAddSubTaskRequest = { target ->
                             taskForNewSubTask = target
                             newSubTaskTitle = ""
-                            viewModel.onAction(HomeAction.ClearSubTaskSuggestions)
                             showAddSubTaskSheet = true
                         },
                         onLongPress = { target ->
@@ -440,7 +433,6 @@ fun HomeScreen(
                                 onAddSubTaskRequest = { target ->
                                     taskForNewSubTask = target
                                     newSubTaskTitle = ""
-                                    viewModel.onAction(HomeAction.ClearSubTaskSuggestions)
                                     showAddSubTaskSheet = true
                                 },
                                 onLongPress = { target ->
@@ -646,145 +638,104 @@ fun HomeScreen(
                         )
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                    // A different task means a different set of steps; carrying the last
+                    // one over would offer steps for a task the user is no longer editing.
+                    LaunchedEffect(taskForNewSubTask?.id) {
+                        viewModel.onAction(HomeAction.DismissSuggestedSteps)
+                    }
+
+                    Text(
+                        text = "Add new task",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                    )
+
+                    Text(
+                        text = "to ${taskForNewSubTask?.title ?: "Task"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Steps for the task you are already looking at, without leaving the
+                    // sheet. Accepting one adds it immediately - the whole point of being
+                    // in this sheet instead of the full editor is fewer taps.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = {
+                                taskForNewSubTask?.let { task ->
+                                    viewModel.onAction(HomeAction.SuggestSubTasks(task.id))
+                                }
+                            },
+                            enabled = !uiState.isSuggestingSteps,
+                            shape = RoundedCornerShape(100.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            if (uiState.isSuggestingSteps) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = AccentBlue
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = AccentBlue,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(5.dp))
                             Text(
-                                text = "Add new task",
-                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = "to ${taskForNewSubTask?.title ?: "Task"}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = if (uiState.suggestedSteps.isEmpty()) "Suggest steps" else "Suggest more",
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                ),
+                                color = AccentBlue
                             )
                         }
+                    }
 
-                        val parentTask = taskForNewSubTask
-                        if (parentTask != null && parentTask.title.trim().length >= 3) {
-                            val surfaces = LocalDaymarkSurfaces.current
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(100.dp))
-                                    .background(surfaces.accentSurface)
-                                    .clickable(enabled = !uiState.isSuggestingSubTasks) {
-                                        viewModel.onAction(HomeAction.SuggestSubTasksForTask(parentTask))
+                    if (uiState.suggestedSteps.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            uiState.suggestedSteps.forEach { step ->
+                                SuggestedStepChip(
+                                    text = step,
+                                    onClick = {
+                                        taskForNewSubTask?.let { task ->
+                                            viewModel.onAction(
+                                                HomeAction.AcceptSuggestedStep(task.id, step)
+                                            )
+                                        }
                                     }
-                                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                )
+                            }
+                        }
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Spacer(Modifier.weight(1f))
+                            TextButton(
+                                onClick = {
+                                    viewModel.onAction(HomeAction.DismissSuggestedSteps)
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                             ) {
-                                if (uiState.isSuggestingSubTasks) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(12.dp),
-                                        strokeWidth = 1.6.dp,
-                                        color = AccentBlue
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Filled.AutoAwesome,
-                                        contentDescription = "Suggest steps",
-                                        tint = AccentBlue,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                }
-                                Spacer(Modifier.width(4.dp))
                                 Text(
-                                    text = if (uiState.isSuggestingSubTasks) "Suggesting\u2026" else "Suggest steps",
-                                    style = MaterialTheme.typography.labelMedium.copy(
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    ),
-                                    color = surfaces.onAccentSurface
+                                    "Dismiss",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
                     }
 
-                    if (uiState.subTaskSheetSuggestions.isNotEmpty()) {
-                        val surfaces = LocalDaymarkSurfaces.current
-                        val sourceLabel = when (uiState.subTaskSheetSource) {
-                            AiSource.CLOUD -> "AI steps"
-                            AiSource.CACHE -> "AI steps \u00B7 Cached"
-                            else -> "Offline steps"
-                        }
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(surfaces.groupedCard)
-                                .border(1.dp, surfaces.cardBorder, RoundedCornerShape(16.dp))
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = sourceLabel,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    ),
-                                    color = AccentBlue,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextButton(
-                                    onClick = {
-                                        taskForNewSubTask?.let { target ->
-                                            viewModel.onAction(HomeAction.AcceptAllSuggestedSubTasks(target.id))
-                                        }
-                                    },
-                                    modifier = Modifier.height(30.dp)
-                                ) {
-                                    Text("Add all", color = AccentBlue, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-
-                            FlowRow(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                uiState.subTaskSheetSuggestions.forEach { step ->
-                                    Row(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(100.dp))
-                                            .background(surfaces.card)
-                                            .border(1.dp, AccentBlue.copy(alpha = 0.3f), RoundedCornerShape(100.dp))
-                                            .clickable {
-                                                taskForNewSubTask?.let { target ->
-                                                    viewModel.onAction(
-                                                        HomeAction.AcceptSuggestedSubTask(target.id, step)
-                                                    )
-                                                }
-                                            }
-                                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Add,
-                                            contentDescription = null,
-                                            tint = AccentBlue,
-                                            modifier = Modifier.size(12.dp)
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(
-                                            text = step,
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium
-                                            ),
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                    uiState.suggestedStepsMessage?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
                     OutlinedTextField(
@@ -1006,6 +957,105 @@ private fun SearchCircleButton(
     }
 }
 
+/* Prioritize pill                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The sparkle that opens the focus-plan sheet.
+ *
+ * Only drawn when there are at least two open tasks: a plan that ranks one task is not
+ * a plan, and offering it on an empty list is offering nothing.
+ */
+/**
+ * The week strip, pinned in the top bar, with a horizontal drag that moves the
+ * selected day by one.
+ *
+ * The gesture is always live here – the whole point of moving the strip out of the list
+ * is that it is permanently on screen, so there is no "only when pinned" state left to
+ * wait for. The cost is honest: a horizontal drag started *on the strip* moves the day
+ * instead of the tabs, because this handler consumes it before the pager sees it. Tab
+ * swiping still works everywhere else on the screen – the header, the momentum card and
+ * the task list all still belong to the pager.
+ *
+ * Right is yesterday, left is tomorrow: the direction a paper calendar moves when you
+ * flip back and then forward again.
+ */
+@Composable
+private fun WeekStripBar(
+    days: List<WeekDay>,
+    selected: LocalDate,
+    onSelect: (LocalDate) -> Unit,
+    onShiftDay: (Int) -> Unit,
+    swipeEnabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    WeekStrip(
+        days = days,
+        selected = selected,
+        onSelect = onSelect,
+        modifier = modifier.pointerInput(selected, swipeEnabled) {
+            if (!swipeEnabled) return@pointerInput
+            // toPx() lives out here: the gesture callbacks are plain lambdas, not a
+            // Density scope. Re-keyed on `selected` so a drag always resolves against
+            // the day that is on screen.
+            val threshold = 48.dp.toPx()
+            var dragged = 0f
+            detectHorizontalDragGestures(
+                onDragStart = { dragged = 0f },
+                onDragEnd = {
+                    when {
+                        dragged > threshold -> onShiftDay(-1)
+                        dragged < -threshold -> onShiftDay(1)
+                    }
+                }
+            ) { _, amount -> dragged += amount }
+        }
+    )
+}
+
+/**
+ * "Prioritize Task" – a full-width row of its own.
+ *
+ * It was a pill wedged onto the tabs row, competing with three other controls for the
+ * width and never quite fitting. The tabs are gone, so the plan feature gets room and
+ * says what it does instead of relying on a sparkle to explain itself.
+ */
+@Composable
+private fun PrioritizeTaskButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val surfaces = LocalDaymarkSurfaces.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(surfaces.accentSurface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            // Null content description: the button's own Text is the label, and a
+            // second one would have TalkBack saying "prioritize tasks, prioritize task".
+            imageVector = Icons.Filled.AutoAwesome,
+            contentDescription = null,
+            tint = AccentBlue,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "Prioritize Task",
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
+            color = surfaces.onAccentSurface
+        )
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* "ON YOUR LIST" header + sort menu                                   */
 /* ------------------------------------------------------------------ */
@@ -1020,9 +1070,7 @@ private fun ListHeader(
     showSortMenu: Boolean,
     onSortMenuChange: (Boolean) -> Unit,
     onSortSelected: (HomeSort) -> Unit,
-    onDirectionSelected: (HomeSortDirection) -> Unit,
-    onPrioritizeClick: (() -> Unit)? = null,
-    onSuggestTasksClick: (() -> Unit)? = null
+    onDirectionSelected: (HomeSortDirection) -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -1063,64 +1111,6 @@ private fun ListHeader(
             }
         }
         Spacer(Modifier.weight(1f))
-
-        if (onSuggestTasksClick != null) {
-            val surfaces = LocalDaymarkSurfaces.current
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(100.dp))
-                    .background(surfaces.accentSurface)
-                    .clickable(onClick = onSuggestTasksClick)
-                    .padding(horizontal = 9.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.AutoAwesome,
-                    contentDescription = "Suggest next tasks",
-                    tint = AccentBlue,
-                    modifier = Modifier.size(12.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "Suggest",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
-                    ),
-                    color = surfaces.onAccentSurface
-                )
-            }
-            Spacer(Modifier.width(6.dp))
-        }
-
-        if (onPrioritizeClick != null) {
-            val surfaces = LocalDaymarkSurfaces.current
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(100.dp))
-                    .background(surfaces.accentSurface)
-                    .clickable(onClick = onPrioritizeClick)
-                    .padding(horizontal = 9.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.AutoAwesome,
-                    contentDescription = "Prioritize tasks",
-                    tint = AccentBlue,
-                    modifier = Modifier.size(12.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "Prioritize",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
-                    ),
-                    color = surfaces.onAccentSurface
-                )
-            }
-            Spacer(Modifier.width(6.dp))
-        }
 
         Box {
             Row(

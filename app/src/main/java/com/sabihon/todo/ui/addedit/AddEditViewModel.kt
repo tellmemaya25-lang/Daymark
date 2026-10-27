@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.sabihon.todo.core.datastore.AiPreferenceStore
-import com.sabihon.todo.core.telemetry.AiTelemetryLogger
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.ai.AiTaskDraft
 import com.sabihon.todo.domain.model.Category
@@ -49,14 +48,8 @@ class AddEditViewModel @Inject constructor(
     private val parseQuickAddUseCase: ParseQuickAddUseCase,
     private val suggestSubTasksUseCase: SuggestSubTasksUseCase,
     private val aiPreferences: AiPreferenceStore,
-    private val telemetry: AiTelemetryLogger,
     private val auth: FirebaseAuth
 ) : ViewModel() {
-
-    private enum class PendingConsentAction {
-        QUICK_ADD,
-        SUGGEST_STEPS
-    }
 
     private companion object {
         /** Hard ceiling for one save round-trip; keeps the Save button honest. */
@@ -86,15 +79,13 @@ class AddEditViewModel @Inject constructor(
     )
 
     private var quickAddUndo: QuickAddSnapshot? = null
-    private var subTasksSuggestionUndo: List<SubTask>? = null
-    private var pendingConsentAction: PendingConsentAction? = null
-    private var seededPrefill: Boolean = false
 
     /**
      * The form is seeded from Firestore exactly once. Later emissions (including the
      * echo of our own sub-task writes) must not overwrite what the user is typing.
      */
     private var seededTaskId: String? = null
+    private var draftSeeded: Boolean = false
 
     /**
      * The document this form was opened on.
@@ -171,37 +162,31 @@ class AddEditViewModel @Inject constructor(
     }
 
     /**
-     * Seeds a new-task editor once when opened from a contextual next-task suggestion
-     * or a project's '+' button. Never overwrites edits after first composition.
+     * Seeds a new-task draft once when opened from a contextual suggestion or a
+     * project page's `+` button.
      */
     fun seedFromDraft(
-        initialTitle: String?,
-        initialDescription: String?,
-        initialCategoryId: String?,
-        initialPriorityName: String?,
-        initialDueAt: Long?
+        title: String? = null,
+        description: String? = null,
+        categoryId: String? = null,
+        priorityName: String? = null,
+        dueAt: Long? = null
     ) {
-        if (seededPrefill || _uiState.value.isEditMode) return
-        val hasAnyPrefill = !initialTitle.isNullOrBlank() ||
-            !initialDescription.isNullOrBlank() ||
-            !initialCategoryId.isNullOrBlank() ||
-            !initialPriorityName.isNullOrBlank() ||
-            initialDueAt != null
-        if (!hasAnyPrefill) return
-
-        seededPrefill = true
-        val parsedPriority = initialPriorityName?.let { raw ->
-            Priority.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+        if (draftSeeded || _uiState.value.isEditMode) return
+        if (title == null && description == null && categoryId == null && priorityName == null && dueAt == null) return
+        draftSeeded = true
+        val parsedPriority = priorityName?.let { name ->
+            Priority.entries.firstOrNull { it.name.equals(name, ignoreCase = true) }
         }
-        _uiState.update { current ->
-            current.copy(
-                title = initialTitle?.takeIf { it.isNotBlank() } ?: current.title,
-                description = initialDescription?.takeIf { it.isNotBlank() } ?: current.description,
-                categoryId = initialCategoryId?.takeIf { it.isNotBlank() } ?: current.categoryId,
-                priority = parsedPriority ?: current.priority,
-                dueAt = initialDueAt ?: current.dueAt,
-                dueDateMillis = initialDueAt ?: current.dueDateMillis,
-                dueTimeMillis = initialDueAt ?: current.dueTimeMillis
+        _uiState.update { state ->
+            state.copy(
+                title = title ?: state.title,
+                description = description ?: state.description,
+                categoryId = categoryId ?: state.categoryId,
+                priority = parsedPriority ?: state.priority,
+                dueAt = dueAt ?: state.dueAt,
+                dueDateMillis = dueAt ?: state.dueDateMillis,
+                dueTimeMillis = dueAt ?: state.dueTimeMillis
             )
         }
     }
@@ -352,6 +337,93 @@ class AddEditViewModel @Inject constructor(
         persistSubTasks()
     }
 
+    /* ---------------------------------------------------------------- */
+    /* Suggested steps                                                  */
+    /* ---------------------------------------------------------------- */
+
+    /**
+     * Asks for steps for whatever is in the title right now.
+     *
+     * The title is the input, so this reads the live state rather than a snapshot taken
+     * on screen entry: by the time the user taps ✨ they have typed the sentence they
+     * want broken down.
+     */
+    fun onSuggestSubTasks() {
+        val snapshot = _uiState.value
+        if (snapshot.isSuggestingSubTasks) return
+        if (snapshot.title.isBlank()) {
+            _uiState.update { it.copy(subTaskSuggestionMessage = "Give the task a name first") }
+            return
+        }
+
+        _uiState.update {
+            it.copy(isSuggestingSubTasks = true, subTaskSuggestionMessage = null)
+        }
+        viewModelScope.launch {
+            try {
+                val result = suggestSubTasksUseCase(
+                    title = snapshot.title,
+                    description = snapshot.description.takeIf { d -> d.isNotBlank() },
+                    existingSubTasks = snapshot.subTasks.map { it.title },
+                    uid = auth.currentUser?.uid
+                )
+                _uiState.update { current ->
+                    current.copy(
+                        isSuggestingSubTasks = false,
+                        suggestedSubTasks = result.steps,
+                        subTaskSuggestionMessage = result.message
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSuggestingSubTasks = false,
+                        subTaskSuggestionMessage = "Couldn't suggest steps - try again"
+                    )
+                }
+            }
+        }
+    }
+
+    /** Accepting one chip turns it into a real sub-task and drops it from the row. */
+    fun onAcceptSuggestedSubTask(step: String) {
+        val snapshot = _uiState.value
+        val alreadyPresent = snapshot.subTasks.any { it.title.equals(step, ignoreCase = true) }
+        if (alreadyPresent) {
+            _uiState.update { it.copy(suggestedSubTasks = it.suggestedSubTasks - step) }
+            return
+        }
+        val sub = SubTask(id = newSubTaskId(), title = step.trim(), isDone = false)
+        _uiState.update {
+            it.copy(
+                subTasks = it.subTasks + sub,
+                suggestedSubTasks = it.suggestedSubTasks - step
+            )
+        }
+        persistSubTasks()
+    }
+
+    fun onAcceptAllSuggestedSubTasks() {
+        val snapshot = _uiState.value
+        if (snapshot.suggestedSubTasks.isEmpty()) return
+        val existing = snapshot.subTasks.map { it.title.lowercase() }.toMutableSet()
+        val accepted = snapshot.suggestedSubTasks
+            .filter { existing.add(it.lowercase()) }
+            .map { step -> SubTask(id = newSubTaskId(), title = step.trim(), isDone = false) }
+        if (accepted.isNotEmpty()) {
+            _uiState.update { it.copy(subTasks = it.subTasks + accepted) }
+            persistSubTasks()
+        }
+        _uiState.update { it.copy(suggestedSubTasks = emptyList()) }
+    }
+
+    fun onDismissSuggestedSubTasks() {
+        _uiState.update { it.copy(suggestedSubTasks = emptyList(), subTaskSuggestionMessage = null) }
+    }
+
+    private fun newSubTaskId(): String =
+        System.currentTimeMillis().toString() + "_" + (0..999).random()
+
     /**
      * Writes the checklist on its own, so ticking a sub-task sticks without having to
      * press Update. Reads the stored task first so no other field is clobbered by
@@ -391,7 +463,6 @@ class AddEditViewModel @Inject constructor(
 
         viewModelScope.launch {
             if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
-                pendingConsentAction = PendingConsentAction.QUICK_ADD
                 _uiState.update { it.copy(showAiConsentSheet = true) }
                 return@launch
             }
@@ -400,155 +471,15 @@ class AddEditViewModel @Inject constructor(
     }
 
     fun onAiConsentDecided(enableCloud: Boolean) {
-        val nextAction = pendingConsentAction
-        pendingConsentAction = null
         viewModelScope.launch {
             aiPreferences.setCloudEnabled(enableCloud)
             _uiState.update { it.copy(showAiConsentSheet = false) }
-            when (nextAction) {
-                PendingConsentAction.SUGGEST_STEPS -> runSuggestSubTasks(forceRefresh = false)
-                PendingConsentAction.QUICK_ADD, null -> runQuickAdd()
-            }
+            runQuickAdd()
         }
     }
 
     fun onDismissAiConsent() {
-        pendingConsentAction = null
         _uiState.update { it.copy(showAiConsentSheet = false) }
-    }
-
-    /* ---------------------------------------------------------------- */
-    /* Phase 3: AI sub-task breakdown ("Suggest steps")                 */
-    /* ---------------------------------------------------------------- */
-
-    fun onSuggestSubTasks(forceRefresh: Boolean = false) {
-        val snapshot = _uiState.value
-        if (snapshot.title.trim().length < 3 || snapshot.isSuggestingSubTasks) return
-
-        viewModelScope.launch {
-            if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
-                pendingConsentAction = PendingConsentAction.SUGGEST_STEPS
-                _uiState.update { it.copy(showAiConsentSheet = true) }
-                return@launch
-            }
-            runSuggestSubTasks(forceRefresh = forceRefresh)
-        }
-    }
-
-    private suspend fun runSuggestSubTasks(forceRefresh: Boolean) {
-        val snapshot = _uiState.value
-        val title = snapshot.title.trim()
-        if (title.length < 3 || snapshot.isSuggestingSubTasks) return
-
-        _uiState.update {
-            it.copy(
-                isSuggestingSubTasks = true,
-                canUndoSuggestedSubTasks = false
-            )
-        }
-
-        val result = suggestSubTasksUseCase(
-            uid = auth.currentUser?.uid,
-            title = title,
-            description = snapshot.description,
-            existingSubTasks = snapshot.subTasks.map { it.title },
-            forceRefresh = forceRefresh
-        )
-
-        _uiState.update { current ->
-            current.copy(
-                isSuggestingSubTasks = false,
-                suggestedSubTasks = result.steps,
-                suggestedSubTasksSource = result.source.takeIf { result.steps.isNotEmpty() }
-            )
-        }
-    }
-
-    fun onAcceptSuggestedSubTask(step: String) {
-        val clean = step.trim()
-        if (clean.isBlank()) return
-        val current = _uiState.value
-        if (subTasksSuggestionUndo == null) {
-            subTasksSuggestionUndo = current.subTasks
-        }
-        val alreadyExists = current.subTasks.any { it.title.equals(clean, ignoreCase = true) }
-        val newSub = SubTask(
-            id = System.currentTimeMillis().toString() + "_" + (0..999).random(),
-            title = clean,
-            isDone = false
-        )
-        _uiState.update { state ->
-            val nextSuggested = state.suggestedSubTasks.filterNot { it.equals(clean, ignoreCase = true) }
-            state.copy(
-                subTasks = if (alreadyExists) state.subTasks else state.subTasks + newSub,
-                suggestedSubTasks = nextSuggested,
-                suggestedSubTasksSource = state.suggestedSubTasksSource.takeIf { nextSuggested.isNotEmpty() },
-                canUndoSuggestedSubTasks = true
-            )
-        }
-        telemetry.logSuggestionAction(kind = "subtask", action = "added", count = 1)
-        persistSubTasks()
-    }
-
-    fun onAcceptAllSuggestedSubTasks() {
-        val current = _uiState.value
-        val pending = current.suggestedSubTasks
-        if (pending.isEmpty()) return
-
-        if (subTasksSuggestionUndo == null) {
-            subTasksSuggestionUndo = current.subTasks
-        }
-        val existingLower = current.subTasks.map { it.title.lowercase() }.toSet()
-        val additions = pending
-            .filter { it.isNotBlank() && it.lowercase() !in existingLower }
-            .mapIndexed { idx, step ->
-                SubTask(
-                    id = "${System.currentTimeMillis()}_${idx}_${(0..999).random()}",
-                    title = step,
-                    isDone = false
-                )
-            }
-
-        _uiState.update { state ->
-            state.copy(
-                subTasks = state.subTasks + additions,
-                suggestedSubTasks = emptyList(),
-                suggestedSubTasksSource = null,
-                canUndoSuggestedSubTasks = additions.isNotEmpty()
-            )
-        }
-        if (additions.isNotEmpty()) {
-            telemetry.logSuggestionAction(kind = "subtask", action = "added", count = additions.size)
-            persistSubTasks()
-        }
-    }
-
-    fun onUndoSuggestedSubTasks() {
-        val prior = subTasksSuggestionUndo ?: return
-        subTasksSuggestionUndo = null
-        _uiState.update { state ->
-            state.copy(
-                subTasks = prior,
-                canUndoSuggestedSubTasks = false
-            )
-        }
-        telemetry.logSuggestionAction(kind = "subtask", action = "undo", count = 1)
-        persistSubTasks()
-    }
-
-    fun onDismissSuggestedSubTasks() {
-        val hadSuggestions = _uiState.value.suggestedSubTasks.isNotEmpty()
-        subTasksSuggestionUndo = null
-        _uiState.update {
-            it.copy(
-                suggestedSubTasks = emptyList(),
-                suggestedSubTasksSource = null,
-                canUndoSuggestedSubTasks = false
-            )
-        }
-        if (hadSuggestions) {
-            telemetry.logSuggestionAction(kind = "subtask", action = "dismissed", count = 1)
-        }
     }
 
     private suspend fun runQuickAdd() {
@@ -561,6 +492,10 @@ class AddEditViewModel @Inject constructor(
             it.copy(isQuickAddBusy = true, quickAddSummary = null, quickAddError = null)
         }
 
+        // Read before the call: afterwards, LOCAL is ambiguous - it means either "the
+        // switch is off" or "the model was asked and did not answer", and those need
+        // different words in the strip.
+        val cloudAsked = aiPreferences.isCloudEnabledNow()
         val result = parseQuickAddUseCase(sentence, snapshot.categories, auth.currentUser?.uid)
         val draft = result.draft
 
@@ -626,7 +561,12 @@ class AddEditViewModel @Inject constructor(
                     null -> current.reminderAt
                 },
                 isQuickAddBusy = false,
-                quickAddSummary = summaryOf(draft, result.source, snapshot.categories),
+                quickAddSummary = summaryOf(
+                    draft = draft,
+                    source = result.source,
+                    categories = snapshot.categories,
+                    cloudAskedButUnanswered = cloudAsked && result.source == QuickAddResult.Source.LOCAL
+                ),
                 quickAddError = null
             )
         }
@@ -672,7 +612,8 @@ class AddEditViewModel @Inject constructor(
     private fun summaryOf(
         draft: AiTaskDraft,
         source: QuickAddResult.Source,
-        categories: List<Category>
+        categories: List<Category>,
+        cloudAskedButUnanswered: Boolean = false
     ): String {
         val parts = mutableListOf<String>()
 
@@ -697,7 +638,13 @@ class AddEditViewModel @Inject constructor(
         if (draft.reminder == true) parts += "Reminder"
         if (draft.reminder == false) parts += "No reminder"
 
-        val label = if (source == QuickAddResult.Source.CLOUD) "AI filled" else "Filled offline"
+        val label = when {
+            source == QuickAddResult.Source.CLOUD -> "AI filled"
+            // Says which of the two offline reasons it was. "Filled offline" alone is
+            // what made a failing model look like a switched-off feature.
+            cloudAskedButUnanswered -> "Filled offline — AI didn't answer"
+            else -> "Filled offline"
+        }
         return if (parts.isEmpty()) label else "$label: ${parts.joinToString(" · ")}"
     }
 

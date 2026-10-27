@@ -164,15 +164,18 @@ fun SabihonNavHost(
                 categoryId = args.categoryId,
                 onBack = { navController.popBackStack() },
                 onTaskClick = { taskId -> navController.navigate(Route.AddEditTask(taskId)) },
-                onAddTask = { navController.navigate(Route.AddEditTask(initialCategoryId = args.categoryId)) },
-                onAddPrefilledTask = { candidate ->
+                onAddTask = {
+                    navController.navigate(Route.AddEditTask(initialCategoryId = args.categoryId))
+                },
+                onEditSuggestion = { candidate ->
                     navController.navigate(
                         Route.AddEditTask(
                             initialTitle = candidate.title,
-                            initialDescription = candidate.description,
                             initialCategoryId = candidate.categoryId ?: args.categoryId,
                             initialPriority = candidate.priority.name,
-                            initialDueAt = candidate.dueAt
+                            initialDueAt = candidate.dueOffsetHours?.let {
+                                System.currentTimeMillis() + it * 3_600_000L
+                            }
                         )
                     )
                 }
@@ -182,13 +185,13 @@ fun SabihonNavHost(
             val args = backStackEntry.toRoute<Route.AddEditTask>()
             AddEditTaskScreen(
                 taskId = args.taskId,
-                onBack = { navController.popBackStack() },
-                onSaved = { navController.popBackStack() },
                 initialTitle = args.initialTitle,
                 initialDescription = args.initialDescription,
                 initialCategoryId = args.initialCategoryId,
                 initialPriority = args.initialPriority,
-                initialDueAt = args.initialDueAt
+                initialDueAt = args.initialDueAt,
+                onBack = { navController.popBackStack() },
+                onSaved = { navController.popBackStack() }
             )
         }
         composable<Route.Search>(

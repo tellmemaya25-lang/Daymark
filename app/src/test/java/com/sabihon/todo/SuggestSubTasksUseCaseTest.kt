@@ -1,134 +1,195 @@
 package com.sabihon.todo
 
 import com.sabihon.todo.core.util.Result
-import com.sabihon.todo.data.ai.AiInputGuard
-import com.sabihon.todo.data.ai.AiQuotaGuard
-import com.sabihon.todo.data.ai.AiRouter
-import com.sabihon.todo.data.ai.AiSnapshotCache
-import com.sabihon.todo.data.ai.LocalSuggestionHeuristics
-import com.sabihon.todo.domain.ai.AiModelTier
-import com.sabihon.todo.domain.ai.AiSource
+import com.sabihon.todo.data.ai.LocalSubTaskHeuristics
 import com.sabihon.todo.domain.ai.AiTaskService
+import com.sabihon.todo.domain.usecase.SubTaskSuggestions
 import com.sabihon.todo.domain.usecase.SuggestSubTasksUseCase
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.time.LocalDate
 
 /**
- * Phase 3 — Sub-task breakdown sanitization, semantic Jaccard caching, and offline fallback tests.
+ * The rules that hold whatever answered the question (`docs/ai-task-prioritization-and-
+ * suggestions-plan.md` Phase 3).
+ *
+ * These wire only the service and the offline splitter, so there is no quota guard, no
+ * circuit breaker and no clock: the questions here are about cleaning an answer, not
+ * about rate limiting, which `AiGuardrailsAndCacheTest` already covers.
  */
 class SuggestSubTasksUseCaseTest {
 
-    private val today = LocalDate.of(2026, 10, 27)
+    private val service = mockk<AiTaskService>()
+    private val heuristics = LocalSubTaskHeuristics()
+    private val useCase = SuggestSubTasksUseCase(service, heuristics)
 
-    private fun buildUseCase(
-        service: AiTaskService,
-        cloudEnabled: Boolean = true,
-        clockMs: () -> Long = { 1_000_000L }
-    ): Pair<SuggestSubTasksUseCase, AiSnapshotCache> {
-        val prefs = FakeAiPreferenceStore(cloudEnabledInitial = cloudEnabled)
-        val quota = AiQuotaGuard(prefs = prefs, clock = clockMs, todayProvider = { today })
-        val cache = AiSnapshotCache(clock = clockMs)
-        val useCase = SuggestSubTasksUseCase(
-            aiTaskService = service,
-            prefs = prefs,
-            inputGuard = AiInputGuard(),
-            quotaGuard = quota,
-            snapshotCache = cache,
-            router = AiRouter(),
-            localHeuristics = LocalSuggestionHeuristics(),
-            clock = clockMs
-        )
-        return useCase to cache
+    private fun cloudReturns(vararg steps: String) {
+        coEvery { service.suggestSubTasks(any(), any(), any()) } returns Result.Success(steps.toList())
+    }
+
+    private fun cloudFails() {
+        coEvery { service.suggestSubTasks(any(), any(), any()) } returns
+            Result.Error(IllegalStateException("network down"))
     }
 
     @Test
-    fun `strips bullets, markdown, and URLs, deduplicates existing steps, drops title echo, and caps at 6`() = runTest {
-        val service = mockk<AiTaskService>()
-        val (useCase, _) = buildUseCase(service)
+    fun `bullet and number prefixes are stripped`() = runTest {
+        useCase.clearCache()
+        cloudReturns("1. Buy milk", "- charge the camera", "• Pack bags", "Step 2: print tickets")
 
-        coEvery { service.suggestSubTasks(any(), any()) } returns Result.Success(
-            listOf(
-                "1. **Outline** talking points https://phish.example",
-                "- book meeting room",
-                "Step 3:Host Q4 retro", // exact echo of task title -> dropped
-                "  • Collect sprint wins  ",
-                "4) Review action items",
-                "5. Draft summary doc",
-                "6. Share slides with team",
-                "7. Schedule follow-up check-in",
-                "8. Extra step beyond cap"
-            )
+        val result = useCase("trip prep", null, emptyList())
+
+        assertEquals(
+            listOf("Buy milk", "charge the camera", "Pack bags", "print tickets"),
+            result.steps
         )
+    }
 
-        val result = useCase(
-            uid = "u1",
-            title = "Host Q4 retro",
-            description = "Team review",
-            existingSubTasks = listOf("Book meeting room")
-        )
+    @Test
+    fun `steps the user already has are dropped, case-insensitively`() = runTest {
+        useCase.clearCache()
+        cloudReturns("Buy milk", "Charge camera")
 
-        assertEquals(AiSource.CLOUD, result.source)
-        assertEquals(AiModelTier.FLASH_LITE, result.modelTier)
+        val result = useCase("trip prep", null, listOf("buy MILK"))
+
+        assertEquals(listOf("Charge camera"), result.steps)
+    }
+
+    @Test
+    fun `duplicates inside one answer collapse`() = runTest {
+        useCase.clearCache()
+        cloudReturns("Pack bags", "pack bags", "PACK BAGS")
+
+        val result = useCase("trip prep", null, emptyList())
+
+        assertEquals(listOf("Pack bags"), result.steps)
+    }
+
+    @Test
+    fun `no more than six steps survive`() = runTest {
+        useCase.clearCache()
+        cloudReturns("one", "two", "three", "four", "five", "six", "seven", "eight")
+
+        val result = useCase("big job", null, emptyList())
+
         assertEquals(6, result.steps.size)
-        assertEquals("Outline talking points", result.steps.first())
-        assertFalse(result.steps.any { it.equals("Book meeting room", ignoreCase = true) })
-        assertFalse(result.steps.any { it.equals("Host Q4 retro", ignoreCase = true) })
-        assertFalse(result.steps.any { it.contains("https://") || it.contains("*") })
     }
 
     @Test
-    fun `semantic Jaccard cache hits on reordered words for same uid and isolates across users`() = runTest {
-        val service = mockk<AiTaskService>()
-        var now = 2_000_000L
-        val (useCase, _) = buildUseCase(service, clockMs = { now })
+    fun `a step longer than a line is cut, not dropped`() = runTest {
+        useCase.clearCache()
+        cloudReturns("x".repeat(200) + " and then some")
 
-        coEvery { service.suggestSubTasks(any(), any()) } returns Result.Success(
-            listOf("Outline slides", "Gather Q4 metrics", "Rehearse pitch")
-        )
+        val result = useCase("long step", null, emptyList())
 
-        val first = useCase(uid = "user-a", title = "Prepare slides for Q4 pitch")
-        assertEquals(AiSource.CLOUD, first.source)
-
-        // Reordered & inflected wording ("Q4 pitch slides preparation") -> semantic cache hit!
-        now += 30_000L
-        val second = useCase(
-            uid = "user-a",
-            title = "Q4 pitch slides preparation",
-            existingSubTasks = listOf("Outline slides")
-        )
-        assertEquals(AiSource.CACHE, second.source)
-        // Cached steps are still filtered against the live existingSubTasks!
-        assertEquals(listOf("Gather Q4 metrics", "Rehearse pitch"), second.steps)
-        coVerify(exactly = 1) { service.suggestSubTasks(any(), any()) }
-
-        // Different uid must not read user-a's cached breakdown.
-        now += 30_000L
-        val otherUser = useCase(uid = "user-b", title = "Prepare slides for Q4 pitch")
-        assertEquals(AiSource.CLOUD, otherUser.source)
-        coVerify(exactly = 2) { service.suggestSubTasks(any(), any()) }
+        assertEquals(80, result.steps.single().length)
     }
 
     @Test
-    fun `offline or cloud-disabled mode returns deterministic local steps without calling Gemini`() = runTest {
-        val service = mockk<AiTaskService>()
-        val (useCase, _) = buildUseCase(service, cloudEnabled = false)
+    fun `a paraphrased title is answered from the cache without a second call`() = runTest {
+        useCase.clearCache()
+        cloudReturns("Buy milk", "Charge camera")
+
+        useCase("buy milk and camera", null, emptyList())
+        // Reordered words: same question, so the answer is reused rather than re-asked.
+        val second = useCase("camera buy milk", null, emptyList())
+
+        assertEquals(SubTaskSuggestions.Source.CACHE, second.source)
+        coVerify(exactly = 1) { service.suggestSubTasks(any(), any(), any()) }
+    }
+
+    @Test
+    fun `an unrelated title is a new question`() = runTest {
+        useCase.clearCache()
+        cloudReturns("Buy milk")
+
+        useCase("buy milk", null, emptyList())
+        useCase("call the dentist", null, emptyList())
+
+        coVerify(exactly = 2) { service.suggestSubTasks(any(), any(), any()) }
+    }
+
+    @Test
+    fun `a cached answer is re-filtered against steps added since`() = runTest {
+        useCase.clearCache()
+        cloudReturns("Buy milk", "Charge camera")
+
+        useCase("buy milk", null, emptyList())
+        val second = useCase("buy milk", null, listOf("Buy milk"))
+
+        assertEquals(listOf("Charge camera"), second.steps)
+    }
+
+    @Test
+    fun `a failed call falls back to the offline split, labelled`() = runTest {
+        useCase.clearCache()
+        cloudFails()
 
         val result = useCase(
-            uid = "u1",
-            title = "Prepare client presentation deck",
-            existingSubTasks = listOf("Run a timed rehearsal")
+            "pack, print the tickets and charge the camera",
+            null,
+            emptyList()
         )
 
-        assertEquals(AiSource.LOCAL_FALLBACK, result.source)
-        assertTrue(result.steps.isNotEmpty())
-        assertFalse(result.steps.any { it.equals("Run a timed rehearsal", ignoreCase = true) })
-        coVerify(exactly = 0) { service.suggestSubTasks(any(), any()) }
+        assertEquals(SubTaskSuggestions.Source.LOCAL, result.source)
+        assertEquals(
+            listOf("pack", "print the tickets", "charge the camera"),
+            result.steps
+        )
+        assertNull(result.message)
+    }
+
+    @Test
+    fun `a failed call with nothing to split says so instead of inventing steps`() = runTest {
+        useCase.clearCache()
+        cloudFails()
+
+        val result = useCase("call the dentist", null, emptyList())
+
+        assertTrue(result.steps.isEmpty())
+        assertEquals(SubTaskSuggestions.Source.LOCAL, result.source)
+        assertEquals("AI didn't answer - try again", result.message)
+    }
+
+    @Test
+    fun `a blank title never reaches the service`() = runTest {
+        useCase.clearCache()
+
+        val result = useCase("   ", null, emptyList())
+
+        assertTrue(result.steps.isEmpty())
+        assertEquals("Give the task a name first", result.message)
+        coVerify(exactly = 0) { service.suggestSubTasks(any(), any(), any()) }
+    }
+
+    @Test
+    fun `a bare conjunction is not split into fragments`() = runTest {
+        // "buy milk and bread" is one errand. Splitting it would offer "bread" as a step,
+        // which is a worse answer than no answer at all.
+        val steps = heuristics.split("buy milk and bread")
+
+        assertTrue(steps.isEmpty())
+    }
+
+    @Test
+    fun `a comma list is split`() = runTest {
+        val steps = heuristics.split("pack, print the tickets and charge the camera")
+
+        assertEquals(listOf("pack", "print the tickets", "charge the camera"), steps)
+    }
+
+    @Test
+    fun `the offline splitter respects steps the user already has`() = runTest {
+        val steps = heuristics.split(
+            title = "pack, print the tickets and charge the camera",
+            existingSubTasks = listOf("Pack")
+        )
+
+        assertEquals(listOf("print the tickets", "charge the camera"), steps)
     }
 }

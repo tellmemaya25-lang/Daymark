@@ -6,30 +6,29 @@ import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -85,9 +84,8 @@ import com.sabihon.todo.core.ui.components.ConfirmDialog
 import com.sabihon.todo.core.ui.components.DictationMic
 import com.sabihon.todo.core.ui.components.DictationStrip
 import com.sabihon.todo.core.ui.components.SubTaskRoundedCheckbox
+import com.sabihon.todo.core.ui.components.SuggestedStepChip
 import com.sabihon.todo.core.ui.theme.AccentBlue
-import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
-import com.sabihon.todo.domain.ai.AiSource
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.usecase.RepeatScheduler
@@ -99,7 +97,7 @@ import java.util.Locale
 /**
  * Add/Edit Task – fixed inconsistency and color contrast light/dark + 24.dp consistency
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditTaskScreen(
     taskId: String?,
@@ -173,15 +171,24 @@ fun AddEditTaskScreen(
         }
     }
 
-    LaunchedEffect(taskId) {
-        viewModel.loadTask(taskId)
-        if (taskId == null) {
+    LaunchedEffect(
+        taskId,
+        initialTitle,
+        initialDescription,
+        initialCategoryId,
+        initialPriority,
+        initialDueAt
+    ) {
+        if (taskId != null) {
+            viewModel.loadTask(taskId)
+        } else {
+            viewModel.loadTask(null)
             viewModel.seedFromDraft(
-                initialTitle = initialTitle,
-                initialDescription = initialDescription,
-                initialCategoryId = initialCategoryId,
-                initialPriorityName = initialPriority,
-                initialDueAt = initialDueAt
+                title = initialTitle,
+                description = initialDescription,
+                categoryId = initialCategoryId,
+                priorityName = initialPriority,
+                dueAt = initialDueAt
             )
         }
     }
@@ -262,47 +269,69 @@ fun AddEditTaskScreen(
                 label = { Text("Title", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                 isError = uiState.titleError != null,
                 supportingText = { uiState.titleError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
-                leadingIcon = {
-                    if (recogniserAvailable) {
-                        DictationMic(
-                            listening = isSpeaking(DictationTarget.Title),
-                            description = "Dictate title",
-                            onClick = {
-                                dictate(
-                                    target = DictationTarget.Title,
-                                    baseText = uiState.title,
-                                    multiline = false,
-                                    onText = viewModel::onTitleChange
+                // Everything actionable sits on the right, next to the text it acts on:
+                // dictate, clear, then fill. The left edge carries no icon any more, so
+                // the title starts at the field's own padding and reads as one line of
+                // typing rather than a toolbar with a caption.
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (recogniserAvailable) {
+                            DictationMic(
+                                listening = isSpeaking(DictationTarget.Title),
+                                description = "Dictate title",
+                                onClick = {
+                                    dictate(
+                                        target = DictationTarget.Title,
+                                        baseText = uiState.title,
+                                        multiline = false,
+                                        onText = viewModel::onTitleChange
+                                    )
+                                }
+                            )
+                        }
+
+                        // Only while there is something to clear: a permanently drawn
+                        // "x" on an empty field is a button that does nothing.
+                        if (uiState.title.isNotEmpty()) {
+                            IconButton(
+                                onClick = { viewModel.onTitleChange("") },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Clear,
+                                    contentDescription = "Clear title",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
-                        )
-                    }
-                },
-                trailingIcon = {
-                    if (uiState.isQuickAddBusy) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = AccentBlue
-                        )
-                    } else {
-                        // Enabled only with text in the box: there is nothing to parse
-                        // in an empty sentence, and a dead button is better than a
-                        // button that answers "nothing found".
-                        IconButton(
-                            onClick = viewModel::onQuickAdd,
-                            enabled = uiState.title.isNotBlank()
-                        ) {
-                            Icon(
-                                Icons.Filled.AutoAwesome,
-                                contentDescription = "Fill the form from this sentence",
-                                tint = if (uiState.title.isNotBlank()) {
-                                    AccentBlue
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                                },
-                                modifier = Modifier.size(20.dp)
+                        }
+
+                        if (uiState.isQuickAddBusy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = AccentBlue
                             )
+                        } else {
+                            // Enabled only with text in the box: there is nothing to parse
+                            // in an empty sentence, and a dead button is better than a
+                            // button that answers "nothing found".
+                            IconButton(
+                                onClick = viewModel::onQuickAdd,
+                                enabled = uiState.title.isNotBlank(),
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.AutoAwesome,
+                                    contentDescription = "Fill the form from this sentence",
+                                    tint = if (uiState.title.isNotBlank()) {
+                                        AccentBlue
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                    },
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 },
@@ -539,154 +568,28 @@ fun AddEditTaskScreen(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     "Sub-tasks",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
                 )
-
-                val canSuggestSteps = uiState.title.trim().length >= 3 && !uiState.isSuggestingSubTasks
-                val surfaces = LocalDaymarkSurfaces.current
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(100.dp))
-                        .background(
-                            if (canSuggestSteps || uiState.isSuggestingSubTasks) {
-                                surfaces.accentSurface
-                            } else {
-                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
-                            }
-                        )
-                        .clickable(enabled = canSuggestSteps) { viewModel.onSuggestSubTasks() }
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (uiState.isSuggestingSubTasks) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(12.dp),
-                            strokeWidth = 1.6.dp,
-                            color = AccentBlue
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.AutoAwesome,
-                            contentDescription = "Suggest sub-task steps",
-                            tint = if (canSuggestSteps) AccentBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                            modifier = Modifier.size(13.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = if (uiState.isSuggestingSubTasks) "Suggesting\u2026" else "Suggest steps",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        ),
-                        color = if (canSuggestSteps || uiState.isSuggestingSubTasks) {
-                            surfaces.onAccentSurface
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        }
-                    )
-                }
+                SuggestStepsAction(
+                    busy = uiState.isSuggestingSubTasks,
+                    hasSuggestions = uiState.suggestedSubTasks.isNotEmpty(),
+                    onSuggest = viewModel::onSuggestSubTasks
+                )
             }
 
-            if (uiState.suggestedSubTasks.isNotEmpty()) {
-                val surfaces = LocalDaymarkSurfaces.current
-                val sourceLabel = when (uiState.suggestedSubTasksSource) {
-                    AiSource.CLOUD -> "AI suggested steps"
-                    AiSource.CACHE -> "AI suggested steps \u00B7 Cached"
-                    else -> "Suggested steps \u00B7 Offline rules"
-                }
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(surfaces.groupedCard)
-                        .border(1.dp, surfaces.cardBorder, RoundedCornerShape(18.dp))
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = sourceLabel,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                            color = AccentBlue,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(
-                            onClick = { viewModel.onAcceptAllSuggestedSubTasks() },
-                            modifier = Modifier.heightIn(min = 30.dp)
-                        ) {
-                            Text("Add all", color = AccentBlue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        TextButton(
-                            onClick = { viewModel.onDismissSuggestedSubTasks() },
-                            modifier = Modifier.heightIn(min = 30.dp)
-                        ) {
-                            Text("Dismiss", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                        }
-                    }
-
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        uiState.suggestedSubTasks.forEach { step ->
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(100.dp))
-                                    .background(surfaces.card)
-                                    .border(1.dp, AccentBlue.copy(alpha = 0.3f), RoundedCornerShape(100.dp))
-                                    .clickable { viewModel.onAcceptSuggestedSubTask(step) }
-                                    .padding(horizontal = 11.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Add,
-                                    contentDescription = null,
-                                    tint = AccentBlue,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    text = step,
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.Medium
-                                    ),
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
-                }
-            } else if (uiState.canUndoSuggestedSubTasks) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "Suggested steps added to checklist",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    TextButton(onClick = { viewModel.onUndoSuggestedSubTasks() }) {
-                        Text("Undo", color = AccentBlue, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
+            SuggestedStepSection(
+                steps = uiState.suggestedSubTasks,
+                message = uiState.subTaskSuggestionMessage,
+                onAccept = viewModel::onAcceptSuggestedSubTask,
+                onAcceptAll = viewModel::onAcceptAllSuggestedSubTasks,
+                onDismiss = viewModel::onDismissSuggestedSubTasks
+            )
 
             var editingSubId by remember { mutableStateOf<String?>(null) }
             var editingSubText by remember { mutableStateOf("") }
@@ -950,6 +853,133 @@ private fun safeFormatTime(millis: Long): String {
 /**
  * Pill used for the None / Daily / Weekly choice.
  */
+/* ------------------------------------------------------------------ */
+/* Suggested steps                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The ✨ half of the Sub-tasks header.
+ *
+ * It turns into a spinner rather than disabling silently, because a button that does
+ * nothing for two seconds reads as a broken button. While busy it ignores taps: the use
+ * case has its own single-flight lock, but the lock quietly refusing is not something to
+ * rely on when the alternative is one line of `if`.
+ */
+@Composable
+private fun SuggestStepsAction(
+    busy: Boolean,
+    hasSuggestions: Boolean,
+    onSuggest: () -> Unit
+) {
+    TextButton(
+        onClick = { if (!busy) onSuggest() },
+        enabled = !busy,
+        shape = RoundedCornerShape(100.dp),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+    ) {
+        if (busy) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+                color = AccentBlue
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Filled.AutoAwesome,
+                contentDescription = null,
+                tint = AccentBlue,
+                modifier = Modifier.size(15.dp)
+            )
+        }
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text = if (hasSuggestions) "Suggest more" else "Suggest steps",
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
+            color = AccentBlue
+        )
+    }
+}
+
+/**
+ * Offered steps, or the one line explaining why there are none.
+ *
+ * The message is deliberately specific - "Smart AI is off", "AI didn't answer", "Daily
+ * AI limit reached" - because a single "couldn't suggest steps" is what made the
+ * quick-add fallback impossible to diagnose for weeks.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SuggestedStepSection(
+    steps: List<String>,
+    message: String?,
+    onAccept: (String) -> Unit,
+    onAcceptAll: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    if (steps.isEmpty() && message == null) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (steps.isNotEmpty()) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                steps.forEach { step ->
+                    SuggestedStepChip(text = step, onClick = { onAccept(step) })
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Adding six steps one tap at a time is the kind of friction that makes
+                // people stop using the feature, so the whole row is one tap away.
+                if (steps.size > 1) {
+                    TextButton(
+                        onClick = onAcceptAll,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "Add all ${steps.size}",
+                            style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                            color = AccentBlue,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(
+                    onClick = onDismiss,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        "Dismiss",
+                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        if (message != null) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 @Composable
 private fun RepeatChip(
     label: String,

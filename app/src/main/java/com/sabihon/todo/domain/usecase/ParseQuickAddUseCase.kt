@@ -1,5 +1,6 @@
 package com.sabihon.todo.domain.usecase
 
+import android.util.Log
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiFeature
@@ -43,10 +44,19 @@ class ParseQuickAddUseCase private constructor(
     private val aiTaskService: AiTaskService,
     private val parser: QuickAddParser,
     private val inputGuard: AiInputGuard,
-    private val quotaGuard: AiQuotaGuard?,
-    private val prefs: AiPreferenceStore?
+    /**
+     * The two dependencies that only exist when the cloud half is wired up, bundled so
+     * there is exactly one nullable parameter.
+     *
+     * Their being separate nullable parameters is what broke the build: Kotlin erases
+     * `AiQuotaGuard?` to `AiQuotaGuard`, so this constructor and the injected one below
+     * had the same JVM signature and the compiler rejected the pair. One nullable
+     * parameter of its own type cannot collide with anything.
+     */
+    private val cloud: CloudGate?
 ) {
 
+    /** Dagger's way in: the cloud half is always present in the app. */
     @Inject
     constructor(
         aiTaskService: AiTaskService,
@@ -58,8 +68,7 @@ class ParseQuickAddUseCase private constructor(
         aiTaskService = aiTaskService,
         parser = parser,
         inputGuard = inputGuard,
-        quotaGuard = quotaGuard as AiQuotaGuard?,
-        prefs = prefs as AiPreferenceStore?
+        cloud = CloudGate(quotaGuard, prefs)
     )
 
     /** Preserved for unit tests that wire only [AiTaskService] and [QuickAddParser]. */
@@ -70,8 +79,13 @@ class ParseQuickAddUseCase private constructor(
         aiTaskService = aiTaskService,
         parser = parser,
         inputGuard = AiInputGuard(),
-        quotaGuard = null,
-        prefs = null
+        cloud = null
+    )
+
+    /** The rate limiter and the cloud switch, held together so neither is ever half-set. */
+    internal class CloudGate(
+        val quotaGuard: AiQuotaGuard,
+        val prefs: AiPreferenceStore
     )
 
     suspend operator fun invoke(
@@ -82,19 +96,24 @@ class ParseQuickAddUseCase private constructor(
         val sentence = input.trim()
         val offline = parser.parse(sentence, categories)
 
-        if (prefs != null && !prefs.isCloudEnabledNow()) {
+        val gate = cloud
+        if (gate != null && !gate.prefs.isCloudEnabledNow()) {
+            Log.i(TAG, "quick add: cloud AI is switched off, using the on-device reading")
             return QuickAddResult(offline, QuickAddResult.Source.LOCAL)
         }
 
         val scrubbedInput = inputGuard.sanitizeForPrompt(sentence, MAX_PROMPT_SENTENCE)
-            .ifBlank { return QuickAddResult(offline, QuickAddResult.Source.LOCAL) }
+            .ifBlank {
+                Log.w(TAG, "quick add: nothing survived PII scrubbing, using the on-device reading")
+                return QuickAddResult(offline, QuickAddResult.Source.LOCAL)
+            }
         val estimatedTokens = inputGuard.estimateTokens(
             promptChars = 950 + scrubbedInput.length,
             expectedOutputChars = 240
         )
 
-        val cloudResult: Result<AiTaskDraft>? = if (quotaGuard != null) {
-            val outcome = quotaGuard.runIfPermitted(
+        val cloudResult: Result<AiTaskDraft>? = if (gate != null) {
+            val outcome = gate.quotaGuard.runIfPermitted(
                 uid = uid,
                 feature = AiFeature.QUICK_ADD,
                 estimatedTokens = estimatedTokens,
@@ -105,13 +124,22 @@ class ParseQuickAddUseCase private constructor(
                 }
             }
             when (outcome) {
-                is AiQuotaGuard.ExecutionOutcome.Blocked -> null
+                is AiQuotaGuard.ExecutionOutcome.Blocked -> {
+                    Log.w(TAG, "quick add: cloud call blocked by quota guard (${outcome.reason})")
+                    null
+                }
                 is AiQuotaGuard.ExecutionOutcome.Executed -> {
                     val res = outcome.value
+                    if (res is Result.Error) {
+                        // The one line that turns "smart AI isn't working" into a
+                        // diagnosis. Without it every failure looked identical to the
+                        // feature being switched off.
+                        Log.w(TAG, "quick add: the model call failed", res.exception)
+                    }
                     if (res is Result.Success) {
-                        quotaGuard.recordSuccess(uid, estimatedTokens)
+                        gate.quotaGuard.recordSuccess(uid, estimatedTokens)
                     } else {
-                        quotaGuard.recordFailure((res as? Result.Error)?.exception)
+                        gate.quotaGuard.recordFailure((res as? Result.Error)?.exception)
                     }
                     res
                 }
@@ -128,8 +156,10 @@ class ParseQuickAddUseCase private constructor(
             ?.let { merge(it, offline) }
 
         return if (draft != null) {
+            Log.i(TAG, "quick add: the model answered")
             QuickAddResult(draft, QuickAddResult.Source.CLOUD)
         } else {
+            Log.i(TAG, "quick add: falling back to the on-device reading")
             QuickAddResult(offline, QuickAddResult.Source.LOCAL)
         }
     }
@@ -189,6 +219,7 @@ class ParseQuickAddUseCase private constructor(
     )
 
     private companion object {
+        const val TAG = "QuickAdd"
         const val TIMEOUT_MS = 12_000L
         const val MAX_PROMPT_SENTENCE = 300
         const val MAX_TITLE = 120

@@ -4,51 +4,58 @@ import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.model.Category
 
 /**
- * Everything the app asks a language model to do.
+ * Cloud AI boundary for task parsing and prioritization.
  *
- * Kept to plain Kotlin types so the domain layer knows nothing about Firebase or
- * network calls, and unit tests can replace it with a stub in one line.
+ * Implementations stay thin: build the prompt, ask for structured JSON, and map
+ * the wire shape. Timeouts, quota checks, PII scrubbing, closed-world validation,
+ * and deterministic fallbacks live in the domain use cases so they can be tested
+ * deterministically on the JVM without a network.
  */
 interface AiTaskService {
 
     /**
-     * Reads one sentence of natural language ("call mom friday 5pm, urgent") and
-     * returns the fields it implies.
-     *
-     * [categories] is the user's own list of categories, passed in so the model can
-     * match by meaning ("work", "groceries") without inventing an id that does not exist.
+     * @param input the raw (or PII-scrubbed) sentence the user typed.
+     * @param categories the user's own lists - the only ids this may return.
      */
-    suspend fun parseQuickAdd(
-        input: String,
-        categories: List<Category>
-    ): Result<AiTaskDraft>
+    suspend fun parseQuickAdd(input: String, categories: List<Category>): Result<AiTaskDraft>
 
     /**
-     * Evaluates a compact, PII-scrubbed list of open tasks and proposes a focus order
-     * (`1..N`), up to 3 Top Focus picks, and calibrated [com.sabihon.todo.domain.model.Priority] changes.
+     * Audits up to 25 scrubbed open tasks and returns candidate focus ranks and
+     * priority calibrations.
      */
     suspend fun prioritizeTasks(
         tasks: List<PromptTaskItem>,
         modelTier: AiModelTier = AiModelTier.FLASH_LITE
     ): Result<CloudPrioritizationDraft> =
-        Result.Error(UnsupportedOperationException("Prioritization not configured"))
+        Result.Error(UnsupportedOperationException("Prioritization not supported by this service"))
 
     /**
-     * Breaks a task down into 3–6 concrete, verb-first checklist steps (`Phase 3`).
+     * Breaks one task into concrete steps.
+     *
+     * @param title the task being broken down.
+     * @param description the note attached to it, if any - often where the detail lives.
+     * @param existingSubTasks steps the user already typed, which must not come back.
+     * @return raw candidate steps. Cleaning, de-duplication, capping and ordering are the
+     *   use case's job, so every implementation - cloud, cached or heuristic - is held to
+     *   the same rules.
      */
     suspend fun suggestSubTasks(
-        request: PromptSubTaskRequest,
-        modelTier: AiModelTier = AiModelTier.FLASH_LITE
+        title: String,
+        description: String?,
+        existingSubTasks: List<String>
     ): Result<List<String>> =
-        Result.Error(UnsupportedOperationException("Sub-task suggestions not configured"))
+        Result.Error(UnsupportedOperationException("Step suggestions not supported by this service"))
 
     /**
-     * Proposes up to 3 grounded follow-up tasks from active projects and recent
-     * completions (`Phase 4`).
+     * Suggests up to three things worth doing next.
+     *
+     * @param context only titles and list names - see [SuggestionContext].
+     * @return raw candidates. Whitelisting the list id, dropping anything the user
+     *   already has open or has muted, and capping the count are the use case's job, so
+     *   the local heuristics and the cloud answer are judged by identical rules.
      */
     suspend fun suggestNextTasks(
-        context: PromptNextTaskContext,
-        modelTier: AiModelTier = AiModelTier.FLASH_LITE
-    ): Result<List<CloudSuggestedTaskItem>> =
-        Result.Error(UnsupportedOperationException("Next-task suggestions not configured"))
+        context: SuggestionContext
+    ): Result<List<SuggestedTaskCandidate>> =
+        Result.Error(UnsupportedOperationException("Next-task suggestions not supported by this service"))
 }

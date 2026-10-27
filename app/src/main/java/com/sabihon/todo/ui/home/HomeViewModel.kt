@@ -4,19 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.sabihon.todo.core.datastore.AiPreferenceStore
-import com.sabihon.todo.core.telemetry.AiTelemetryLogger
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiSnapshotCache
 import com.sabihon.todo.data.ai.LocalPriorityScorer
 import com.sabihon.todo.data.local.AvatarStore
 import com.sabihon.todo.domain.ai.PrioritizationPlan
-import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
-import com.sabihon.todo.domain.model.SubTask
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.model.TaskFilter
-import com.sabihon.todo.domain.usecase.AddTaskUseCase
 import com.sabihon.todo.domain.usecase.ApplyPriorityPlanUseCase
 import com.sabihon.todo.domain.usecase.DeleteTaskUseCase
 import com.sabihon.todo.domain.usecase.GetDashboardCountsUseCase
@@ -25,9 +21,13 @@ import com.sabihon.todo.domain.usecase.ObserveTasksUseCase
 import com.sabihon.todo.domain.usecase.PrioritizationUndoSnapshot
 import com.sabihon.todo.domain.usecase.PrioritizeTasksUseCase
 import com.sabihon.todo.domain.usecase.RestoreTaskUseCase
+import com.sabihon.todo.domain.usecase.ToggleCompleteUseCase
+import com.sabihon.todo.core.telemetry.AiTelemetry
+import com.sabihon.todo.core.telemetry.FirebaseAiTelemetry
+import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
+import com.sabihon.todo.domain.usecase.AddTaskUseCase
 import com.sabihon.todo.domain.usecase.SuggestNextTasksUseCase
 import com.sabihon.todo.domain.usecase.SuggestSubTasksUseCase
-import com.sabihon.todo.domain.usecase.ToggleCompleteUseCase
 import com.sabihon.todo.domain.usecase.UpdateTaskUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -52,27 +52,29 @@ class HomeViewModel @Inject constructor(
     private val observeTasksUseCase: ObserveTasksUseCase,
     private val getDashboardCountsUseCase: GetDashboardCountsUseCase,
     private val toggleCompleteUseCase: ToggleCompleteUseCase,
-    private val addTaskUseCase: AddTaskUseCase,
     private val deleteTaskUseCase: DeleteTaskUseCase,
     private val restoreTaskUseCase: RestoreTaskUseCase,
     private val updateTaskUseCase: UpdateTaskUseCase,
     private val observeCategoriesUseCase: ObserveCategoriesUseCase,
     private val prioritizeTasksUseCase: PrioritizeTasksUseCase,
     private val applyPriorityPlanUseCase: ApplyPriorityPlanUseCase,
-    private val suggestSubTasksUseCase: SuggestSubTasksUseCase,
-    private val suggestNextTasksUseCase: SuggestNextTasksUseCase,
     private val localPriorityScorer: LocalPriorityScorer,
     private val aiSnapshotCache: AiSnapshotCache,
     private val aiPreferences: AiPreferenceStore,
-    private val telemetry: AiTelemetryLogger,
+    private val suggestSubTasksUseCase: SuggestSubTasksUseCase,
+    private val suggestNextTasksUseCase: SuggestNextTasksUseCase,
+    private val addTaskUseCase: AddTaskUseCase,
+    private val telemetry: AiTelemetry,
     private val avatarStore: AvatarStore,
     private val auth: FirebaseAuth
 ) : ViewModel() {
 
-    private sealed interface PendingConsentAction {
-        data object Prioritize : PendingConsentAction
-        data object SuggestNextTasks : PendingConsentAction
-        data class SuggestSubTasks(val task: Task) : PendingConsentAction
+    /** Guards the single automatic suggestion load per screen lifetime. */
+    private var nextSuggestionsRequested = false
+
+    private companion object {
+        /** Above this many open tasks the user already knows what is next. */
+        const val AUTO_SUGGEST_OPEN_THRESHOLD = 3
     }
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -83,7 +85,6 @@ class HomeViewModel @Inject constructor(
 
     private var categoriesList: List<Category> = emptyList()
     private var lastPriorityUndo: PrioritizationUndoSnapshot? = null
-    private var pendingConsentAction: PendingConsentAction? = null
 
     init {
         val user = auth.currentUser
@@ -215,6 +216,17 @@ class HomeViewModel @Inject constructor(
                             done = todayTasks.count { it.isCompleted }
                         )
 
+                        // The card is for a list that is nearly clear. With a long
+                        // backlog the user already knows what is next, and a cloud call
+                        // that says "here is more work" is noise. Fires once per
+                        // ViewModel lifetime; Refresh is the manual door.
+                        if (!nextSuggestionsRequested &&
+                            allTasks.count { !it.isCompleted } <= AUTO_SUGGEST_OPEN_THRESHOLD
+                        ) {
+                            nextSuggestionsRequested = true
+                            loadNextSuggestions()
+                        }
+
                         // Real-time CDC: surgically evict completed/deleted tasks from
                         // the cached prioritization plan and keep focus ranks fresh.
                         val cdcUpdatedPlan = aiSnapshotCache.onTasksSnapshotChanged(
@@ -275,9 +287,6 @@ class HomeViewModel @Inject constructor(
                                     current.selectedPriorityChanges.filterKeys { it in stillPendingChanges }
                                 } else {
                                     current.selectedPriorityChanges
-                                },
-                                suggestedNextTasks = current.suggestedNextTasks.filterNot { cand ->
-                                    allTasks.any { !it.isCompleted && it.title.equals(cand.title, ignoreCase = true) }
                                 }
                             )
                         }
@@ -318,6 +327,27 @@ class HomeViewModel @Inject constructor(
             is HomeAction.ClearError -> _uiState.update { it.copy(errorMessage = null) }
             is HomeAction.ClearHabitLabel -> _uiState.update { it.copy(habitNextLabel = null) }
             is HomeAction.AddSubTask -> addSubTask(action.taskId, action.subTaskTitle)
+            is HomeAction.SuggestSubTasks -> suggestSteps(action.taskId)
+            is HomeAction.AcceptSuggestedStep -> {
+                addSubTask(action.taskId, action.step)
+                // Drop the accepted step so the row shrinks as steps land, and clear the
+                // message: it explained an empty state that no longer applies.
+                _uiState.update { current ->
+                    current.copy(
+                        suggestedSteps = current.suggestedSteps - action.step,
+                        suggestedStepsMessage = null
+                    )
+                }
+            }
+            HomeAction.DismissSuggestedSteps -> _uiState.update {
+                it.copy(suggestedSteps = emptyList(), suggestedStepsMessage = null)
+            }
+            HomeAction.RequestSuggestions -> loadNextSuggestions()
+            is HomeAction.AcceptSuggestion -> acceptSuggestion(action.suggestion)
+            is HomeAction.DismissSuggestion -> dismissSuggestion(action.suggestion)
+            HomeAction.ToggleSuggestionsExpanded -> _uiState.update {
+                it.copy(suggestionsExpanded = !it.suggestionsExpanded)
+            }
             is HomeAction.ToggleSubTask -> toggleSubTask(action.taskId, action.subTaskId, action.isDone)
             is HomeAction.SetFilter -> {
                 _uiState.update { current ->
@@ -400,18 +430,13 @@ class HomeViewModel @Inject constructor(
             }
             HomeAction.RequestPrioritize -> onRequestPrioritize()
             is HomeAction.DecideAiConsent -> onDecideAiConsent(action.enableCloud)
-            HomeAction.DismissAiConsent -> {
-                pendingConsentAction = null
-                _uiState.update { it.copy(showAiConsentSheet = false) }
-            }
+            HomeAction.DismissAiConsent -> _uiState.update { it.copy(showAiConsentSheet = false) }
             HomeAction.RefreshPrioritize -> runPrioritization(forceRefresh = true)
             HomeAction.DismissPrioritizeSheet -> {
-                val proposed = _uiState.value.prioritizationPlan?.proposedChangesCount ?: 0
-                if (proposed > 0) {
-                    telemetry.logPrioritizationDecision(
-                        proposedCount = proposed,
-                        acceptedCount = 0,
-                        dismissed = true
+                if (_uiState.value.prioritizationPlan != null) {
+                    telemetry.logOutcome(
+                        feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
+                        action = FirebaseAiTelemetry.ACTION_DISMISSED
                     )
                 }
                 _uiState.update { it.copy(showPrioritizeSheet = false, isPrioritizing = false) }
@@ -419,26 +444,6 @@ class HomeViewModel @Inject constructor(
             is HomeAction.TogglePriorityProposal -> togglePriorityProposal(action.taskId, action.checked)
             HomeAction.ApplyPriorityPlan -> applyPriorityPlan()
             HomeAction.UndoPriorityPlan -> undoPriorityPlan()
-
-            is HomeAction.SuggestSubTasksForTask -> onRequestSubTaskSuggestions(action.task, action.forceRefresh)
-            is HomeAction.AcceptSuggestedSubTask -> acceptSuggestedSubTask(action.taskId, action.step)
-            is HomeAction.AcceptAllSuggestedSubTasks -> acceptAllSuggestedSubTasks(action.taskId)
-            HomeAction.ClearSubTaskSuggestions -> _uiState.update {
-                it.copy(
-                    isSuggestingSubTasks = false,
-                    subTaskSheetSuggestions = emptyList(),
-                    subTaskSheetSource = null
-                )
-            }
-
-            HomeAction.RequestNextTaskSuggestions -> onRequestNextTaskSuggestions()
-            HomeAction.RefreshNextTaskSuggestions -> runNextTaskSuggestions(forceRefresh = true)
-            HomeAction.CloseSuggestedTasksCard -> _uiState.update {
-                it.copy(showSuggestedTasksCard = false, isSuggestingNextTasks = false)
-            }
-            is HomeAction.QuickAddSuggestedTask -> quickAddSuggestedTask(action.candidate)
-            is HomeAction.DismissSuggestedTask -> dismissSuggestedTask(action.suggestionId)
-            HomeAction.ClearSuggestionToast -> _uiState.update { it.copy(suggestionToastMessage = null) }
         }
     }
 
@@ -446,7 +451,6 @@ class HomeViewModel @Inject constructor(
         if (_uiState.value.isPrioritizing) return
         viewModelScope.launch {
             if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
-                pendingConsentAction = PendingConsentAction.Prioritize
                 _uiState.update { it.copy(showAiConsentSheet = true) }
             } else {
                 runPrioritization(forceRefresh = false)
@@ -455,16 +459,10 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun onDecideAiConsent(enableCloud: Boolean) {
-        val nextAction = pendingConsentAction
-        pendingConsentAction = null
         viewModelScope.launch {
             aiPreferences.setCloudEnabled(enableCloud)
             _uiState.update { it.copy(showAiConsentSheet = false) }
-            when (nextAction) {
-                is PendingConsentAction.SuggestSubTasks -> runSubTaskSuggestions(nextAction.task, forceRefresh = false)
-                PendingConsentAction.SuggestNextTasks -> runNextTaskSuggestions(forceRefresh = false)
-                PendingConsentAction.Prioritize, null -> runPrioritization(forceRefresh = false)
-            }
+            runPrioritization(forceRefresh = false)
         }
     }
 
@@ -559,10 +557,10 @@ class HomeViewModel @Inject constructor(
                 is Result.Success -> {
                     val undo = result.data
                     lastPriorityUndo = undo.takeIf { it.count > 0 }
-                    telemetry.logPrioritizationDecision(
-                        proposedCount = plan.proposedChangesCount,
-                        acceptedCount = undo.count,
-                        dismissed = false
+                    telemetry.logOutcome(
+                        feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
+                        action = FirebaseAiTelemetry.ACTION_ACCEPTED,
+                        count = undo.count.coerceAtLeast(1)
                     )
                     _uiState.update { current ->
                         val ranks = plan.focusRankMap.ifEmpty { current.aiFocusRanks }
@@ -606,7 +604,6 @@ class HomeViewModel @Inject constructor(
         lastPriorityUndo = null
         viewModelScope.launch {
             applyPriorityPlanUseCase.undo(undoSnapshot)
-            telemetry.logPrioritizationUndo(undoSnapshot.count)
             _uiState.update { it.copy(showPriorityUndo = false, priorityUndoCount = 0) }
         }
     }
@@ -614,182 +611,6 @@ class HomeViewModel @Inject constructor(
     fun dismissPriorityUndo() {
         lastPriorityUndo = null
         _uiState.update { it.copy(showPriorityUndo = false, priorityUndoCount = 0) }
-    }
-
-    /* ---------------------------------------------------------------- */
-    /* Phase 3: Sub-task breakdown inside Home sub-task sheet           */
-    /* ---------------------------------------------------------------- */
-
-    private fun onRequestSubTaskSuggestions(task: Task, forceRefresh: Boolean) {
-        if (_uiState.value.isSuggestingSubTasks) return
-        viewModelScope.launch {
-            if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
-                pendingConsentAction = PendingConsentAction.SuggestSubTasks(task)
-                _uiState.update { it.copy(showAiConsentSheet = true) }
-            } else {
-                runSubTaskSuggestions(task, forceRefresh)
-            }
-        }
-    }
-
-    private fun runSubTaskSuggestions(task: Task, forceRefresh: Boolean) {
-        if (task.title.trim().length < 3) return
-        _uiState.update { it.copy(isSuggestingSubTasks = true) }
-        viewModelScope.launch {
-            val latestTask = _uiState.value.allTasks.firstOrNull { it.id == task.id } ?: task
-            val result = suggestSubTasksUseCase(
-                uid = auth.currentUser?.uid,
-                title = latestTask.title,
-                description = latestTask.description,
-                existingSubTasks = latestTask.subTasks.map { it.title },
-                forceRefresh = forceRefresh
-            )
-            _uiState.update {
-                it.copy(
-                    isSuggestingSubTasks = false,
-                    subTaskSheetSuggestions = result.steps,
-                    subTaskSheetSource = result.source.takeIf { result.steps.isNotEmpty() }
-                )
-            }
-        }
-    }
-
-    private fun acceptSuggestedSubTask(taskId: String, step: String) {
-        val clean = step.trim()
-        if (clean.isBlank()) return
-        viewModelScope.launch {
-            val task = _uiState.value.allTasks.firstOrNull { it.id == taskId } ?: return@launch
-            if (task.subTasks.none { it.title.equals(clean, ignoreCase = true) }) {
-                val newSub = SubTask(
-                    id = "${System.currentTimeMillis()}_${(0..999).random()}",
-                    title = clean,
-                    isDone = false
-                )
-                updateTaskUseCase(task.copy(subTasks = task.subTasks + newSub))
-                telemetry.logSuggestionAction(kind = "subtask", action = "added", count = 1)
-            }
-            _uiState.update { state ->
-                val remaining = state.subTaskSheetSuggestions.filterNot { it.equals(clean, ignoreCase = true) }
-                state.copy(
-                    subTaskSheetSuggestions = remaining,
-                    subTaskSheetSource = state.subTaskSheetSource.takeIf { remaining.isNotEmpty() }
-                )
-            }
-        }
-    }
-
-    private fun acceptAllSuggestedSubTasks(taskId: String) {
-        val pending = _uiState.value.subTaskSheetSuggestions
-        if (pending.isEmpty()) return
-        viewModelScope.launch {
-            val task = _uiState.value.allTasks.firstOrNull { it.id == taskId } ?: return@launch
-            val existingLower = task.subTasks.map { it.title.lowercase() }.toSet()
-            val additions = pending
-                .filter { it.isNotBlank() && it.lowercase() !in existingLower }
-                .mapIndexed { idx, step ->
-                    SubTask(
-                        id = "${System.currentTimeMillis()}_${idx}_${(0..999).random()}",
-                        title = step,
-                        isDone = false
-                    )
-                }
-            if (additions.isNotEmpty()) {
-                updateTaskUseCase(task.copy(subTasks = task.subTasks + additions))
-                telemetry.logSuggestionAction(kind = "subtask", action = "added", count = additions.size)
-            }
-            _uiState.update {
-                it.copy(
-                    subTaskSheetSuggestions = emptyList(),
-                    subTaskSheetSource = null
-                )
-            }
-        }
-    }
-
-    /* ---------------------------------------------------------------- */
-    /* Phase 4: Contextual next-task suggestions                        */
-    /* ---------------------------------------------------------------- */
-
-    private fun onRequestNextTaskSuggestions() {
-        if (_uiState.value.isSuggestingNextTasks) return
-        viewModelScope.launch {
-            if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
-                pendingConsentAction = PendingConsentAction.SuggestNextTasks
-                _uiState.update { it.copy(showAiConsentSheet = true) }
-            } else {
-                runNextTaskSuggestions(forceRefresh = false)
-            }
-        }
-    }
-
-    private fun runNextTaskSuggestions(forceRefresh: Boolean) {
-        _uiState.update {
-            it.copy(
-                showSuggestedTasksCard = true,
-                isSuggestingNextTasks = true
-            )
-        }
-        viewModelScope.launch {
-            val snapshot = _uiState.value
-            val result = suggestNextTasksUseCase(
-                uid = auth.currentUser?.uid,
-                allTasks = snapshot.allTasks,
-                categories = categoriesList,
-                targetCategoryId = null,
-                forceRefresh = forceRefresh
-            )
-            _uiState.update {
-                it.copy(
-                    isSuggestingNextTasks = false,
-                    suggestedNextTasks = result.candidates,
-                    suggestedNextTasksSource = result.source
-                )
-            }
-        }
-    }
-
-    private fun quickAddSuggestedTask(candidate: SuggestedTaskCandidate) {
-        viewModelScope.launch {
-            val newTask = Task(
-                title = candidate.title,
-                description = candidate.description.orEmpty(),
-                categoryId = candidate.categoryId,
-                priority = candidate.priority,
-                dueAt = candidate.dueAt
-            )
-            when (val res = addTaskUseCase(newTask)) {
-                is Result.Success -> {
-                    telemetry.logSuggestionAction(kind = "next_task", action = "added", count = 1)
-                    _uiState.update { state ->
-                        state.copy(
-                            suggestedNextTasks = state.suggestedNextTasks.filterNot {
-                                it.suggestionId == candidate.suggestionId
-                            },
-                            suggestionToastMessage = "Added \"${candidate.title}\""
-                        )
-                    }
-                }
-                is Result.Error -> {
-                    _uiState.update {
-                        it.copy(errorMessage = res.message ?: "Couldn't add suggested task")
-                    }
-                }
-                Result.Loading -> Unit
-            }
-        }
-    }
-
-    private fun dismissSuggestedTask(suggestionId: String) {
-        viewModelScope.launch {
-            suggestNextTasksUseCase.dismiss(auth.currentUser?.uid, suggestionId)
-            _uiState.update { state ->
-                state.copy(
-                    suggestedNextTasks = state.suggestedNextTasks.filterNot {
-                        it.suggestionId == suggestionId
-                    }
-                )
-            }
-        }
     }
 
     private fun toggleComplete(taskId: String, isCompleted: Boolean) {
@@ -842,6 +663,131 @@ class HomeViewModel @Inject constructor(
             )
             val updated = task.copy(subTasks = task.subTasks + newSub)
             updateTaskUseCase(updated)
+        }
+    }
+
+    /**
+     * Offers steps for an existing task, from the quick sheet, without opening the editor.
+     *
+     * The task's title and notes are the input, and the steps it already has are excluded
+     * here rather than only in the UI: the suggestion is for the gap, not for a list the
+     * user has already written.
+     */
+    private fun suggestSteps(taskId: String) {
+        val task = _uiState.value.allTasks.find { it.id == taskId } ?: return
+        if (_uiState.value.isSuggestingSteps) return
+
+        _uiState.update { it.copy(isSuggestingSteps = true, suggestedStepsMessage = null) }
+        viewModelScope.launch {
+            try {
+                val result = suggestSubTasksUseCase(
+                    title = task.title,
+                    description = task.description.takeIf { it.isNotBlank() },
+                    existingSubTasks = task.subTasks.map { it.title },
+                    uid = auth.currentUser?.uid
+                )
+                _uiState.update { current ->
+                    current.copy(
+                        isSuggestingSteps = false,
+                        suggestedSteps = result.steps,
+                        suggestedStepsMessage = result.message
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSuggestingSteps = false,
+                        suggestedStepsMessage = "Couldn't suggest steps - try again"
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Asks for next-task suggestions.
+     *
+     * Nothing is written and nothing is created: the result is a list of candidates the
+     * user may accept one at a time, mute, or ignore entirely by collapsing the card.
+     */
+    private fun loadNextSuggestions() {
+        if (_uiState.value.isSuggestingNext) return
+        _uiState.update { it.copy(isSuggestingNext = true) }
+
+        viewModelScope.launch {
+            try {
+                val state = _uiState.value
+                val result = suggestNextTasksUseCase(
+                    openTasks = state.allTasks.filter { !it.isCompleted },
+                    recentCompleted = state.allTasks.filter { it.isCompleted },
+                    categories = categoriesList,
+                    uid = auth.currentUser?.uid
+                )
+                _uiState.update {
+                    it.copy(
+                        isSuggestingNext = false,
+                        nextTaskSuggestions = result.candidates,
+                        suggestionsExpanded = it.suggestionsExpanded || result.candidates.isNotEmpty()
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isSuggestingNext = false) }
+            }
+        }
+    }
+
+    /** Accepting writes a real task, then drops the candidate from the card. */
+    private fun acceptSuggestion(suggestion: SuggestedTaskCandidate) {
+        viewModelScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                val task = Task(
+                    title = suggestion.title,
+                    categoryId = suggestion.categoryId,
+                    priority = suggestion.priority,
+                    dueAt = suggestion.dueOffsetHours?.let { hours ->
+                        now + hours.toLong() * 60L * 60L * 1000L
+                    }
+                )
+                addTaskUseCase(task)
+                telemetry.logOutcome(
+                    FirebaseAiTelemetry.FEATURE_SUGGEST_NEXT,
+                    FirebaseAiTelemetry.ACTION_ACCEPTED
+                )
+                _uiState.update { current ->
+                    current.copy(
+                        nextTaskSuggestions = current.nextTaskSuggestions
+                            .filterNot { it.suggestionId == suggestion.suggestionId }
+                    )
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("HomeVM", "suggestion add failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Muting is permanent, which is the point: a suggestion that comes back after being
+     * dismissed teaches the user that `×` does nothing, and then everything else on the
+     * card is ignored too.
+     */
+    private fun dismissSuggestion(suggestion: SuggestedTaskCandidate) {
+        viewModelScope.launch {
+            try {
+                aiPreferences.dismissSuggestion(suggestion.suggestionId)
+                telemetry.logOutcome(
+                    FirebaseAiTelemetry.FEATURE_SUGGEST_NEXT,
+                    FirebaseAiTelemetry.ACTION_DISMISSED
+                )
+            } catch (e: Exception) {
+                android.util.Log.w("HomeVM", "suggestion dismiss failed: ${e.message}")
+            }
+            _uiState.update { current ->
+                current.copy(
+                    nextTaskSuggestions = current.nextTaskSuggestions
+                        .filterNot { it.suggestionId == suggestion.suggestionId }
+                )
+            }
         }
     }
 

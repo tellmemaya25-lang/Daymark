@@ -219,7 +219,7 @@ class ProfileViewModel @Inject constructor(
     fun clearAiCache() {
         viewModelScope.launch {
             aiSnapshotCache.clearAll()
-            aiPreferences.clearDismissedSuggestions(auth.currentUser?.uid)
+            aiPreferences.clearDismissedSuggestions()
             _uiState.update { it.copy(successMessage = "Smart AI cache cleared") }
         }
     }
