@@ -26,13 +26,17 @@ if (!firebaseConfig.exists() && bundledFirebaseConfig.exists()) {
 
 // Optional free Google AI Studio key from gitignored `local.properties` (`GEMINI_API_KEY=...`)
 // so developers can use Gemini on the Spark tier without upgrading Firebase to Blaze.
-val localProperties = java.util.Properties().apply {
-    val propFile = rootProject.file("local.properties")
-    if (propFile.exists()) {
-        propFile.inputStream().use { load(it) }
-    }
+val localPropFile = rootProject.file("local.properties")
+val rawLocalGeminiKey = if (localPropFile.exists()) {
+    localPropFile.readLines()
+        .map { it.trim() }
+        .firstOrNull { !it.startsWith("#") && it.startsWith("GEMINI_API_KEY=") }
+        ?.substringAfter("GEMINI_API_KEY=")
+        .orEmpty()
+} else {
+    ""
 }
-val localGeminiApiKey = (localProperties.getProperty("GEMINI_API_KEY") ?: "")
+val localGeminiApiKey = rawLocalGeminiKey
     .trim()
     .removeSurrounding("\"")
     .replace("\\", "\\\\")

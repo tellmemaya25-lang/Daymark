@@ -88,7 +88,7 @@ class SabihonApp : Application(), Configuration.Provider {
          */
         fun readAppCheckDebugToken(context: Context): String? = runCatching {
             val prefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
-            val storeFiles = prefsDir.listFiles { file ->
+            val storeFiles = prefsDir.listFiles()?.filter { file ->
                 file.name.startsWith(DEBUG_STORE_PREFIX) && file.name.endsWith(".xml")
             }.orEmpty()
             for (file in storeFiles) {
