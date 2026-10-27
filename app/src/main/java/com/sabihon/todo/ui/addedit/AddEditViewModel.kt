@@ -61,13 +61,17 @@ class AddEditViewModel @Inject constructor(
      */
     private data class QuickAddSnapshot(
         val title: String,
+        val description: String,
         val dueAt: Long?,
         val dueDateMillis: Long?,
         val dueTimeMillis: Long?,
         val priority: Priority,
         val categoryId: String?,
         val repeat: RepeatRule,
-        val repeatDays: List<Int>
+        val repeatDays: List<Int>,
+        val subTasks: List<SubTask>,
+        val reminderEnabled: Boolean,
+        val reminderAt: Long?
     )
 
     private var quickAddUndo: QuickAddSnapshot? = null
@@ -348,7 +352,7 @@ class AddEditViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isQuickAddBusy = false,
-                        quickAddError = "Couldn't find a date, priority or list in that"
+                        quickAddError = "Couldn't find anything to fill in from that"
                     )
                 }
                 return@launch
@@ -356,19 +360,41 @@ class AddEditViewModel @Inject constructor(
 
             quickAddUndo = QuickAddSnapshot(
                 title = snapshot.title,
+                description = snapshot.description,
                 dueAt = snapshot.dueAt,
                 dueDateMillis = snapshot.dueDateMillis,
                 dueTimeMillis = snapshot.dueTimeMillis,
                 priority = snapshot.priority,
                 categoryId = snapshot.categoryId,
                 repeat = snapshot.repeat,
-                repeatDays = snapshot.repeatDays
+                repeatDays = snapshot.repeatDays,
+                subTasks = snapshot.subTasks,
+                reminderEnabled = snapshot.reminderEnabled,
+                reminderAt = snapshot.reminderAt
             )
 
             val dueMillis = draft.dueAt
             _uiState.update { current ->
+                // Sub-tasks are added, never replaced: the sentence names new steps, and
+                // wiping a checklist the user built by hand would be unforgivable.
+                val existing = current.subTasks.map { it.title.lowercase() }.toSet()
+                val extra = draft.subTasks
+                    .filter { it.isNotBlank() && it.lowercase() !in existing }
+                    .map { title ->
+                        SubTask(
+                            id = System.currentTimeMillis().toString() + "_" + (0..999).random(),
+                            title = title,
+                            isDone = false
+                        )
+                    }
+
                 current.copy(
                     title = draft.title.ifBlank { current.title },
+                    // Only a blank description is filled: the user's own note wins.
+                    description = draft.description?.takeIf {
+                        it.isNotBlank() && current.description.isBlank()
+                    } ?: current.description,
+                    subTasks = current.subTasks + extra,
                     // All three date fields move together: dueAt is what is saved,
                     // the other two are what the pickers reopen on.
                     dueAt = dueMillis ?: current.dueAt,
@@ -378,11 +404,22 @@ class AddEditViewModel @Inject constructor(
                     categoryId = draft.categoryId ?: current.categoryId,
                     repeat = if (draft.repeat != RepeatRule.NONE) draft.repeat else current.repeat,
                     repeatDays = draft.repeatDays.ifEmpty { current.repeatDays },
+                    // Tri-state: true turns the switch on and schedules against the due
+                    // time; false turns it off; null leaves whatever the user chose.
+                    reminderEnabled = draft.reminder ?: current.reminderEnabled,
+                    reminderAt = when (draft.reminder) {
+                        true -> (dueMillis ?: current.dueAt)?.let { due ->
+                            due - (draft.reminderLeadMinutes ?: 0) * 60_000L
+                        } ?: current.reminderAt
+                        false -> null
+                        null -> current.reminderAt
+                    },
                     isQuickAddBusy = false,
                     quickAddSummary = summaryOf(draft, result.source, snapshot.categories),
                     quickAddError = null
                 )
             }
+
         }
     }
 
@@ -393,6 +430,7 @@ class AddEditViewModel @Inject constructor(
         _uiState.update { current ->
             current.copy(
                 title = previous.title,
+                description = previous.description,
                 dueAt = previous.dueAt,
                 dueDateMillis = previous.dueDateMillis,
                 dueTimeMillis = previous.dueTimeMillis,
@@ -400,6 +438,9 @@ class AddEditViewModel @Inject constructor(
                 categoryId = previous.categoryId,
                 repeat = previous.repeat,
                 repeatDays = previous.repeatDays,
+                subTasks = previous.subTasks,
+                reminderEnabled = previous.reminderEnabled,
+                reminderAt = previous.reminderAt,
                 isQuickAddBusy = false,
                 quickAddSummary = null,
                 quickAddError = null
@@ -440,6 +481,12 @@ class AddEditViewModel @Inject constructor(
             RepeatRule.WEEKLY -> parts += "Weekly"
             RepeatRule.NONE -> Unit
         }
+        if (!draft.description.isNullOrBlank()) parts += "Note"
+        if (draft.subTasks.isNotEmpty()) {
+            parts += if (draft.subTasks.size == 1) "1 sub-task" else "${draft.subTasks.size} sub-tasks"
+        }
+        if (draft.reminder == true) parts += "Reminder"
+        if (draft.reminder == false) parts += "No reminder"
 
         val label = if (source == QuickAddResult.Source.CLOUD) "AI filled" else "Filled offline"
         return if (parts.isEmpty()) label else "$label: ${parts.joinToString(" · ")}"

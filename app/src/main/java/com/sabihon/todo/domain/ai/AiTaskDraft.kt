@@ -19,12 +19,31 @@ data class AiTaskDraft(
     val categoryId: String? = null,
     val repeat: RepeatRule = RepeatRule.NONE,
     /** 1 = Monday … 7 = Sunday, only meaningful for [RepeatRule.WEEKLY]. */
-    val repeatDays: List<Int> = emptyList()
+    val repeatDays: List<Int> = emptyList(),
+
+    /** A note the sentence separated from the task itself. Null when it said nothing. */
+    val description: String? = null,
+
+    /** Sub-task titles. Ids are minted by the editor, not here. */
+    val subTasks: List<String> = emptyList(),
+
+    /**
+     * Tri-state on purpose. `null` means the sentence said nothing about reminders, which
+     * is not the same as `false` - the editor must not switch off a reminder the user
+     * already set just because they re-read the sentence.
+     */
+    val reminder: Boolean? = null,
+
+    /** Minutes before [dueAt] to fire. `0` means at the due time. */
+    val reminderLeadMinutes: Int? = null
 ) {
     /** True when the sentence produced something worth showing a summary for. */
     val hasDetails: Boolean
         get() = dueAt != null ||
             priority != null ||
             categoryId != null ||
-            repeat != RepeatRule.NONE
+            repeat != RepeatRule.NONE ||
+            !description.isNullOrBlank() ||
+            subTasks.isNotEmpty() ||
+            reminder == true
 }
