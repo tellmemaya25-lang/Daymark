@@ -173,13 +173,26 @@ class QuickAddParser @Inject constructor() {
 
             val hour = match.groupValues[1].toIntOrNull() ?: return@forEachIndexed
             val minute = match.groupValues[2].toIntOrNull() ?: 0
-            val meridiem = match.groupValues[3]
+            var meridiem = match.groupValues[3]
             val hasColon = match.groupValues[2].isNotEmpty()
-            val precededByAt = index > 0 && words[index - 1].clean() == "at"
+            val hasPreposition = index > 0 && words[index - 1].clean() in TIME_PREPOSITIONS
+
+            // "8:00 p.m." and "at 8 pm" write the meridiem as its own word. Without
+            // this, "8:00 p.m." was read as 08:00 in the morning and the "p.m." was
+            // left sitting in the title.
+            var meridiemIndex: Int? = null
+            if (meridiem.isEmpty()) {
+                val next = (index + 1).takeIf { it < words.size && !used[it] }
+                val nextMeridiem = next?.let { MERIDIEMS[words[it].clean()] }
+                if (nextMeridiem != null) {
+                    meridiem = nextMeridiem
+                    meridiemIndex = next
+                }
+            }
 
             // A bare number is only a time when it is said as one: "at 5" yes, the 2 in
-            // "buy 2 apples" no.
-            if (meridiem.isEmpty() && !hasColon && !precededByAt) return@forEachIndexed
+            // "buy 2 apples" no - and a trailing "pm" is enough to say it.
+            if (meridiem.isEmpty() && !hasColon && !hasPreposition) return@forEachIndexed
 
             val hour24 = when {
                 meridiem == "pm" && hour < 12 -> hour + 12
@@ -189,7 +202,9 @@ class QuickAddParser @Inject constructor() {
             if (hour24 !in 0..23 || minute !in 0..59) return@forEachIndexed
 
             used[index] = true
-            if (precededByAt) used[index - 1] = true
+            // "around 8 p.m." leaves neither the preposition nor the meridiem behind.
+            if (hasPreposition) used[index - 1] = true
+            meridiemIndex?.let { used[it] = true }
             return LocalTime.of(hour24, minute)
         }
         return null
@@ -230,6 +245,15 @@ class QuickAddParser @Inject constructor() {
         val TIME_PATTERN = Regex("(\\d{1,2})(?::(\\d{2}))?(am|pm)?")
 
         val DEFAULT_TIME: LocalTime = LocalTime.of(9, 0)
+
+        /** Meridiems written as a separate word, with or without the dots. */
+        val MERIDIEMS = mapOf(
+            "am" to "am", "a.m" to "am",
+            "pm" to "pm", "p.m" to "pm"
+        )
+
+        /** Words that introduce a time, consumed with it so they do not linger. */
+        val TIME_PREPOSITIONS = setOf("at", "around", "about", "by", "@")
 
         val PRIORITIES = mapOf(
             "urgent" to Priority.URGENT,

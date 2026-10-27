@@ -100,6 +100,50 @@ class QuickAddParserTest {
     }
 
     @Test
+    fun `a dotted p m after the hour makes it evening`() {
+        // The regression: "8:00 p.m." matched the time pattern before the p.m. was ever
+        // read, so it landed at 08:00 in the morning with "p.m." left in the title.
+        val draft = parse("practice guitar around 8:00 p.m.")
+
+        assertEquals("Practice guitar", draft.title)
+        assertEquals(millis(monday, 20), draft.dueAt)
+    }
+
+    @Test
+    fun `a meridiem written as its own word attaches to the hour`() {
+        val dotted = parse("call mom at 8 p.m. later")
+        assertEquals("Call mom later", dotted.title)
+        assertEquals(millis(monday, 20), dotted.dueAt)
+
+        val bare = parse("call mom at 8 pm")
+        assertEquals("Call mom", bare.title)
+        assertEquals(millis(monday, 20), bare.dueAt)
+    }
+
+    @Test
+    fun `an am written with dots stays in the morning`() {
+        val draft = parse("standup 9 a.m.")
+
+        assertEquals("Standup", draft.title)
+        assertEquals(millis(monday, 9), draft.dueAt)
+    }
+
+    @Test
+    fun `noon and half past midnight land on the right hours`() {
+        assertEquals(millis(monday, 12), parse("lunch 12 pm").dueAt)
+        assertEquals(millis(monday, 0, 30), parse("bed 12:30 a.m.").dueAt)
+    }
+
+    @Test
+    fun `a number followed by an ordinary word is still not a time`() {
+        // The guard the meridiem change could have broken.
+        val draft = parse("buy 2 apples tomorrow")
+
+        assertEquals("Buy 2 apples", draft.title)
+        assertEquals(millis(monday.plusDays(1), 9), draft.dueAt)
+    }
+
+    @Test
     fun `an ordinary number is not a time`() {
         val draft = parse("buy 2 apples")
 
