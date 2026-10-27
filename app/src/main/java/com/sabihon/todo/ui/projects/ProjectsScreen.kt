@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Delete
@@ -32,7 +31,6 @@ import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -40,6 +38,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +72,15 @@ import com.sabihon.todo.core.ui.theme.CategoryPaletteHex
 fun ProjectsScreen(
     onProjectClick: (String) -> Unit = {},
     onProfileClick: () -> Unit = {},
+    /**
+     * Incremented by the tab host each time the bottom bar's "+" is tapped while this
+     * page is showing. A plain Int rather than a lambda because the bar lives above the
+     * pager, and a counter is all the state this needs: every value but the first one
+     * means "open the dialog".
+     */
+    addRequest: Int = 0,
+    /** Tells the tab host the request has been dealt with, so it is not replayed. */
+    onAddRequestHandled: () -> Unit = {},
     viewModel: ProjectsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -81,6 +89,16 @@ fun ProjectsScreen(
     var actionProject by remember { mutableStateOf<Category?>(null) }
     var confirmDelete by remember { mutableStateOf<Category?>(null) }
     val sheetState = rememberModalBottomSheetState()
+
+    // key(addRequest) restarts the effect on every tap; the guard keeps the very first
+    // composition from opening a dialog nobody asked for, and the callback clears the
+    // request so returning to this page later does not replay it.
+    LaunchedEffect(addRequest) {
+        if (addRequest > 0) {
+            viewModel.showAddDialog(true)
+            onAddRequestHandled()
+        }
+    }
 
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         if (uiState.isLoading) {
@@ -106,19 +124,9 @@ fun ProjectsScreen(
                         avatarInitials = uiState.userInitials,
                         avatarUrl = uiState.userPhotoUrl,
                         onAvatarClick = onProfileClick,
-                        actions = {
-                            IconButton(
-                                onClick = { viewModel.showAddDialog(true) },
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Icon(
-                                    Icons.Filled.Add,
-                                    contentDescription = "New project",
-                                    tint = MaterialTheme.colorScheme.onBackground,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        },
+                        // No "+" up here any more: on this tab the bottom bar's "+"
+                        // creates a project, and two buttons for one job is one too
+                        // many. The header is the brand mark and the account only.
                         modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp)
                     )
                 }
@@ -373,7 +381,7 @@ private fun EmptyProjects() {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = "Add one with the + up top to group your tasks.",
+            text = "Tap + to create one and group your tasks.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
