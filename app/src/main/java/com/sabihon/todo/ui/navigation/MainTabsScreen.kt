@@ -74,6 +74,9 @@ private data class MainTab(
     val matchToken: String
 )
 
+/** Index of the Projects page, used by the "+" so the constant has one home. */
+private const val PROJECTS_PAGE = 1
+
 private val MAIN_TABS = listOf(
     MainTab("home", "Home"),
     MainTab("projects", "Projects"),
@@ -120,6 +123,19 @@ fun MainTabsScreen(
         }
     }
 
+    /**
+     * Bumped when the bar's "+" is tapped while Projects is showing.
+     *
+     * On every other tab the "+" opens a new task. On Projects the thing you are looking
+     * at is a list of projects, so "+" creates a project - and because the dialog lives
+     * inside [ProjectsScreen], the tap is handed down as a counter rather than a route.
+     *
+     * The screen resets it to zero once it has opened the dialog. Without that, swiping
+     * away and back would re-enter composition with the old value still set and reopen
+     * the dialog on its own.
+     */
+    var addProjectRequest by remember { mutableIntStateOf(0) }
+
     // Which tab the drag is heading towards, for the bar's pre-highlight.
     val previewTab by remember {
         derivedStateOf {
@@ -149,7 +165,13 @@ fun MainTabsScreen(
                 currentRoute = MAIN_TABS[pagerState.currentPage].matchToken,
                 onNavigate = { key ->
                     when (key) {
-                        "add" -> navController.navigate(Route.AddEditTask())
+                        "add" -> {
+                            if (pagerState.currentPage == PROJECTS_PAGE) {
+                                addProjectRequest++
+                            } else {
+                                navController.navigate(Route.AddEditTask())
+                            }
+                        }
                         else -> goToPage(MAIN_TABS.indexOfFirst { it.key == key })
                     }
                 },
@@ -170,7 +192,6 @@ fun MainTabsScreen(
             saveableStateHolder.SaveableStateProvider(MAIN_TABS[page].key) {
                 when (page) {
                     0 -> HomeScreen(
-                        onNavigateToAllTasks = { navController.navigate(Route.AllTasks) },
                         onNavigateToCategories = { navController.navigate(Route.Categories) },
                         onNavigateToTaskDetail = { navController.navigate(Route.AddEditTask(it)) },
                         onNavigateToEditTask = { navController.navigate(Route.AddEditTask(it)) },
@@ -182,9 +203,12 @@ fun MainTabsScreen(
                         onNavigateToCategory = { navController.navigate(Route.CategoryDetail(it)) }
                     )
 
-                    1 -> ProjectsScreen(
+                    PROJECTS_PAGE -> ProjectsScreen(
                         onProjectClick = { navController.navigate(Route.CategoryDetail(it)) },
-                        onProfileClick = { navController.navigate(Route.Profile) }
+                        onProfileClick = { navController.navigate(Route.Profile) },
+                        onAllTasksClick = { navController.navigate(Route.AllTasks) },
+                        addRequest = addProjectRequest,
+                        onAddRequestHandled = { addProjectRequest = 0 }
                     )
 
                     2 -> HistoryScreen(

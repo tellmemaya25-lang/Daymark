@@ -1,7 +1,9 @@
 package com.sabihon.todo.ui.home
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -76,10 +79,7 @@ import com.sabihon.todo.core.ui.components.FilterEmptyState
 import com.sabihon.todo.core.ui.components.LoadingShimmer
 import com.sabihon.todo.core.ui.components.MomentumCard
 import com.sabihon.todo.core.ui.components.RevealCoordinator
-import com.sabihon.todo.core.ui.components.NotelyEmptyState
-import com.sabihon.todo.core.ui.components.SegmentedTabs
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
-import com.sabihon.todo.core.ui.components.TabItem
 import com.sabihon.todo.core.ui.components.WeekStrip
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.core.ui.util.isCompactHeight
@@ -90,10 +90,14 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Item keys the sticky-strip detection looks items up by. */
+private const val MOMENTUM_ITEM_KEY = "momentum"
+private const val WEEK_ITEM_KEY = "week"
+private const val PRIORITIZE_ITEM_KEY = "prioritize"
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
-    onNavigateToAllTasks: () -> Unit = {},
     onNavigateToCategories: () -> Unit = {},
     onNavigateToTaskDetail: (String) -> Unit = {},
     onNavigateToEditTask: (String) -> Unit = {},
@@ -202,6 +206,35 @@ fun HomeScreen(
                 label = "headerDivider"
             )
 
+            // The week strip is a sticky header, so once the momentum card scrolls away
+            // the strip parks at the top and stays there. `stripStuck` is that moment,
+            // and it is what arms the day swipe: while the strip is still at rest the
+            // horizontal drag belongs to the tab pager, which lives one level above this
+            // screen. Two horizontal drags competing for the same pixels is how you get
+            // a date that changes when you meant to swipe to Projects.
+            val stripStuck by remember {
+                derivedStateOf {
+                    val info = listState.layoutInfo
+                    val week = info.visibleItemsInfo.firstOrNull { it.key == WEEK_ITEM_KEY }
+                        ?: return@derivedStateOf false
+                    if (week.offset > info.viewportStartOffset) return@derivedStateOf false
+                    val momentum = info.visibleItemsInfo.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
+                    momentum == null || momentum.offset + momentum.size <= info.viewportStartOffset
+                }
+            }
+
+            // Read here, not inside the LazyColumn builder: that lambda is not
+            // @Composable, so MaterialTheme cannot be touched from within it.
+            val stripBg = MaterialTheme.colorScheme.background
+
+            // Right is yesterday, left is tomorrow – the direction a paper calendar moves
+            // when you flip back and then forward again.
+            val shiftDay: (Int) -> Unit = { days ->
+                viewModel.onAction(
+                    HomeAction.SelectDate(uiState.selectedDate.plusDays(days.toLong()))
+                )
+            }
+
             PullToRefreshBox(
                 isRefreshing = uiState.isRefreshing,
                 onRefresh = { viewModel.refresh() },
@@ -254,7 +287,7 @@ fun HomeScreen(
                     }
                 }
 
-                item {
+                item(key = MOMENTUM_ITEM_KEY) {
                     MomentumCard(
                         total = uiState.momentum.total,
                         done = uiState.momentum.done,
@@ -262,64 +295,57 @@ fun HomeScreen(
                     )
                 }
 
-                item {
+                stickyHeader(key = WEEK_ITEM_KEY) {
                     WeekStrip(
                         days = uiState.weekDays,
                         selected = uiState.selectedDate,
-                        onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) }
+                        onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
+                        // Opaque either way: a sticky header without a background lets
+                        // the task cards scroll through the gaps between the day pills.
+                        modifier = Modifier
+                            .background(stripBg)
+                            .then(
+                                // Armed only while pinned. With no handler attached the
+                                // drag falls through to the tab pager, which is exactly
+                                // what should happen when the strip is still at rest.
+                                if (stripStuck) {
+                                    Modifier.pointerInput(uiState.selectedDate) {
+                                        // toPx() has to happen out here: onDragEnd is a
+                                        // plain lambda, not a Density scope.
+                                        val threshold = 48.dp.toPx()
+                                        var dragged = 0f
+                                        detectHorizontalDragGestures(
+                                            onDragStart = { dragged = 0f },
+                                            onDragEnd = {
+                                                when {
+                                                    dragged > threshold -> shiftDay(-1)
+                                                    dragged < -threshold -> shiftDay(1)
+                                                }
+                                            }
+                                        ) { _, amount -> dragged += amount }
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            )
                     )
                 }
 
-                item {
-                    // Prioritize lived in the ON YOUR LIST row, between the count and the
-                    // sort control, which made that row three things wide and left the
-                    // label fighting two trailing controls. It belongs with the tab that
-                    // chooses *what* is being listed, not with the row that describes it.
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(end = 20.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        SegmentedTabs(
-                            modifier = Modifier.weight(1f),
-                            tabs = listOf(
-                                // When another day is picked the badge follows that day, not today's count.
-                                TabItem(
-                                    "today",
-                                    "Today",
-                                    if (uiState.selectedDate == java.time.LocalDate.now()) {
-                                        uiState.counts.today
-                                    } else {
-                                        uiState.visibleTasks.size + uiState.completedTasks.size
-                                    }
-                                ),
-                                TabItem("upcoming", "Upcoming", null),
-                                TabItem("all", "All tasks", uiState.counts.all)
-                            ),
-                            selectedId = when (uiState.selectedFilter) {
-                                HomeFilter.TODAY -> "today"
-                                HomeFilter.UPCOMING -> "upcoming"
-                                HomeFilter.ALL -> "all"
-                            },
-                            onSelect = { id ->
-                                viewModel.onAction(
-                                    HomeAction.SetFilter(
-                                        when (id) {
-                                            "today" -> HomeFilter.TODAY
-                                            "upcoming" -> HomeFilter.UPCOMING
-                                            else -> HomeFilter.ALL
-                                        }
-                                    )
-                                )
-                            }
-                        )
-
-                        if (uiState.visibleTasks.size >= 2) {
-                            PrioritizePill(
-                                onClick = { viewModel.onAction(HomeAction.RequestPrioritize) }
+                // Today / Upcoming / All tasks used to live here. They are gone: with a
+                // sticky week strip and a day swipe, the strip is the browser, and two
+                // ways to change what you are looking at was one too many. "All tasks"
+                // moved to the Projects tab, which is where you go to see everything.
+                if (uiState.visibleTasks.size >= 2) {
+                    item(key = PRIORITIZE_ITEM_KEY) {
+                        PrioritizeTaskButton(
+                            onClick = { viewModel.onAction(HomeAction.RequestPrioritize) },
+                            modifier = Modifier.padding(
+                                start = 20.dp,
+                                end = 20.dp,
+                                top = 4.dp,
+                                bottom = 10.dp
                             )
-                        }
+                        )
                     }
                 }
 
@@ -343,20 +369,15 @@ fun HomeScreen(
 
                 if (uiState.visibleTasks.isEmpty() && uiState.completedTasks.isEmpty()) {
                     item {
-                        when (uiState.selectedFilter) {
-                            HomeFilter.TODAY -> FilterEmptyState(
-                                filterName = if (uiState.selectedDate == java.time.LocalDate.now()) {
-                                    "Today"
-                                } else {
-                                    formatLocalDate(uiState.selectedDate, "EEEE")
-                                }
-                            )
-                            HomeFilter.UPCOMING -> FilterEmptyState(filterName = "Upcoming")
-                            HomeFilter.ALL -> NotelyEmptyState(
-                                title = "Get started with daymark .",
-                                subtitle = "Add notes, calendar events, tasks files and more with the action bar"
-                            )
-                        }
+                        // Selecting a day always means "that day", so there is only one
+                        // empty state left to show.
+                        FilterEmptyState(
+                            filterName = if (uiState.selectedDate == java.time.LocalDate.now()) {
+                                "Today"
+                            } else {
+                                formatLocalDate(uiState.selectedDate, "EEEE")
+                            }
+                        )
                     }
                 }
 
@@ -851,28 +872,42 @@ private fun SearchCircleButton(
  * Only drawn when there are at least two open tasks: a plan that ranks one task is not
  * a plan, and offering it on an empty list is offering nothing.
  */
+/**
+ * "Prioritize Task" – a full-width row of its own.
+ *
+ * It was a pill wedged onto the tabs row, competing with three other controls for the
+ * width and never quite fitting. The tabs are gone, so the plan feature gets room and
+ * says what it does instead of relying on a sparkle to explain itself.
+ */
 @Composable
-private fun PrioritizePill(onClick: () -> Unit) {
+private fun PrioritizeTaskButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     val surfaces = LocalDaymarkSurfaces.current
     Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(100.dp))
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
             .background(surfaces.accentSurface)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
     ) {
         Icon(
+            // Null content description: the button's own Text is the label, and a
+            // second one would have TalkBack saying "prioritize tasks, prioritize task".
             imageVector = Icons.Filled.AutoAwesome,
-            contentDescription = "Prioritize tasks",
+            contentDescription = null,
             tint = AccentBlue,
-            modifier = Modifier.size(12.dp)
+            modifier = Modifier.size(16.dp)
         )
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(8.dp))
         Text(
-            text = "Prioritize",
-            style = MaterialTheme.typography.labelMedium.copy(
-                fontSize = 11.sp,
+            text = "Prioritize Task",
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold
             ),
             color = surfaces.onAccentSurface
