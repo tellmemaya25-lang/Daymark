@@ -349,12 +349,13 @@ class PrioritizeTasksUseCase internal constructor(
         val raw = error.message.orEmpty()
         val lower = raw.lowercase()
         return when {
-            "has not been used" in lower ||
+            "vertex ai in firebase" in lower ||
+                "has not been used" in lower ||
                 "service_disabled" in lower ||
                 "api_not_activated" in lower ||
                 "is disabled" in lower ||
                 "not been enabled" in lower ->
-                "Enable 'Gemini Developer API' on project sabihon-todo in Firebase Console > AI Logic, or paste a free key in Settings > AI > Gemini API key, then tap ↻."
+                "Paste a free Gemini key from aistudio.google.com/apikey in Settings > AI > Gemini API key (or enable 'Vertex AI in Firebase API' in Google Cloud Console for sabihon-todo), then tap ↻."
             "app check" in lower || "appcheck" in lower || "attestation" in lower ->
                 "App Check debug token needed — go to Settings > AI > tap 'App Check debug token' to copy it, add it in Firebase Console > App Check > Apps > Manage debug tokens, then tap ↻."
             "api_key_service_blocked" in lower ||

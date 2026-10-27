@@ -22,6 +22,7 @@ import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -69,6 +70,9 @@ class FirebaseAiTaskService @Inject constructor(
     @Volatile
     private var resolvedFlashModelId: String = AiModelTier.FLASH.modelId
 
+    @Volatile
+    private var preferProjectRestFallback: Boolean = false
+
     private fun getOrBuildModel(modelName: String) =
         modelCache.getOrPut(modelName) {
             Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
@@ -112,19 +116,24 @@ class FirebaseAiTaskService @Inject constructor(
                         prompt = prompt,
                         includeAndroidCertHeaders = false
                     )
+                } else if (preferProjectRestFallback && !projectApiKey.isNullOrBlank()) {
+                    callGoogleAiStudioRest(
+                        apiKey = projectApiKey,
+                        modelName = candidateId,
+                        prompt = prompt,
+                        includeAndroidCertHeaders = true
+                    )
                 } else {
                     try {
                         getOrBuildModel(candidateId).generateContent(prompt).text
                     } catch (sdkErr: Exception) {
+                        if (sdkErr is CancellationException) throw sdkErr
                         val sdkMsg = sdkErr.message.orEmpty().lowercase()
-                        val authOrAppCheckRejected = "401" in sdkMsg ||
-                            "403" in sdkMsg ||
-                            "app check" in sdkMsg ||
-                            "appcheck" in sdkMsg ||
-                            "permission_denied" in sdkMsg ||
-                            "firebaseai" in sdkMsg ||
-                            "firebasevertexai" in sdkMsg
-                        if (authOrAppCheckRejected && !projectApiKey.isNullOrBlank()) {
+                        val sdkModelMissing = "404" in sdkMsg ||
+                            "not_found" in sdkMsg ||
+                            "not found" in sdkMsg ||
+                            "invalid model" in sdkMsg
+                        if (!sdkModelMissing && !projectApiKey.isNullOrBlank()) {
                             runCatching {
                                 callGoogleAiStudioRest(
                                     apiKey = projectApiKey,
@@ -132,12 +141,22 @@ class FirebaseAiTaskService @Inject constructor(
                                     prompt = prompt,
                                     includeAndroidCertHeaders = true
                                 )
+                            }.onSuccess {
+                                preferProjectRestFallback = true
                             }.getOrElse { restErr ->
+                                if (restErr is CancellationException) throw restErr
                                 val restMsg = restErr.message.orEmpty().lowercase()
                                 if ("404" in restMsg || "not_found" in restMsg || "not found" in restMsg) {
                                     throw restErr
                                 }
-                                throw sdkErr
+                                android.util.Log.w(
+                                    "FirebaseAiTaskService",
+                                    "Project REST fallback also failed: ${restErr.message}"
+                                )
+                                throw IllegalStateException(
+                                    "${sdkErr.message.orEmpty().lineSequence().firstOrNull().orEmpty()} | Direct API: ${restErr.message.orEmpty().take(120)}",
+                                    sdkErr
+                                )
                             }
                         } else {
                             throw sdkErr
@@ -151,6 +170,7 @@ class FirebaseAiTaskService @Inject constructor(
                 }
                 return text
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 lastError = e
                 val msg = e.message.orEmpty().lowercase()
                 val modelUnavailable = "404" in msg ||
