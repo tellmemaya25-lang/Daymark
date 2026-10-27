@@ -372,6 +372,10 @@ class AddEditViewModel @Inject constructor(
             it.copy(isQuickAddBusy = true, quickAddSummary = null, quickAddError = null)
         }
 
+        // Read before the call: afterwards, LOCAL is ambiguous - it means either "the
+        // switch is off" or "the model was asked and did not answer", and those need
+        // different words in the strip.
+        val cloudAsked = aiPreferences.isCloudEnabledNow()
         val result = parseQuickAddUseCase(sentence, snapshot.categories, auth.currentUser?.uid)
         val draft = result.draft
 
@@ -437,7 +441,12 @@ class AddEditViewModel @Inject constructor(
                     null -> current.reminderAt
                 },
                 isQuickAddBusy = false,
-                quickAddSummary = summaryOf(draft, result.source, snapshot.categories),
+                quickAddSummary = summaryOf(
+                    draft = draft,
+                    source = result.source,
+                    categories = snapshot.categories,
+                    cloudAskedButUnanswered = cloudAsked && result.source == QuickAddResult.Source.LOCAL
+                ),
                 quickAddError = null
             )
         }
@@ -483,7 +492,8 @@ class AddEditViewModel @Inject constructor(
     private fun summaryOf(
         draft: AiTaskDraft,
         source: QuickAddResult.Source,
-        categories: List<Category>
+        categories: List<Category>,
+        cloudAskedButUnanswered: Boolean = false
     ): String {
         val parts = mutableListOf<String>()
 
@@ -508,7 +518,13 @@ class AddEditViewModel @Inject constructor(
         if (draft.reminder == true) parts += "Reminder"
         if (draft.reminder == false) parts += "No reminder"
 
-        val label = if (source == QuickAddResult.Source.CLOUD) "AI filled" else "Filled offline"
+        val label = when {
+            source == QuickAddResult.Source.CLOUD -> "AI filled"
+            // Says which of the two offline reasons it was. "Filled offline" alone is
+            // what made a failing model look like a switched-off feature.
+            cloudAskedButUnanswered -> "Filled offline — AI didn't answer"
+            else -> "Filled offline"
+        }
         return if (parts.isEmpty()) label else "$label: ${parts.joinToString(" · ")}"
     }
 
