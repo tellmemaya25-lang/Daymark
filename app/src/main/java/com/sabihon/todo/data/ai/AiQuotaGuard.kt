@@ -10,7 +10,17 @@ import javax.inject.Singleton
 
 enum class AiFeature {
     PRIORITIZE,
-    QUICK_ADD
+    QUICK_ADD,
+
+    /**
+     * Step suggestions. Its own feature rather than sharing QUICK_ADD's slot because the
+     * per-feature single-flight lock and cooldown are what stop "Suggest steps" being
+     * tapped five times in a row into five parallel calls.
+     */
+    SUB_TASKS,
+
+    /** Next-task suggestions, shown on Home and inside a project. */
+    SUGGEST_NEXT
 }
 
 /**

@@ -1,5 +1,6 @@
 package com.sabihon.todo.ui.home
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -7,6 +8,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +38,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -78,6 +83,7 @@ import com.sabihon.todo.core.ui.components.FilterEmptyState
 import com.sabihon.todo.core.ui.components.LoadingShimmer
 import com.sabihon.todo.core.ui.components.MomentumCard
 import com.sabihon.todo.core.ui.components.RevealCoordinator
+import com.sabihon.todo.core.ui.components.SuggestedStepChip
 import com.sabihon.todo.core.ui.components.SwipeableTaskRow
 import com.sabihon.todo.core.ui.components.WeekStrip
 import com.sabihon.todo.domain.model.Priority
@@ -90,7 +96,12 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Item keys the stuck-strip detection looks items up by. */
+private const val HEADER_ITEM_KEY = "header"
+private const val MOMENTUM_ITEM_KEY = "momentum"
+private const val WEEK_ITEM_KEY = "week"
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     onNavigateToCategories: () -> Unit = {},
@@ -183,22 +194,37 @@ fun HomeScreen(
                 // the rotation; start both layouts from the top rather than mid-list.
                 listState.scrollToItem(0)
             }
-            // Header stays put; a hairline fades in as soon as the list moves under it.
-            // In compact mode the header is an item, so index > 0 is true immediately
-            // and the divider would fire before the user has scrolled at all.
-            val isScrolled by remember {
-                derivedStateOf {
-                    !compactHeader &&
-                        (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0)
-                }
-            }
             LaunchedEffect(listState.isScrollInProgress) {
                 if (listState.isScrollInProgress) revealCoordinator.closeAll()
             }
-            val headerDividerAlpha by animateFloatAsState(
-                targetValue = if (isScrolled) 1f else 0f,
+
+            /*
+             * Everything on this page scrolls, header included, and the week strip pins
+             * itself when it reaches the top.
+             *
+             * `stripStuck` is that moment, and it does two jobs: it fades in the strip's
+             * divider so the pinned band reads as a separate surface, and it arms the
+             * day swipe. Arming is the important half - Home is page 0 of the tab pager,
+             * so an always-on horizontal drag here would steal the swipe that changes
+             * tabs. Until the strip is pinned, that drag belongs to the pager.
+             */
+            val stripStuck by remember {
+                derivedStateOf {
+                    val info = listState.layoutInfo
+                    val week = info.visibleItemsInfo.firstOrNull { it.key == WEEK_ITEM_KEY }
+                        ?: return@derivedStateOf false
+                    if (week.offset > info.viewportStartOffset) return@derivedStateOf false
+                    // The strip is pinned once the card above it has scrolled clear. If
+                    // that card is still on screen the strip is only part-way up, and a
+                    // horizontal drag there is still the user's attempt to change tabs.
+                    val momentum = info.visibleItemsInfo.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
+                    momentum == null || momentum.offset + momentum.size <= info.viewportStartOffset
+                }
+            }
+            val stripDividerAlpha by animateFloatAsState(
+                targetValue = if (stripStuck) 1f else 0f,
                 animationSpec = tween(180),
-                label = "headerDivider"
+                label = "stripDivider"
             )
 
             // Read here, not inside the LazyColumn builder: that lambda is not
@@ -221,56 +247,17 @@ fun HomeScreen(
                     .padding(innerPadding)
             ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                if (!compactHeader) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.background)
-                    ) {
-                        HomeHeader(
-                            greetingName = uiState.greetingName,
-                            avatarInitials = uiState.avatarInitials,
-                            avatarUrl = uiState.avatarUrl,
-                            onSearchClick = onNavigateToSearch,
-                            onAvatarClick = onNavigateToProfile
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(
-                                    MaterialTheme.colorScheme.onSurface.copy(
-                                        alpha = 0.10f * headerDividerAlpha
-                                    )
-                                )
-                        )
-                        // The week strip is part of the top bar now, so it is always on
-                        // screen: no scroll needed to reach it, and no sticky header
-                        // doing the same job from inside the list.
-                        WeekStripBar(
-                            days = uiState.weekDays,
-                            selected = uiState.selectedDate,
-                            onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
-                            onShiftDay = shiftDay,
-                            modifier = Modifier.background(stripBg)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f))
-                        )
-                    }
-                }
-
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                 ) {
-                if (compactHeader) {
-                    item {
+                // The header scrolls with everything else. A short window gets the
+                // compact variant, which is about the height available, not about what
+                // sticks - nothing in this list is exempt from scrolling except the strip.
+                item(key = HEADER_ITEM_KEY) {
+                    if (compactHeader) {
                         HomeHeaderCompact(
                             avatarInitials = uiState.avatarInitials,
                             avatarUrl = uiState.avatarUrl,
@@ -278,26 +265,72 @@ fun HomeScreen(
                             onAvatarClick = onNavigateToProfile,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
-                    }
-                    // Short windows cannot spare a pinned strip, so here it stays a
-                    // normal item and scrolls. Tapping a day still works; the drag does
-                    // not, because a scrolling strip belongs to the list's vertical drags.
-                    item {
-                        WeekStrip(
-                            days = uiState.weekDays,
-                            selected = uiState.selectedDate,
-                            onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
-                            modifier = Modifier.background(stripBg)
+                    } else {
+                        HomeHeader(
+                            greetingName = uiState.greetingName,
+                            avatarInitials = uiState.avatarInitials,
+                            avatarUrl = uiState.avatarUrl,
+                            onSearchClick = onNavigateToSearch,
+                            onAvatarClick = onNavigateToProfile
                         )
                     }
                 }
 
-                item {
+                item(key = MOMENTUM_ITEM_KEY) {
                     MomentumCard(
                         total = uiState.momentum.total,
                         done = uiState.momentum.done,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
                     )
+                }
+
+                stickyHeader(key = WEEK_ITEM_KEY) {
+                    Column(modifier = Modifier.background(stripBg)) {
+                        WeekStripBar(
+                            days = uiState.weekDays,
+                            selected = uiState.selectedDate,
+                            onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
+                            onShiftDay = shiftDay,
+                            // The drag only exists while pinned. With no handler
+                            // attached the gesture falls through to the tab pager,
+                            // which is what should happen while the strip is at rest.
+                            swipeEnabled = stripStuck
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.onSurface.copy(
+                                        alpha = 0.10f * stripDividerAlpha
+                                    )
+                                )
+                        )
+                    }
+                }
+
+                // Suggestions sit directly under the strip: near enough to be the first
+                // thing read when the list is nearly clear, and gone entirely once the
+                // user collapses them.
+                if (uiState.nextTaskSuggestions.isNotEmpty() || uiState.isSuggestingNext) {
+                    item {
+                        SuggestedTasksCard(
+                            suggestions = uiState.nextTaskSuggestions,
+                            expanded = uiState.suggestionsExpanded,
+                            isRefreshing = uiState.isSuggestingNext,
+                            onToggleExpanded = {
+                                viewModel.onAction(HomeAction.ToggleSuggestionsExpanded)
+                            },
+                            onAccept = { suggestion ->
+                                viewModel.onAction(HomeAction.AcceptSuggestion(suggestion))
+                            },
+                            onDismiss = { suggestion ->
+                                viewModel.onAction(HomeAction.DismissSuggestion(suggestion))
+                            },
+                            onRefresh = { viewModel.onAction(HomeAction.RequestSuggestions) },
+                            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp)
+                        )
+                    }
                 }
 
                 // Today / Upcoming / All tasks used to live here. They are gone: with a
@@ -602,6 +635,12 @@ fun HomeScreen(
                         )
                     }
 
+                    // A different task means a different set of steps; carrying the last
+                    // one over would offer steps for a task the user is no longer editing.
+                    LaunchedEffect(taskForNewSubTask?.id) {
+                        viewModel.onAction(HomeAction.DismissSuggestedSteps)
+                    }
+
                     Text(
                         text = "Add new task",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
@@ -612,6 +651,89 @@ fun HomeScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    // Steps for the task you are already looking at, without leaving the
+                    // sheet. Accepting one adds it immediately - the whole point of being
+                    // in this sheet instead of the full editor is fewer taps.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = {
+                                taskForNewSubTask?.let { task ->
+                                    viewModel.onAction(HomeAction.SuggestSubTasks(task.id))
+                                }
+                            },
+                            enabled = !uiState.isSuggestingSteps,
+                            shape = RoundedCornerShape(100.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            if (uiState.isSuggestingSteps) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = AccentBlue
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = AccentBlue,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                text = if (uiState.suggestedSteps.isEmpty()) "Suggest steps" else "Suggest more",
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                ),
+                                color = AccentBlue
+                            )
+                        }
+                    }
+
+                    if (uiState.suggestedSteps.isNotEmpty()) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            uiState.suggestedSteps.forEach { step ->
+                                SuggestedStepChip(
+                                    text = step,
+                                    onClick = {
+                                        taskForNewSubTask?.let { task ->
+                                            viewModel.onAction(
+                                                HomeAction.AcceptSuggestedStep(task.id, step)
+                                            )
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Spacer(Modifier.weight(1f))
+                            TextButton(
+                                onClick = {
+                                    viewModel.onAction(HomeAction.DismissSuggestedSteps)
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    "Dismiss",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    uiState.suggestedStepsMessage?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
                     OutlinedTextField(
                         value = newSubTaskTitle,
@@ -861,13 +983,15 @@ private fun WeekStripBar(
     selected: LocalDate,
     onSelect: (LocalDate) -> Unit,
     onShiftDay: (Int) -> Unit,
+    swipeEnabled: Boolean,
     modifier: Modifier = Modifier
 ) {
     WeekStrip(
         days = days,
         selected = selected,
         onSelect = onSelect,
-        modifier = modifier.pointerInput(selected) {
+        modifier = modifier.pointerInput(selected, swipeEnabled) {
+            if (!swipeEnabled) return@pointerInput
             // toPx() lives out here: the gesture callbacks are plain lambdas, not a
             // Density scope. Re-keyed on `selected` so a drag always resolves against
             // the day that is on screen.

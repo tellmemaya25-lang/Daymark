@@ -42,5 +42,13 @@ data class AddEditUiState(
     /** The one-line failure message, when there was nothing worth filling. */
     val quickAddError: String? = null,
     /** Shown on the first ✨ tap before any prompt leaves the device. */
-    val showAiConsentSheet: Boolean = false
+    val showAiConsentSheet: Boolean = false,
+
+    // ---- suggested steps ----
+    /** Steps offered for this task, not yet accepted. Empty hides the chip row. */
+    val suggestedSubTasks: List<String> = emptyList(),
+    /** A suggestion call is in flight; the ✨ button shows a spinner and ignores taps. */
+    val isSuggestingSubTasks: Boolean = false,
+    /** Why there are no steps, when that is worth saying - never a generic failure. */
+    val subTaskSuggestionMessage: String? = null
 )

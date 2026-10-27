@@ -22,6 +22,12 @@ import com.sabihon.todo.domain.usecase.PrioritizationUndoSnapshot
 import com.sabihon.todo.domain.usecase.PrioritizeTasksUseCase
 import com.sabihon.todo.domain.usecase.RestoreTaskUseCase
 import com.sabihon.todo.domain.usecase.ToggleCompleteUseCase
+import com.sabihon.todo.core.telemetry.AiTelemetry
+import com.sabihon.todo.core.telemetry.FirebaseAiTelemetry
+import com.sabihon.todo.domain.ai.SuggestedTaskCandidate
+import com.sabihon.todo.domain.usecase.AddTaskUseCase
+import com.sabihon.todo.domain.usecase.SuggestNextTasksUseCase
+import com.sabihon.todo.domain.usecase.SuggestSubTasksUseCase
 import com.sabihon.todo.domain.usecase.UpdateTaskUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -55,9 +61,21 @@ class HomeViewModel @Inject constructor(
     private val localPriorityScorer: LocalPriorityScorer,
     private val aiSnapshotCache: AiSnapshotCache,
     private val aiPreferences: AiPreferenceStore,
+    private val suggestSubTasksUseCase: SuggestSubTasksUseCase,
+    private val suggestNextTasksUseCase: SuggestNextTasksUseCase,
+    private val addTaskUseCase: AddTaskUseCase,
+    private val telemetry: AiTelemetry,
     private val avatarStore: AvatarStore,
     private val auth: FirebaseAuth
 ) : ViewModel() {
+
+    /** Guards the single automatic suggestion load per screen lifetime. */
+    private var nextSuggestionsRequested = false
+
+    private companion object {
+        /** Above this many open tasks the user already knows what is next. */
+        const val AUTO_SUGGEST_OPEN_THRESHOLD = 3
+    }
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
@@ -198,6 +216,17 @@ class HomeViewModel @Inject constructor(
                             done = todayTasks.count { it.isCompleted }
                         )
 
+                        // The card is for a list that is nearly clear. With a long
+                        // backlog the user already knows what is next, and a cloud call
+                        // that says "here is more work" is noise. Fires once per
+                        // ViewModel lifetime; Refresh is the manual door.
+                        if (!nextSuggestionsRequested &&
+                            allTasks.count { !it.isCompleted } <= AUTO_SUGGEST_OPEN_THRESHOLD
+                        ) {
+                            nextSuggestionsRequested = true
+                            loadNextSuggestions()
+                        }
+
                         // Real-time CDC: surgically evict completed/deleted tasks from
                         // the cached prioritization plan and keep focus ranks fresh.
                         val cdcUpdatedPlan = aiSnapshotCache.onTasksSnapshotChanged(
@@ -298,6 +327,27 @@ class HomeViewModel @Inject constructor(
             is HomeAction.ClearError -> _uiState.update { it.copy(errorMessage = null) }
             is HomeAction.ClearHabitLabel -> _uiState.update { it.copy(habitNextLabel = null) }
             is HomeAction.AddSubTask -> addSubTask(action.taskId, action.subTaskTitle)
+            is HomeAction.SuggestSubTasks -> suggestSteps(action.taskId)
+            is HomeAction.AcceptSuggestedStep -> {
+                addSubTask(action.taskId, action.step)
+                // Drop the accepted step so the row shrinks as steps land, and clear the
+                // message: it explained an empty state that no longer applies.
+                _uiState.update { current ->
+                    current.copy(
+                        suggestedSteps = current.suggestedSteps - action.step,
+                        suggestedStepsMessage = null
+                    )
+                }
+            }
+            HomeAction.DismissSuggestedSteps -> _uiState.update {
+                it.copy(suggestedSteps = emptyList(), suggestedStepsMessage = null)
+            }
+            HomeAction.RequestSuggestions -> loadNextSuggestions()
+            is HomeAction.AcceptSuggestion -> acceptSuggestion(action.suggestion)
+            is HomeAction.DismissSuggestion -> dismissSuggestion(action.suggestion)
+            HomeAction.ToggleSuggestionsExpanded -> _uiState.update {
+                it.copy(suggestionsExpanded = !it.suggestionsExpanded)
+            }
             is HomeAction.ToggleSubTask -> toggleSubTask(action.taskId, action.subTaskId, action.isDone)
             is HomeAction.SetFilter -> {
                 _uiState.update { current ->
@@ -602,6 +652,131 @@ class HomeViewModel @Inject constructor(
             )
             val updated = task.copy(subTasks = task.subTasks + newSub)
             updateTaskUseCase(updated)
+        }
+    }
+
+    /**
+     * Offers steps for an existing task, from the quick sheet, without opening the editor.
+     *
+     * The task's title and notes are the input, and the steps it already has are excluded
+     * here rather than only in the UI: the suggestion is for the gap, not for a list the
+     * user has already written.
+     */
+    private fun suggestSteps(taskId: String) {
+        val task = _uiState.value.allTasks.find { it.id == taskId } ?: return
+        if (_uiState.value.isSuggestingSteps) return
+
+        _uiState.update { it.copy(isSuggestingSteps = true, suggestedStepsMessage = null) }
+        viewModelScope.launch {
+            try {
+                val result = suggestSubTasksUseCase(
+                    title = task.title,
+                    description = task.description.takeIf { it.isNotBlank() },
+                    existingSubTasks = task.subTasks.map { it.title },
+                    uid = auth.currentUser?.uid
+                )
+                _uiState.update { current ->
+                    current.copy(
+                        isSuggestingSteps = false,
+                        suggestedSteps = result.steps,
+                        suggestedStepsMessage = result.message
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSuggestingSteps = false,
+                        suggestedStepsMessage = "Couldn't suggest steps - try again"
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Asks for next-task suggestions.
+     *
+     * Nothing is written and nothing is created: the result is a list of candidates the
+     * user may accept one at a time, mute, or ignore entirely by collapsing the card.
+     */
+    private fun loadNextSuggestions() {
+        if (_uiState.value.isSuggestingNext) return
+        _uiState.update { it.copy(isSuggestingNext = true) }
+
+        viewModelScope.launch {
+            try {
+                val state = _uiState.value
+                val result = suggestNextTasksUseCase(
+                    openTasks = state.allTasks.filter { !it.isCompleted },
+                    recentCompleted = state.allTasks.filter { it.isCompleted },
+                    categories = categoriesList,
+                    uid = auth.currentUser?.uid
+                )
+                _uiState.update {
+                    it.copy(
+                        isSuggestingNext = false,
+                        nextTaskSuggestions = result.candidates,
+                        suggestionsExpanded = it.suggestionsExpanded || result.candidates.isNotEmpty()
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isSuggestingNext = false) }
+            }
+        }
+    }
+
+    /** Accepting writes a real task, then drops the candidate from the card. */
+    private fun acceptSuggestion(suggestion: SuggestedTaskCandidate) {
+        viewModelScope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                val task = Task(
+                    title = suggestion.title,
+                    categoryId = suggestion.categoryId,
+                    priority = suggestion.priority,
+                    dueAt = suggestion.dueOffsetHours?.let { hours ->
+                        now + hours.toLong() * 60L * 60L * 1000L
+                    }
+                )
+                addTaskUseCase(task)
+                telemetry.logOutcome(
+                    FirebaseAiTelemetry.FEATURE_SUGGEST_NEXT,
+                    FirebaseAiTelemetry.ACTION_ACCEPTED
+                )
+                _uiState.update { current ->
+                    current.copy(
+                        nextTaskSuggestions = current.nextTaskSuggestions
+                            .filterNot { it.suggestionId == suggestion.suggestionId }
+                    )
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("HomeVM", "suggestion add failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Muting is permanent, which is the point: a suggestion that comes back after being
+     * dismissed teaches the user that `×` does nothing, and then everything else on the
+     * card is ignored too.
+     */
+    private fun dismissSuggestion(suggestion: SuggestedTaskCandidate) {
+        viewModelScope.launch {
+            try {
+                aiPreferences.dismissSuggestion(suggestion.suggestionId)
+                telemetry.logOutcome(
+                    FirebaseAiTelemetry.FEATURE_SUGGEST_NEXT,
+                    FirebaseAiTelemetry.ACTION_DISMISSED
+                )
+            } catch (e: Exception) {
+                android.util.Log.w("HomeVM", "suggestion dismiss failed: ${e.message}")
+            }
+            _uiState.update { current ->
+                current.copy(
+                    nextTaskSuggestions = current.nextTaskSuggestions
+                        .filterNot { it.suggestionId == suggestion.suggestionId }
+                )
+            }
         }
     }
 

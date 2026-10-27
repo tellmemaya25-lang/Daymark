@@ -28,4 +28,34 @@ interface AiTaskService {
         modelTier: AiModelTier = AiModelTier.FLASH_LITE
     ): Result<CloudPrioritizationDraft> =
         Result.Error(UnsupportedOperationException("Prioritization not supported by this service"))
+
+    /**
+     * Breaks one task into concrete steps.
+     *
+     * @param title the task being broken down.
+     * @param description the note attached to it, if any - often where the detail lives.
+     * @param existingSubTasks steps the user already typed, which must not come back.
+     * @return raw candidate steps. Cleaning, de-duplication, capping and ordering are the
+     *   use case's job, so every implementation - cloud, cached or heuristic - is held to
+     *   the same rules.
+     */
+    suspend fun suggestSubTasks(
+        title: String,
+        description: String?,
+        existingSubTasks: List<String>
+    ): Result<List<String>> =
+        Result.Error(UnsupportedOperationException("Step suggestions not supported by this service"))
+
+    /**
+     * Suggests up to three things worth doing next.
+     *
+     * @param context only titles and list names - see [SuggestionContext].
+     * @return raw candidates. Whitelisting the list id, dropping anything the user
+     *   already has open or has muted, and capping the count are the use case's job, so
+     *   the local heuristics and the cloud answer are judged by identical rules.
+     */
+    suspend fun suggestNextTasks(
+        context: SuggestionContext
+    ): Result<List<SuggestedTaskCandidate>> =
+        Result.Error(UnsupportedOperationException("Next-task suggestions not supported by this service"))
 }

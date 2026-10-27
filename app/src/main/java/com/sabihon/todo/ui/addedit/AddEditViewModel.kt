@@ -18,6 +18,7 @@ import com.sabihon.todo.domain.usecase.DeleteTaskUseCase
 import com.sabihon.todo.domain.usecase.ParseQuickAddUseCase
 import com.sabihon.todo.domain.usecase.QuickAddResult
 import com.sabihon.todo.domain.usecase.RepeatScheduler
+import com.sabihon.todo.domain.usecase.SuggestSubTasksUseCase
 import com.sabihon.todo.domain.usecase.UpdateTaskUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +46,7 @@ class AddEditViewModel @Inject constructor(
     private val taskRepository: TaskRepository,
     private val categoryRepository: CategoryRepository,
     private val parseQuickAddUseCase: ParseQuickAddUseCase,
+    private val suggestSubTasksUseCase: SuggestSubTasksUseCase,
     private val aiPreferences: AiPreferenceStore,
     private val auth: FirebaseAuth
 ) : ViewModel() {
@@ -303,6 +305,93 @@ class AddEditViewModel @Inject constructor(
         }
         persistSubTasks()
     }
+
+    /* ---------------------------------------------------------------- */
+    /* Suggested steps                                                  */
+    /* ---------------------------------------------------------------- */
+
+    /**
+     * Asks for steps for whatever is in the title right now.
+     *
+     * The title is the input, so this reads the live state rather than a snapshot taken
+     * on screen entry: by the time the user taps ✨ they have typed the sentence they
+     * want broken down.
+     */
+    fun onSuggestSubTasks() {
+        val snapshot = _uiState.value
+        if (snapshot.isSuggestingSubTasks) return
+        if (snapshot.title.isBlank()) {
+            _uiState.update { it.copy(subTaskSuggestionMessage = "Give the task a name first") }
+            return
+        }
+
+        _uiState.update {
+            it.copy(isSuggestingSubTasks = true, subTaskSuggestionMessage = null)
+        }
+        viewModelScope.launch {
+            try {
+                val result = suggestSubTasksUseCase(
+                    title = snapshot.title,
+                    description = snapshot.description.takeIf { d -> d.isNotBlank() },
+                    existingSubTasks = snapshot.subTasks.map { it.title },
+                    uid = auth.currentUser?.uid
+                )
+                _uiState.update { current ->
+                    current.copy(
+                        isSuggestingSubTasks = false,
+                        suggestedSubTasks = result.steps,
+                        subTaskSuggestionMessage = result.message
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSuggestingSubTasks = false,
+                        subTaskSuggestionMessage = "Couldn't suggest steps - try again"
+                    )
+                }
+            }
+        }
+    }
+
+    /** Accepting one chip turns it into a real sub-task and drops it from the row. */
+    fun onAcceptSuggestedSubTask(step: String) {
+        val snapshot = _uiState.value
+        val alreadyPresent = snapshot.subTasks.any { it.title.equals(step, ignoreCase = true) }
+        if (alreadyPresent) {
+            _uiState.update { it.copy(suggestedSubTasks = it.suggestedSubTasks - step) }
+            return
+        }
+        val sub = SubTask(id = newSubTaskId(), title = step.trim(), isDone = false)
+        _uiState.update {
+            it.copy(
+                subTasks = it.subTasks + sub,
+                suggestedSubTasks = it.suggestedSubTasks - step
+            )
+        }
+        persistSubTasks()
+    }
+
+    fun onAcceptAllSuggestedSubTasks() {
+        val snapshot = _uiState.value
+        if (snapshot.suggestedSubTasks.isEmpty()) return
+        val existing = snapshot.subTasks.map { it.title.lowercase() }.toMutableSet()
+        val accepted = snapshot.suggestedSubTasks
+            .filter { existing.add(it.lowercase()) }
+            .map { step -> SubTask(id = newSubTaskId(), title = step.trim(), isDone = false) }
+        if (accepted.isNotEmpty()) {
+            _uiState.update { it.copy(subTasks = it.subTasks + accepted) }
+            persistSubTasks()
+        }
+        _uiState.update { it.copy(suggestedSubTasks = emptyList()) }
+    }
+
+    fun onDismissSuggestedSubTasks() {
+        _uiState.update { it.copy(suggestedSubTasks = emptyList(), subTaskSuggestionMessage = null) }
+    }
+
+    private fun newSubTaskId(): String =
+        System.currentTimeMillis().toString() + "_" + (0..999).random()
 
     /**
      * Writes the checklist on its own, so ticking a sub-task sticks without having to
