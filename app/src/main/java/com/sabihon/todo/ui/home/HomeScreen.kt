@@ -271,38 +271,56 @@ fun HomeScreen(
                 }
 
                 item {
-                    SegmentedTabs(
-                        tabs = listOf(
-                            // When another day is picked the badge follows that day, not today's count.
-                            TabItem(
-                                "today",
-                                "Today",
-                                if (uiState.selectedDate == java.time.LocalDate.now()) {
-                                    uiState.counts.today
-                                } else {
-                                    uiState.visibleTasks.size + uiState.completedTasks.size
-                                }
-                            ),
-                            TabItem("upcoming", "Upcoming", null),
-                            TabItem("all", "All tasks", uiState.counts.all)
-                        ),
-                        selectedId = when (uiState.selectedFilter) {
-                            HomeFilter.TODAY -> "today"
-                            HomeFilter.UPCOMING -> "upcoming"
-                            HomeFilter.ALL -> "all"
-                        },
-                        onSelect = { id ->
-                            viewModel.onAction(
-                                HomeAction.SetFilter(
-                                    when (id) {
-                                        "today" -> HomeFilter.TODAY
-                                        "upcoming" -> HomeFilter.UPCOMING
-                                        else -> HomeFilter.ALL
+                    // Prioritize lived in the ON YOUR LIST row, between the count and the
+                    // sort control, which made that row three things wide and left the
+                    // label fighting two trailing controls. It belongs with the tab that
+                    // chooses *what* is being listed, not with the row that describes it.
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SegmentedTabs(
+                            modifier = Modifier.weight(1f),
+                            tabs = listOf(
+                                // When another day is picked the badge follows that day, not today's count.
+                                TabItem(
+                                    "today",
+                                    "Today",
+                                    if (uiState.selectedDate == java.time.LocalDate.now()) {
+                                        uiState.counts.today
+                                    } else {
+                                        uiState.visibleTasks.size + uiState.completedTasks.size
                                     }
+                                ),
+                                TabItem("upcoming", "Upcoming", null),
+                                TabItem("all", "All tasks", uiState.counts.all)
+                            ),
+                            selectedId = when (uiState.selectedFilter) {
+                                HomeFilter.TODAY -> "today"
+                                HomeFilter.UPCOMING -> "upcoming"
+                                HomeFilter.ALL -> "all"
+                            },
+                            onSelect = { id ->
+                                viewModel.onAction(
+                                    HomeAction.SetFilter(
+                                        when (id) {
+                                            "today" -> HomeFilter.TODAY
+                                            "upcoming" -> HomeFilter.UPCOMING
+                                            else -> HomeFilter.ALL
+                                        }
+                                    )
                                 )
+                            }
+                        )
+
+                        if (uiState.visibleTasks.size >= 2) {
+                            PrioritizePill(
+                                onClick = { viewModel.onAction(HomeAction.RequestPrioritize) }
                             )
                         }
-                    )
+                    }
                 }
 
                 item {
@@ -319,12 +337,7 @@ fun HomeScreen(
                         showSortMenu = showSortMenu,
                         onSortMenuChange = { showSortMenu = it },
                         onSortSelected = { sort -> viewModel.onAction(HomeAction.SetSort(sort)) },
-                        onDirectionSelected = { dir -> viewModel.onAction(HomeAction.SetSortDirection(dir)) },
-                        onPrioritizeClick = if (uiState.visibleTasks.size >= 2) {
-                            { viewModel.onAction(HomeAction.RequestPrioritize) }
-                        } else {
-                            null
-                        }
+                        onDirectionSelected = { dir -> viewModel.onAction(HomeAction.SetSortDirection(dir)) }
                     )
                 }
 
@@ -829,6 +842,44 @@ private fun SearchCircleButton(
     }
 }
 
+/* Prioritize pill                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The sparkle that opens the focus-plan sheet.
+ *
+ * Only drawn when there are at least two open tasks: a plan that ranks one task is not
+ * a plan, and offering it on an empty list is offering nothing.
+ */
+@Composable
+private fun PrioritizePill(onClick: () -> Unit) {
+    val surfaces = LocalDaymarkSurfaces.current
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(100.dp))
+            .background(surfaces.accentSurface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Filled.AutoAwesome,
+            contentDescription = "Prioritize tasks",
+            tint = AccentBlue,
+            modifier = Modifier.size(12.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = "Prioritize",
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
+            color = surfaces.onAccentSurface
+        )
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* "ON YOUR LIST" header + sort menu                                   */
 /* ------------------------------------------------------------------ */
@@ -843,8 +894,7 @@ private fun ListHeader(
     showSortMenu: Boolean,
     onSortMenuChange: (Boolean) -> Unit,
     onSortSelected: (HomeSort) -> Unit,
-    onDirectionSelected: (HomeSortDirection) -> Unit,
-    onPrioritizeClick: (() -> Unit)? = null
+    onDirectionSelected: (HomeSortDirection) -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -885,35 +935,6 @@ private fun ListHeader(
             }
         }
         Spacer(Modifier.weight(1f))
-
-        if (onPrioritizeClick != null) {
-            val surfaces = LocalDaymarkSurfaces.current
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(100.dp))
-                    .background(surfaces.accentSurface)
-                    .clickable(onClick = onPrioritizeClick)
-                    .padding(horizontal = 9.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.AutoAwesome,
-                    contentDescription = "Prioritize tasks",
-                    tint = AccentBlue,
-                    modifier = Modifier.size(12.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "Prioritize",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
-                    ),
-                    color = surfaces.onAccentSurface
-                )
-            }
-            Spacer(Modifier.width(6.dp))
-        }
 
         Box {
             Row(
