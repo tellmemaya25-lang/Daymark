@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -102,8 +103,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.sabihon.todo.SabihonApp
 import com.sabihon.todo.core.ui.components.GroupedCard
 import com.sabihon.todo.core.ui.components.GroupedDivider
+import com.sabihon.todo.core.ui.components.GroupedRow
+import com.sabihon.todo.core.ui.components.SectionLabel
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.core.ui.theme.DaymarkSheetShape
 import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
@@ -122,6 +126,7 @@ import com.sabihon.todo.domain.admin.DailyTaskBucket
 import com.sabihon.todo.domain.admin.UserRole
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.ui.auth.GoogleAuthButton
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -235,6 +240,9 @@ fun AdminDashboardScreen(
                         savedConfig = uiState.systemConfig,
                         hasUnsavedChanges = uiState.hasUnsavedConfigChanges,
                         isSaving = uiState.isSavingConfig,
+                        geminiApiKey = uiState.geminiApiKey,
+                        onSaveGeminiApiKey = viewModel::saveGeminiApiKey,
+                        onShowMessage = viewModel::setError,
                         onUpdateDraft = viewModel::updateConfigDraft,
                         onResetDraft = viewModel::resetConfigDraft,
                         onSave = viewModel::saveSystemConfig
@@ -1479,23 +1487,109 @@ private fun RoleBadge(text: String, color: Color) {
 /* Tab 4: AI & Runtime Config                                                 */
 /* -------------------------------------------------------------------------- */
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AdminAiConfigTab(
     draft: AdminSystemConfig,
     savedConfig: AdminSystemConfig,
     hasUnsavedChanges: Boolean,
     isSaving: Boolean,
+    geminiApiKey: String,
+    onSaveGeminiApiKey: (String) -> Unit,
+    onShowMessage: (String) -> Unit,
     onUpdateDraft: ((AdminSystemConfig) -> AdminSystemConfig) -> Unit,
     onResetDraft: () -> Unit,
     onSave: () -> Unit
 ) {
     val surfaces = LocalDaymarkSurfaces.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var showApiKeySheet by remember { mutableStateOf(false) }
+    var apiKeyDraft by remember { mutableStateOf("") }
+    var apiKeyVisible by remember { mutableStateOf(false) }
+
+    val isDebugBuild = remember(context) {
+        (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+    val firebaseProjectId = remember(context) { SabihonApp.firebaseProjectId(context) }
+    var debugAppCheckToken by remember(context) {
+        mutableStateOf(if (isDebugBuild) SabihonApp.readAppCheckDebugToken(context) else null)
+    }
+
+    LaunchedEffect(isDebugBuild) {
+        if (isDebugBuild && debugAppCheckToken == null) {
+            delay(600L)
+            debugAppCheckToken = SabihonApp.readAppCheckDebugToken(context)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        item {
+            Column {
+                SectionLabel("CREDENTIALS & APP CHECK")
+                GroupedCard {
+                    val configuredKey = geminiApiKey.trim()
+                    val keyStatus = when {
+                        configuredKey.length > 8 -> "${configuredKey.take(4)}…${configuredKey.takeLast(4)}"
+                        configuredKey.isNotEmpty() -> "Saved"
+                        else -> "Set key"
+                    }
+                    GroupedRow(
+                        label = "Gemini API key",
+                        supporting = "Free at aistudio.google.com/apikey — no Blaze plan needed",
+                        value = keyStatus,
+                        onClick = {
+                            apiKeyDraft = geminiApiKey
+                            apiKeyVisible = false
+                            showApiKeySheet = true
+                        }
+                    )
+                    if (isDebugBuild) {
+                        GroupedDivider()
+                        val shortToken = debugAppCheckToken?.let { token ->
+                            if (token.length > 12) "${token.take(8)}…${token.takeLast(4)}" else token
+                        } ?: "Copy"
+                        val projectLine = firebaseProjectId?.let { "Project: $it · " }.orEmpty()
+                        GroupedRow(
+                            label = "App Check debug token",
+                            supporting = "${projectLine}Tap to copy for Firebase Console > App Check",
+                            value = shortToken,
+                            onClick = {
+                                scope.launch {
+                                    val token = SabihonApp.readAppCheckDebugToken(context)
+                                        ?: run {
+                                            delay(500L)
+                                            SabihonApp.readAppCheckDebugToken(context)
+                                        }
+                                    debugAppCheckToken = token
+                                    if (!token.isNullOrBlank()) {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                        clipboard?.setPrimaryClip(ClipData.newPlainText("App Check Debug Token", token))
+                                        onShowMessage("Copied App Check debug token ($token)")
+                                    } else {
+                                        onShowMessage("Generating debug token — tap again in a second")
+                                    }
+                                }
+                            }
+                        )
+                    } else {
+                        GroupedDivider()
+                        val projectLine = firebaseProjectId?.let { "Project: $it · " }.orEmpty()
+                        GroupedRow(
+                            label = "App Check provider",
+                            supporting = "${projectLine}Release Play Integrity attestation active",
+                            value = "Enforced",
+                            onClick = null
+                        )
+                    }
+                }
+            }
+        }
+
         item {
             GroupedCard {
                 ConfigToggleRow(
@@ -1718,6 +1812,100 @@ private fun AdminAiConfigTab(
                             Text("Save Configuration", fontWeight = FontWeight.SemiBold)
                         }
                     }
+                }
+            }
+        }
+    }
+
+    if (showApiKeySheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showApiKeySheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            shape = DaymarkSheetShape,
+            containerColor = surfaces.card,
+            tonalElevation = 0.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
+            ) {
+                Text(
+                    "Free Gemini API key",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Skip the Firebase Blaze upgrade: create a free key at aistudio.google.com/apikey (no credit card required) and paste it below. Stored locally on this device.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = apiKeyDraft,
+                    onValueChange = { apiKeyDraft = it },
+                    placeholder = { Text("AIzaSy...") },
+                    singleLine = true,
+                    visualTransformation = if (apiKeyVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                            Icon(
+                                imageVector = if (apiKeyVisible) {
+                                    Icons.Filled.VisibilityOff
+                                } else {
+                                    Icons.Filled.Visibility
+                                },
+                                contentDescription = if (apiKeyVisible) {
+                                    "Hide API key"
+                                } else {
+                                    "Show API key"
+                                },
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        onSaveGeminiApiKey(apiKeyDraft)
+                        showApiKeySheet = false
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AccentBlue,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                ) {
+                    Text(
+                        text = if (apiKeyDraft.isBlank()) "Clear key" else "Save Gemini key",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                TextButton(
+                    onClick = { showApiKeySheet = false },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp)
+                ) {
+                    Text("Cancel")
                 }
             }
         }

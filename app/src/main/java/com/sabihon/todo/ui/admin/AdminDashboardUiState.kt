@@ -76,6 +76,7 @@ data class AdminDashboardUiState(
     val configDraft: AdminSystemConfig = AdminSystemConfig(),
     val hasUnsavedConfigChanges: Boolean = false,
     val isSavingConfig: Boolean = false,
+    val geminiApiKey: String = "",
 
     // Audit, Export & Security
     val auditLogs: List<AdminAuditEntry> = emptyList(),
