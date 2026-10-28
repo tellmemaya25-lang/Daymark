@@ -22,27 +22,27 @@ python3 tools/check_kotlin_syntax.py path/to/src
 Checks that every symbol used in an `update { }` lambda is imported, and that no
 `return@` label dangles.
 
-## Running the real compiler here (no Android SDK required)
-
-The sandbox blocks `services.gradle.org`, Google Maven and Maven Central, so Gradle
-cannot resolve dependencies. A JDK and `kotlinc` can still be obtained from the two
-registries that *are* reachable — enough for a genuine parse of the whole tree, and for
-compiling anything that does not import androidx:
+## `typecheck.py` — the one that catches real compile errors
 
 ```bash
-pip install --break-system-packages jdk4py            # JDK from PyPI
-export JAVA_HOME=$(python3 -c "import jdk4py;print(jdk4py.JAVA_HOME)")
-export PATH="$JAVA_HOME/bin:$PATH"
-
-npm pack kotlin-compiler@2.4.21 --silent              # kotlinc from npm
-tar xzf kotlin-compiler-2.4.21.tgz
-
-find app/src -name '*.kt' > /tmp/srcs.txt
-package/bin/kotlinc @/tmp/srcs.txt -d /tmp/out -nowarn 2>&1 \
-  | grep -iE "error:.*(syntax|expecting|unclosed)"   # parse failures only
+python3 tools/typecheck.py          # add --list to see which files survived
 ```
 
-Unresolved `androidx`/`firebase` symbols are expected and noisy; parse-level errors are
-not. For a type check of a specific expression, compile it standalone against minimal
-stubs of the Compose signatures it uses (see the `Modifier`/`IntSize`/`Dp` probe used to
-verify the weekly-calendar slot collapse).
+Bootstraps a JDK (`jdk4py`, PyPI) and `kotlinc` (`kotlin-compiler`, npm) into
+`/tmp/daymark-toolchain`, generates stubs for the few library types the pure layers touch
+(`javax.inject`, `kotlinx.coroutines.flow`, Firebase `Timestamp` + annotations), then
+type-checks the app iteratively: files whose unresolved symbols come from absent
+libraries (androidx, firebase SDK, hilt) are dropped, and whatever is left must compile.
+
+That currently covers **49 files** — the validator, every domain model and DTO, the
+mappers, the admin policy/export logic and the AI guards. It is the check that catches
+the class of bug a syntax scan cannot see:
+
+```
+app/src/main/java/com/sabihon/todo/data/remote/dto/Mappers.kt:61:23: error: argument type
+mismatch: actual type is 'String?', but 'String' was expected.
+```
+
+Verified by reintroducing that exact defect: the tool reports it at the same line and
+column Gradle does, and passes once fixed. Run it before pushing anything that touches
+domain/, data/remote/dto/ or data/ai/.
