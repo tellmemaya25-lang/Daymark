@@ -218,10 +218,18 @@ Aggregated via atomic `FieldValue.increment(...)` inside `FirebaseAiTelemetry`:
 
 ## 7. Deployment & Operations Runbook
 
-1. **Deploy Updated Firestore Security Rules**:
-   ```bash
-   firebase deploy --only firestore:rules
-   ```
+1. **Deploy Updated Firestore Security Rules** (choose either CLI or Firebase Console):
+   - **Option A — Automated PowerShell Script (Windows, reads `project_id` from `app\google-services.json`)**:
+     ```powershell
+     .\deploy-firestore-rules.ps1
+     ```
+   - **Option B — Firebase CLI (`firebase.json` included at repo root)**:
+     ```powershell
+     firebase use --add   # select your Firebase project once
+     firebase deploy --only firestore:rules
+     ```
+   - **Option C — Firebase Console UI (no CLI required)**:
+     Open **Firebase Console -> Firestore Database -> Rules**, paste the contents of `firestore.rules`, and click **Publish**.
 2. **Sign In to Admin Dashboard**:
    - Launch Daymark -> on `LoginScreen`, sign in with **`tellmemaya25@gmail.com`** and the configured admin password (or tap **Continue with Google** with `tellmemaya25@gmail.com`).
    - App routes directly to **`daymark . control` (`AdminDashboardScreen`)**.

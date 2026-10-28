@@ -23,6 +23,9 @@ captures/
 # Firebase
 app/google-services.json
 app/src/**/google-services.json
+.firebaserc
+firebase-debug.log*
+firestore-debug.log*
 # Keep a sample for CI placeholder if needed:
 # !app/google-services.json.sample
 
