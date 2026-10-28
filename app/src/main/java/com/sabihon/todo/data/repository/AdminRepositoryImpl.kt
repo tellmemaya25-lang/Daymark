@@ -12,6 +12,7 @@ import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiQuotaGuard
 import com.sabihon.todo.data.remote.dto.CategoryDto
 import com.sabihon.todo.data.remote.dto.TaskDto
+import com.sabihon.todo.data.remote.dto.generateSearchKeywords
 import com.sabihon.todo.data.remote.dto.toDomain
 import com.sabihon.todo.di.IoDispatcher
 import com.sabihon.todo.domain.admin.AdminAccessPolicy
@@ -33,6 +34,7 @@ import com.sabihon.todo.domain.admin.UserRole
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.repository.AuthRepository
+import com.sabihon.todo.domain.security.InputSecurityValidator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -411,24 +413,25 @@ class AdminRepositoryImpl @Inject constructor(
     override suspend fun loadUserDetail(user: AdminUserSummary): Result<AdminUserDetail> =
         withContext(ioDispatcher) {
             try {
+                val safeUid = InputSecurityValidator.requireSafeDocId(user.uid, "uid")
                 val tasksSnap = firestore.collection("users")
-                    .document(user.uid)
+                    .document(safeUid)
                     .collection("tasks")
                     .get()
                     .await()
                 val catsSnap = firestore.collection("users")
-                    .document(user.uid)
+                    .document(safeUid)
                     .collection("categories")
                     .get()
                     .await()
 
                 val categoryMap = catsSnap.documents.mapNotNull { doc ->
                     val cat = doc.toObject(CategoryDto::class.java)?.copy(id = doc.id)
-                    if (cat != null && cat.name.isNotBlank()) "${user.uid}:${cat.id}" to cat.name else null
+                    if (cat != null && cat.name.isNotBlank()) "$safeUid:${cat.id}" to cat.name else null
                 }.toMap()
 
                 val records = tasksSnap.documents
-                    .mapNotNull { doc -> doc.toAdminTaskRecord(user.uid, user, categoryMap) }
+                    .mapNotNull { doc -> doc.toAdminTaskRecord(safeUid, user, categoryMap) }
                     .sortedWith(
                         compareBy<AdminTaskRecord> { it.isCompleted }
                             .thenByDescending { it.createdAtMillis }
@@ -457,7 +460,10 @@ class AdminRepositoryImpl @Inject constructor(
         target: AdminUserSummary,
         newDisplayName: String
     ): Result<Unit> = withContext(ioDispatcher) {
-        val trimmed = newDisplayName.trim()
+        val trimmed = InputSecurityValidator.sanitizeUserText(
+            newDisplayName,
+            maxLength = InputSecurityValidator.MAX_DISPLAY_NAME_LENGTH
+        )
         if (trimmed.isBlank()) {
             return@withContext Result.Error(
                 IllegalArgumentException("Empty name"),
@@ -465,14 +471,15 @@ class AdminRepositoryImpl @Inject constructor(
             )
         }
         try {
+            val safeUid = InputSecurityValidator.requireSafeDocId(target.uid, "uid")
             firestore.collection("users")
-                .document(target.uid)
+                .document(safeUid)
                 .set(mapOf("displayName" to trimmed), SetOptions.merge())
                 .await()
             recordAuditEvent(
                 action = "EDIT_USER_PROFILE",
-                targetId = target.uid,
-                summary = "Updated display name for ${target.email.ifBlank { target.uid }} to '$trimmed'"
+                targetId = safeUid,
+                summary = "Updated display name for ${target.email.ifBlank { safeUid }} to '$trimmed'"
             )
             Result.Success(Unit)
         } catch (e: Exception) {
@@ -482,11 +489,11 @@ class AdminRepositoryImpl @Inject constructor(
 
     override suspend fun sendUserPasswordReset(email: String): Result<Unit> =
         withContext(ioDispatcher) {
-            val clean = email.trim()
-            if (clean.isBlank()) {
+            val clean = InputSecurityValidator.sanitizeUserText(email, maxLength = 254)
+            if (clean.isBlank() || !clean.contains('@')) {
                 return@withContext Result.Error(
                     IllegalArgumentException("Missing email"),
-                    "User has no email address on file."
+                    "User has no valid email address on file."
                 )
             }
             try {
@@ -516,17 +523,18 @@ class AdminRepositoryImpl @Inject constructor(
         }
 
         try {
+            val safeUid = InputSecurityValidator.requireSafeDocId(target.uid, "uid")
             val newRole = if (makeAdmin) UserRole.ADMIN.name else UserRole.USER.name
             firestore.collection("users")
-                .document(target.uid)
+                .document(safeUid)
                 .set(mapOf("role" to newRole), SetOptions.merge())
                 .await()
 
             firestore.collection("admins")
-                .document(target.uid)
+                .document(safeUid)
                 .set(
                     mapOf(
-                        "uid" to target.uid,
+                        "uid" to safeUid,
                         "email" to AdminAccessPolicy.normalizeEmail(target.email),
                         "enabled" to makeAdmin,
                         "grantedBy" to actorEmail,
@@ -538,8 +546,8 @@ class AdminRepositoryImpl @Inject constructor(
 
             recordAuditEvent(
                 action = if (makeAdmin) "GRANT_ADMIN" else "REVOKE_ADMIN",
-                targetId = target.uid,
-                summary = "${if (makeAdmin) "Granted" else "Revoked"} admin role for ${target.email.ifBlank { target.uid }}"
+                targetId = safeUid,
+                summary = "${if (makeAdmin) "Granted" else "Revoked"} admin role for ${target.email.ifBlank { safeUid }}"
             )
             Result.Success(Unit)
         } catch (e: Exception) {
@@ -560,15 +568,16 @@ class AdminRepositoryImpl @Inject constructor(
         }
 
         try {
+            val safeUid = InputSecurityValidator.requireSafeDocId(target.uid, "uid")
             firestore.collection("users")
-                .document(target.uid)
+                .document(safeUid)
                 .set(mapOf("disabled" to suspended), SetOptions.merge())
                 .await()
 
             recordAuditEvent(
                 action = if (suspended) "SUSPEND_USER" else "REACTIVATE_USER",
-                targetId = target.uid,
-                summary = "${if (suspended) "Suspended" else "Reactivated"} ${target.email.ifBlank { target.uid }}"
+                targetId = safeUid,
+                summary = "${if (suspended) "Suspended" else "Reactivated"} ${target.email.ifBlank { safeUid }}"
             )
             Result.Success(Unit)
         } catch (e: Exception) {
@@ -587,11 +596,12 @@ class AdminRepositoryImpl @Inject constructor(
             }
 
             try {
+                val safeUid = InputSecurityValidator.requireSafeDocId(target.uid, "uid")
                 // Delete user's subcollection docs (tasks, categories, activity) then user doc.
                 for (sub in listOf("tasks", "categories", "activity")) {
                     val docs = runCatching {
                         firestore.collection("users")
-                            .document(target.uid)
+                            .document(safeUid)
                             .collection(sub)
                             .get()
                             .await()
@@ -604,14 +614,14 @@ class AdminRepositoryImpl @Inject constructor(
                     }
                 }
                 runCatching {
-                    firestore.collection("admins").document(target.uid).delete().await()
+                    firestore.collection("admins").document(safeUid).delete().await()
                 }
-                firestore.collection("users").document(target.uid).delete().await()
+                firestore.collection("users").document(safeUid).delete().await()
 
                 recordAuditEvent(
                     action = "DELETE_USER_WORKSPACE",
-                    targetId = target.uid,
-                    summary = "Deleted workspace & tasks for ${target.email.ifBlank { target.uid }}"
+                    targetId = safeUid,
+                    summary = "Deleted workspace & tasks for ${target.email.ifBlank { safeUid }}"
                 )
                 Result.Success(Unit)
             } catch (e: Exception) {
@@ -623,22 +633,24 @@ class AdminRepositoryImpl @Inject constructor(
         withContext(ioDispatcher) {
             val nextCompleted = !task.isCompleted
             try {
+                val safeOwnerUid = InputSecurityValidator.requireSafeDocId(task.ownerUid, "ownerUid")
+                val safeTaskId = InputSecurityValidator.requireSafeDocId(task.taskId, "taskId")
                 val updates = mutableMapOf<String, Any?>(
                     "completed" to nextCompleted,
                     "completedAt" to if (nextCompleted) Timestamp.now() else null,
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
                 firestore.collection("users")
-                    .document(task.ownerUid)
+                    .document(safeOwnerUid)
                     .collection("tasks")
-                    .document(task.taskId)
+                    .document(safeTaskId)
                     .update(updates)
                     .await()
 
                 recordAuditEvent(
                     action = if (nextCompleted) "ADMIN_COMPLETE_TASK" else "ADMIN_REOPEN_TASK",
-                    targetId = "${task.ownerUid}/${task.taskId}",
-                    summary = "${if (nextCompleted) "Completed" else "Reopened"} '${task.title.take(40)}' (${task.ownerEmail.ifBlank { task.ownerUid }})"
+                    targetId = "$safeOwnerUid/$safeTaskId",
+                    summary = "${if (nextCompleted) "Completed" else "Reopened"} '${task.title.take(40)}' (${task.ownerEmail.ifBlank { safeOwnerUid }})"
                 )
                 Result.Success(Unit)
             } catch (e: Exception) {
@@ -652,26 +664,33 @@ class AdminRepositoryImpl @Inject constructor(
         newDescription: String,
         newPriority: Priority
     ): Result<Unit> = withContext(ioDispatcher) {
-        val cleanTitle = newTitle.trim()
+        val cleanTitle = InputSecurityValidator.sanitizeUserText(
+            newTitle,
+            maxLength = InputSecurityValidator.MAX_TITLE_LENGTH
+        )
         if (cleanTitle.isBlank()) {
             return@withContext Result.Error(
                 IllegalArgumentException("Blank title"),
                 "Task title cannot be empty."
             )
         }
+        val cleanDescription = InputSecurityValidator.sanitizeUserText(
+            newDescription,
+            maxLength = InputSecurityValidator.MAX_DESCRIPTION_LENGTH,
+            allowMultiline = true
+        )
         try {
-            val keywords = cleanTitle.lowercase(Locale.ROOT)
-                .split(Regex("\\s+"))
-                .filter { it.isNotBlank() }
-                .distinct()
+            val safeOwnerUid = InputSecurityValidator.requireSafeDocId(task.ownerUid, "ownerUid")
+            val safeTaskId = InputSecurityValidator.requireSafeDocId(task.taskId, "taskId")
+            val keywords = generateSearchKeywords(cleanTitle)
             firestore.collection("users")
-                .document(task.ownerUid)
+                .document(safeOwnerUid)
                 .collection("tasks")
-                .document(task.taskId)
+                .document(safeTaskId)
                 .set(
                     mapOf(
                         "title" to cleanTitle,
-                        "description" to newDescription.trim(),
+                        "description" to cleanDescription,
                         "priority" to newPriority.name,
                         "searchKeywords" to keywords,
                         "updatedAt" to FieldValue.serverTimestamp()
@@ -682,8 +701,8 @@ class AdminRepositoryImpl @Inject constructor(
 
             recordAuditEvent(
                 action = "ADMIN_EDIT_TASK",
-                targetId = "${task.ownerUid}/${task.taskId}",
-                summary = "Edited task '${cleanTitle.take(40)}' [${newPriority.name}] (${task.ownerEmail.ifBlank { task.ownerUid }})"
+                targetId = "$safeOwnerUid/$safeTaskId",
+                summary = "Edited task '${cleanTitle.take(40)}' [${newPriority.name}] (${task.ownerEmail.ifBlank { safeOwnerUid }})"
             )
             Result.Success(Unit)
         } catch (e: Exception) {
@@ -694,17 +713,19 @@ class AdminRepositoryImpl @Inject constructor(
     override suspend fun deletePlatformTask(task: AdminTaskRecord): Result<Unit> =
         withContext(ioDispatcher) {
             try {
+                val safeOwnerUid = InputSecurityValidator.requireSafeDocId(task.ownerUid, "ownerUid")
+                val safeTaskId = InputSecurityValidator.requireSafeDocId(task.taskId, "taskId")
                 firestore.collection("users")
-                    .document(task.ownerUid)
+                    .document(safeOwnerUid)
                     .collection("tasks")
-                    .document(task.taskId)
+                    .document(safeTaskId)
                     .delete()
                     .await()
 
                 recordAuditEvent(
                     action = "ADMIN_DELETE_TASK",
-                    targetId = "${task.ownerUid}/${task.taskId}",
-                    summary = "Deleted task '${task.title.take(40)}' (${task.ownerEmail.ifBlank { task.ownerUid }})"
+                    targetId = "$safeOwnerUid/$safeTaskId",
+                    summary = "Deleted task '${task.title.take(40)}' (${task.ownerEmail.ifBlank { safeOwnerUid }})"
                 )
                 Result.Success(Unit)
             } catch (e: Exception) {
@@ -716,6 +737,10 @@ class AdminRepositoryImpl @Inject constructor(
         withContext(ioDispatcher) {
             val actorEmail = authRepository.getCurrentUserEmail().orEmpty()
             val quota = config.dailyAiQuotaPerUser.coerceIn(5, 1_000)
+            val safeBanner = InputSecurityValidator.sanitizeUserText(
+                config.announcementBanner,
+                maxLength = 280
+            )
             try {
                 firestore.collection("system_config")
                     .document("global")
@@ -726,7 +751,7 @@ class AdminRepositoryImpl @Inject constructor(
                             "suggestionsEnabled" to config.suggestionsEnabled,
                             "dailyAiQuotaPerUser" to quota,
                             "maintenanceMode" to config.maintenanceMode,
-                            "announcementBanner" to config.announcementBanner.trim(),
+                            "announcementBanner" to safeBanner,
                             "updatedByEmail" to actorEmail,
                             "updatedAt" to FieldValue.serverTimestamp()
                         ),

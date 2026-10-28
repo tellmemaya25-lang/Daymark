@@ -83,4 +83,27 @@ class AdminExportFormatterTest {
         assertTrue(json.contains("\"announcementBanner\": \"Hello \\\"Daymark\\\"\""))
         assertTrue(json.contains("\"action\": \"UPDATE_SYSTEM_CONFIG\""))
     }
+
+    @Test
+    fun `escapeCsv neutralizes leading spreadsheet formula triggers`() {
+        val tasks = listOf(
+            AdminTaskRecord(
+                taskId = "task-sec",
+                ownerUid = "uid-1",
+                ownerName = "User",
+                ownerEmail = "user@example.com",
+                title = "=HYPERLINK(\"https://malicious.example\",\"Open\")",
+                priority = Priority.HIGH,
+                categoryName = "@SUM(1+1)",
+                isCompleted = false,
+                isRecurring = false,
+                streak = 0,
+                subTasksDone = 0,
+                subTasksTotal = 0
+            )
+        )
+        val csv = AdminExportFormatter.formatTasksCsv(tasks)
+        assertTrue(csv.contains("\"'=HYPERLINK("))
+        assertTrue(csv.contains("'@SUM(1+1)"))
+    }
 }

@@ -121,10 +121,28 @@ object AdminExportFormatter {
         return sb.toString()
     }
 
+    private val CSV_FORMULA_TRIGGERS = charArrayOf('=', '+', '-', '@', '\t', '\r')
+    private val CSV_FORMULA_LEADING_TRIGGERS = charArrayOf('=', '+', '-', '@')
+
+    /**
+     * OWASP CSV / Spreadsheet Formula Injection defense:
+     * Any cell beginning with `=`, `+`, `-`, `@`, `\t`, or `\r` (or leading spaces
+     * followed by `=`, `+`, `-`, `@`) is prefixed with a single quote (`'`) so Excel,
+     * LibreOffice Calc, and Google Sheets treat it strictly as literal text.
+     */
+    internal fun neutralizeCsvFormula(raw: String): String {
+        if (raw.isEmpty()) return raw
+        val firstNonSpace = raw.firstOrNull { it != ' ' }
+        val isFormulaTrigger = raw[0] in CSV_FORMULA_TRIGGERS ||
+            (firstNonSpace != null && firstNonSpace in CSV_FORMULA_LEADING_TRIGGERS)
+        return if (isFormulaTrigger) "'" + raw else raw
+    }
+
     internal fun escapeCsv(raw: String): String {
-        val needsQuotes = raw.any { it == ',' || it == '"' || it == '\n' || it == '\r' }
-        if (!needsQuotes) return raw
-        return "\"" + raw.replace("\"", "\"\"") + "\""
+        val safe = neutralizeCsvFormula(raw)
+        val needsQuotes = safe.any { it == ',' || it == '"' || it == '\n' || it == '\r' }
+        if (!needsQuotes) return safe
+        return "\"" + safe.replace("\"", "\"\"") + "\""
     }
 
     private fun quoteJson(raw: String): String {

@@ -18,6 +18,7 @@ import com.sabihon.todo.domain.model.Task
 import com.sabihon.todo.domain.model.TaskFilter
 import com.sabihon.todo.domain.model.TaskStatusFilter
 import com.sabihon.todo.domain.repository.TaskRepository
+import com.sabihon.todo.domain.security.InputSecurityValidator
 import com.google.firebase.Timestamp
 import com.sabihon.todo.notifications.ReminderScheduler
 import kotlinx.coroutines.CoroutineDispatcher
@@ -44,8 +45,14 @@ class TaskRepositoryImpl @Inject constructor(
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : TaskRepository {
 
-    private fun userIdOrThrow(): String =
-        auth.currentUser?.uid ?: throw IllegalStateException("User not authenticated – please login again")
+    private fun userIdOrThrow(): String {
+        val uid = auth.currentUser?.uid
+            ?: throw IllegalStateException("User not authenticated – please login again")
+        return InputSecurityValidator.requireSafeDocId(uid, "uid")
+    }
+
+    private fun safeTaskDoc(taskId: String): DocumentReference =
+        tasksCollection().document(InputSecurityValidator.requireSafeDocId(taskId, "taskId"))
 
     private fun tasksCollection() =
         firestore.collection("users").document(userIdOrThrow()).collection("tasks")
@@ -94,22 +101,42 @@ class TaskRepositoryImpl @Inject constructor(
     }
 
     /** Flattened fallback document used when POJO serialisation is rejected. */
-    private fun minimalTaskMap(task: Task): Map<String, Any?> = hashMapOf(
-        "title" to task.title,
-        "description" to task.description,
-        "categoryId" to task.categoryId,
-        "priority" to task.priority.name,
-        "dueAt" to task.dueAt?.let { Timestamp(Date(it)) },
-        "reminderAt" to task.reminderAt?.let { Timestamp(Date(it)) },
-        "completed" to task.isCompleted,
-        "deleted" to task.isDeleted,
-        "searchKeywords" to generateSearchKeywords(task.title),
-        "createdAt" to Timestamp(Date()),
-        "updatedAt" to Timestamp(Date()),
-        "subTasks" to task.subTasks.map {
-            mapOf("id" to it.id, "title" to it.title, "done" to it.isDone)
+    private fun minimalTaskMap(task: Task): Map<String, Any?> {
+        val safeTitle = InputSecurityValidator.sanitizeUserText(
+            task.title,
+            maxLength = InputSecurityValidator.MAX_TITLE_LENGTH
+        )
+        val safeDescription = task.description?.let {
+            InputSecurityValidator.sanitizeUserText(
+                it,
+                maxLength = InputSecurityValidator.MAX_DESCRIPTION_LENGTH,
+                allowMultiline = true
+            )
         }
-    )
+        return hashMapOf(
+            "title" to safeTitle,
+            "description" to safeDescription,
+            "categoryId" to task.categoryId?.takeIf { InputSecurityValidator.isValidFirestoreDocId(it) },
+            "priority" to task.priority.name,
+            "dueAt" to task.dueAt?.let { Timestamp(Date(it)) },
+            "reminderAt" to task.reminderAt?.let { Timestamp(Date(it)) },
+            "completed" to task.isCompleted,
+            "deleted" to task.isDeleted,
+            "searchKeywords" to generateSearchKeywords(safeTitle),
+            "createdAt" to Timestamp(Date()),
+            "updatedAt" to Timestamp(Date()),
+            "subTasks" to task.subTasks.take(50).map {
+                mapOf(
+                    "id" to InputSecurityValidator.sanitizeFileSegment(it.id, fallback = "sub"),
+                    "title" to InputSecurityValidator.sanitizeUserText(
+                        it.title,
+                        maxLength = InputSecurityValidator.MAX_SUBTASK_TITLE_LENGTH
+                    ),
+                    "done" to it.isDone
+                )
+            }
+        )
+    }
 
     private companion object {
         /** How long we wait for a backend ack before assuming the write is queued. */
@@ -126,7 +153,6 @@ class TaskRepositoryImpl @Inject constructor(
             if (uid == null) {
                 trySend(Result.Error(IllegalStateException("Not authenticated"), "Not authenticated"))
             } else {
-                android.util.Log.d("TaskRepo", "observeTasks uid=$uid filter=$filter")
                 val baseQuery: Query = if (!filter.includeDeleted) {
                     tasksCollection().whereEqualTo("deleted", false)
                 } else {
@@ -219,7 +245,7 @@ class TaskRepositoryImpl @Inject constructor(
         trySend(Result.Loading)
         var listener: ListenerRegistration? = null
         try {
-            val docRef = tasksCollection().document(taskId)
+            val docRef = safeTaskDoc(taskId)
             listener = docRef.addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     trySend(Result.Error(error, error.message))
@@ -247,14 +273,13 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun addTask(task: Task): Result<String> = withContext(ioDispatcher) {
         try {
-            val uid = userIdOrThrow()
-            android.util.Log.d("TaskRepo", "addTask uid=$uid title=${task.title}")
+            userIdOrThrow()
             val dto = task.copy(
                 searchKeywords = if (task.searchKeywords.isEmpty()) generateSearchKeywords(task.title) else task.searchKeywords,
                 createdAt = System.currentTimeMillis(),
                 updatedAt = System.currentTimeMillis()
             ).toDto()
-            val docRef = if (task.id.isBlank()) tasksCollection().document() else tasksCollection().document(task.id)
+            val docRef = if (task.id.isBlank()) tasksCollection().document() else safeTaskDoc(task.id)
             val finalDto = dto.copy(id = docRef.id)
 
             var outcome = writeDocument(docRef, finalDto)
@@ -300,9 +325,13 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun updateTask(task: Task): Result<Unit> = withContext(ioDispatcher) {
         try {
-            val dto = task.copy(updatedAt = System.currentTimeMillis(),
-                searchKeywords = if (task.searchKeywords.isEmpty()) generateSearchKeywords(task.title) else task.searchKeywords).toDto()
-            when (val outcome = writeDocument(tasksCollection().document(task.id), dto)) {
+            val safeId = InputSecurityValidator.requireSafeDocId(task.id, "taskId")
+            val dto = task.copy(
+                id = safeId,
+                updatedAt = System.currentTimeMillis(),
+                searchKeywords = if (task.searchKeywords.isEmpty()) generateSearchKeywords(task.title) else task.searchKeywords
+            ).toDto()
+            when (val outcome = writeDocument(safeTaskDoc(safeId), dto)) {
                 is WriteOutcome.Failed -> return@withContext Result.Error(
                     outcome.error,
                     outcome.error.message ?: "Failed to update task"
@@ -310,10 +339,10 @@ class TaskRepositoryImpl @Inject constructor(
                 WriteOutcome.Queued -> android.util.Log.w("TaskRepo", "update queued locally – will sync")
                 WriteOutcome.Acked -> Unit
             }
-            logActivity(taskId = task.id, taskTitle = task.title, action = "UPDATED")
+            logActivity(taskId = safeId, taskTitle = dto.title, action = "UPDATED")
             try {
-                if (task.reminderAt != null) reminderScheduler.scheduleReminder(task.id, task.title, task.description, task.reminderAt)
-                else reminderScheduler.cancelReminder(task.id)
+                if (task.reminderAt != null) reminderScheduler.scheduleReminder(safeId, dto.title, dto.description, task.reminderAt)
+                else reminderScheduler.cancelReminder(safeId)
             } catch (_: Exception) {}
             Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e, e.message) }
@@ -321,8 +350,9 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun deleteTask(taskId: String, softDelete: Boolean): Result<Unit> = withContext(ioDispatcher) {
         try {
+            val safeId = InputSecurityValidator.requireSafeDocId(taskId, "taskId")
             // One read: the title (the feed shows it) and whether this delete is a repeat.
-            val snapshot = readTaskDocument(taskId)
+            val snapshot = readTaskDocument(safeId)
             if (softDelete && snapshot != null && snapshot.getBoolean("deleted") == true) {
                 // Already deleted - a second soft delete would log a second DELETED row
                 // for the same event.
@@ -331,34 +361,30 @@ class TaskRepositoryImpl @Inject constructor(
             val title = snapshot?.getString("title")?.trim().orEmpty()
             val outcome = boundedWrite {
                 if (softDelete) {
-                    tasksCollection().document(taskId)
+                    safeTaskDoc(safeId)
                         .update(mapOf("deleted" to true, "updatedAt" to Timestamp(Date()))).await()
                 } else {
-                    tasksCollection().document(taskId).delete().await()
+                    safeTaskDoc(safeId).delete().await()
                 }
             }
             if (outcome is WriteOutcome.Failed) return@withContext Result.Error(outcome.error)
             // "Deleted" and "deleted for good" are different events: only the first one
             // leaves a document that the Activity page can restore.
             logActivity(
-                taskId = taskId,
+                taskId = safeId,
                 taskTitle = title,
                 action = if (softDelete) "DELETED" else "PURGED"
             )
-            try { reminderScheduler.cancelReminder(taskId) } catch (_: Exception) {}
+            try { reminderScheduler.cancelReminder(safeId) } catch (_: Exception) {}
             Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e) }
     }
 
     override suspend fun restoreTask(taskId: String): Result<Unit> = withContext(ioDispatcher) {
         try {
-            // One read up front, for four things: whether there is anything to restore,
-            // the title the activity entry shows, the reminder that delete cancelled (so
-            // restoring does not quietly lose the notification), and whether the task was
-            // completed when it was deleted.
-            val snapshot = readTaskDocument(taskId)
+            val safeId = InputSecurityValidator.requireSafeDocId(taskId, "taskId")
+            val snapshot = readTaskDocument(safeId)
             if (snapshot != null && snapshot.getBoolean("deleted") != true) {
-                // Already restored - restoring again would only add a duplicate entry.
                 return@withContext Result.Success(Unit)
             }
             val title = snapshot?.getString("title")?.trim().orEmpty()
@@ -367,15 +393,15 @@ class TaskRepositoryImpl @Inject constructor(
             val wasCompleted = snapshot?.getBoolean("completed") == true
 
             val outcome = boundedWrite {
-                tasksCollection().document(taskId)
+                safeTaskDoc(safeId)
                     .update(mapOf("deleted" to false, "updatedAt" to Timestamp(Date()))).await()
             }
             if (outcome is WriteOutcome.Failed) return@withContext Result.Error(outcome.error)
 
-            logActivity(taskId = taskId, taskTitle = title, action = "RESTORED")
+            logActivity(taskId = safeId, taskTitle = title, action = "RESTORED")
 
             if (!wasCompleted && reminderAt != null && reminderAt > System.currentTimeMillis()) {
-                try { reminderScheduler.scheduleReminder(taskId, title, description, reminderAt) } catch (_: Exception) {}
+                try { reminderScheduler.scheduleReminder(safeId, title, description, reminderAt) } catch (_: Exception) {}
             }
             Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e) }
@@ -383,12 +409,10 @@ class TaskRepositoryImpl @Inject constructor(
 
     override suspend fun toggleComplete(taskId: String, isCompleted: Boolean): Result<Unit> = withContext(ioDispatcher) {
         try {
-            val snapshot = readTaskDocument(taskId)
+            val safeId = InputSecurityValidator.requireSafeDocId(taskId, "taskId")
+            val snapshot = readTaskDocument(safeId)
             val title = snapshot?.getString("title")?.trim().orEmpty()
 
-            // Nothing to do, and nothing to log. Reopening a task that is already open
-            // used to write another REOPENED entry and another `updatedAt`, so the
-            // Activity feed filled with five identical rows for one tap-happy minute.
             if (snapshot != null && snapshot.getBoolean("completed") == isCompleted) {
                 return@withContext Result.Success(Unit)
             }
@@ -396,11 +420,11 @@ class TaskRepositoryImpl @Inject constructor(
             val updates = mutableMapOf<String, Any?>("completed" to isCompleted, "updatedAt" to Timestamp(Date()))
             if (isCompleted) updates["completedAt"] = Timestamp(Date()) else updates["completedAt"] = null
             val outcome = boundedWrite {
-                tasksCollection().document(taskId).update(updates).await()
+                safeTaskDoc(safeId).update(updates).await()
             }
             if (outcome is WriteOutcome.Failed) return@withContext Result.Error(outcome.error)
-            logActivity(taskId = taskId, taskTitle = title, action = if (isCompleted) "COMPLETED" else "REOPENED")
-            if (isCompleted) try { reminderScheduler.cancelReminder(taskId) } catch (_: Exception) {}
+            logActivity(taskId = safeId, taskTitle = title, action = if (isCompleted) "COMPLETED" else "REOPENED")
+            if (isCompleted) try { reminderScheduler.cancelReminder(safeId) } catch (_: Exception) {}
             Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e) }
     }
@@ -411,10 +435,11 @@ class TaskRepositoryImpl @Inject constructor(
         lastCompletedDay: Long
     ): Result<Unit> = withContext(ioDispatcher) {
         try {
+            val safeId = InputSecurityValidator.requireSafeDocId(taskId, "taskId")
             val outcome = boundedWrite {
-                tasksCollection().document(taskId).update(
+                safeTaskDoc(safeId).update(
                     mapOf(
-                        "streak" to streak,
+                        "streak" to streak.coerceAtLeast(0),
                         "lastCompletedDay" to lastCompletedDay,
                         "updatedAt" to Timestamp(Date())
                     )
@@ -429,22 +454,21 @@ class TaskRepositoryImpl @Inject constructor(
     override suspend fun spawnOccurrence(task: Task): Result<String> = withContext(ioDispatcher) {
         try {
             userIdOrThrow()
+            val safeId = InputSecurityValidator.requireSafeDocId(task.id, "taskId")
             val dto = task.copy(
+                id = safeId,
                 searchKeywords = if (task.searchKeywords.isEmpty()) generateSearchKeywords(task.title) else task.searchKeywords,
                 createdAt = System.currentTimeMillis(),
                 updatedAt = System.currentTimeMillis()
             ).toDto()
-            // The caller supplies a deterministic id per scheduled day, so a repeat
-            // completion rewrites the same document instead of stacking duplicates.
-            val docRef = tasksCollection().document(task.id)
+            val docRef = safeTaskDoc(safeId)
             val outcome = writeDocument(docRef, dto.copy(id = docRef.id))
             if (outcome is WriteOutcome.Failed) {
                 Result.Error(outcome.error, outcome.error.message ?: "Failed to schedule next occurrence")
             } else {
-                // Schedule the reminder, but deliberately skip the CREATED log entry.
                 try {
                     task.reminderAt?.let {
-                        reminderScheduler.scheduleReminder(docRef.id, task.title, task.description, it)
+                        reminderScheduler.scheduleReminder(docRef.id, dto.title, dto.description, it)
                     }
                 } catch (_: Exception) {
                 }
@@ -462,12 +486,15 @@ class TaskRepositoryImpl @Inject constructor(
         try {
             userIdOrThrow()
             val nowStamp = Timestamp(Date())
+            val safeUpdates = updates.entries.filter { InputSecurityValidator.isValidFirestoreDocId(it.key) }
+            if (safeUpdates.isEmpty()) {
+                return@withContext Result.Error(IllegalArgumentException("No valid task IDs provided"))
+            }
             val outcome = boundedWrite {
                 val batch = firestore.batch()
-                for ((taskId, priority) in updates) {
-                    if (taskId.isBlank()) continue
+                for ((taskId, priority) in safeUpdates) {
                     batch.update(
-                        tasksCollection().document(taskId),
+                        safeTaskDoc(taskId),
                         mapOf(
                             "priority" to priority.name,
                             "updatedAt" to nowStamp
@@ -482,14 +509,14 @@ class TaskRepositoryImpl @Inject constructor(
                     outcome.error.message ?: "Failed to apply priority changes"
                 )
             }
-            val summaryTitle = if (updates.size == 1) {
-                val singleId = updates.keys.first()
+            val summaryTitle = if (safeUpdates.size == 1) {
+                val singleId = safeUpdates.first().key
                 readTaskTitle(singleId).ifBlank { "1 task prioritized" }
             } else {
-                "${updates.size} tasks prioritized"
+                "${safeUpdates.size} tasks prioritized"
             }
             logActivity(
-                taskId = if (updates.size == 1) updates.keys.first() else "",
+                taskId = if (safeUpdates.size == 1) safeUpdates.first().key else "",
                 taskTitle = summaryTitle,
                 action = "UPDATED"
             )
@@ -502,31 +529,22 @@ class TaskRepositoryImpl @Inject constructor(
     override suspend fun searchTasks(query: String): Flow<Result<List<Task>>> = flow {
         emit(Result.Loading)
         try {
-            if (query.isBlank()) { emit(Result.Success(emptyList())); return@flow }
-            val lower = query.lowercase()
+            val sanitized = InputSecurityValidator.sanitizeSearchQuery(query)
+            if (sanitized.isBlank()) { emit(Result.Success(emptyList())); return@flow }
+            val lower = sanitized.lowercase()
             // Avoid composite index: only filter deleted in Firestore, search filtering in-memory
             val snapshot = tasksCollection().whereEqualTo("deleted", false).get().await()
             val tasks = snapshot.documents.mapNotNull {
                 try { it.toObject(TaskDto::class.java)?.toDomain() } catch (_: Exception) { null }
-            }.filter { it.title.lowercase().contains(lower) || it.description.lowercase().contains(lower) }
+            }.filter { it.title.lowercase().contains(lower) || it.description.orEmpty().lowercase().contains(lower) }
             emit(Result.Success(tasks))
         } catch (e: Exception) { emit(Result.Error(e)) }
     }
 
-    /**
-     * Best-effort title lookup for log entries that only carry a task id.
-     * Bounded and swallowing failures – a missing title must never fail a write.
-     */
-    /**
-     * One bounded read of a task document, used to decide whether an action would
-     * actually change anything and to get the title the activity entry needs.
-     *
-     * Null means "could not find out" (offline, permissions, timeout), never "no change" -
-     * callers let the write go ahead in that case rather than silently dropping it.
-     */
     private suspend fun readTaskDocument(taskId: String): DocumentSnapshot? = try {
-        withTimeoutOrNull(ACTIVITY_TIMEOUT_MS) {
-            tasksCollection().document(taskId).get().await()
+        if (!InputSecurityValidator.isValidFirestoreDocId(taskId)) null
+        else withTimeoutOrNull(ACTIVITY_TIMEOUT_MS) {
+            safeTaskDoc(taskId).get().await()
         }
     } catch (_: Exception) {
         null
@@ -539,8 +557,8 @@ class TaskRepositoryImpl @Inject constructor(
         try {
             withTimeoutOrNull(ACTIVITY_TIMEOUT_MS) {
                 val dto = ActivityDto(
-                    taskId = taskId,
-                    taskTitle = taskTitle,
+                    taskId = if (InputSecurityValidator.isValidFirestoreDocId(taskId)) taskId else "",
+                    taskTitle = InputSecurityValidator.sanitizeUserText(taskTitle),
                     action = action,
                     timestamp = Timestamp(Date())
                 )

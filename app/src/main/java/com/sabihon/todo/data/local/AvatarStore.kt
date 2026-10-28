@@ -1,10 +1,10 @@
 package com.sabihon.todo.data.local
 
 import android.content.Context
-import android.util.Log
 import android.net.Uri
 import android.util.Base64
 import com.google.firebase.firestore.FirebaseFirestore
+import com.sabihon.todo.domain.security.InputSecurityValidator
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -43,7 +43,13 @@ class AvatarStore @Inject constructor(
 
     fun localFile(uid: String?): File {
         val dir = File(context.filesDir, "profile_images").apply { mkdirs() }
-        return File(dir, "${uid ?: "default"}_profile.jpg")
+        val safeSegment = InputSecurityValidator.sanitizeFileSegment(uid, fallback = "default")
+        val target = File(dir, "${safeSegment}_profile.jpg")
+        val canonicalDir = dir.canonicalPath + File.separator
+        if (!target.canonicalPath.startsWith(canonicalDir)) {
+            throw SecurityException("Avatar path traversal rejected")
+        }
+        return target
     }
 
     /**
@@ -72,11 +78,13 @@ class AvatarStore @Inject constructor(
      */
     suspend fun refresh(uid: String?, remoteUrl: String? = null) = withContext(Dispatchers.IO) {
         val file = uid?.let { localFile(it) }
-        if (file != null && (!file.exists() || file.length() == 0L)) {
+        if (file != null && uid != null && InputSecurityValidator.isValidFirestoreDocId(uid) &&
+            (!file.exists() || file.length() == 0L)
+        ) {
             try {
                 val doc = firestore.collection("users").document(uid).get().await()
                 val data = doc.getString("photoData")
-                if (!data.isNullOrBlank()) {
+                if (!data.isNullOrBlank() && data.length <= MAX_PHOTO_BASE64_CHARS) {
                     val bytes = Base64.decode(data, Base64.DEFAULT)
                     if (bytes.isNotEmpty()) FileOutputStream(file).use { it.write(bytes) }
                 }
@@ -93,35 +101,26 @@ class AvatarStore @Inject constructor(
      * Everything a screen needs, in one call: make sure the cache file exists for
      * [uid] (rebuilding it from Firestore when the app was reinstalled or the photo
      * came from another device), then emit the avatar and every later change.
-     *
-     * Cold-emitting rather than reading `.value` matters: a screen that mounts before
-     * anything has published still gets the first value.
-     *
-     * Callers collect this in their ViewModel; screens never touch FirebaseAuth's
-     * `photoUrl`, which is null whenever Storage is unavailable.
      */
     fun observe(uid: String?, remoteUrl: String? = null): Flow<String?> = flow {
         refresh(uid, remoteUrl)
-        // "Photo saved but the header still shows initials" is the recurring bug here,
-        // so say out loud which of the three cases we are in.
-        val file = uid?.let { localFile(it) }
-        Log.d(
-            "AvatarStore",
-            "uid=$uid cache=${file?.exists() == true} size=${file?.length() ?: 0} " +
-                "published=${_avatar.value ?: "none"}"
-        )
-        // Flow.collect with a lambda: a member call, so it needs no extra import.
         avatar.collect { current -> emit(current) }
     }
 
     /** Writes raw bytes (a picked or downloaded image) into the cache file. */
     suspend fun writeLocal(uid: String?, bytes: ByteArray): String? = withContext(Dispatchers.IO) {
         try {
+            if (bytes.size > MAX_PHOTO_BYTES) return@withContext null
             val file = localFile(uid)
             FileOutputStream(file).use { it.write(bytes) }
             Uri.fromFile(file).toString().also { _avatar.value = it }
         } catch (_: Exception) {
             null
         }
+    }
+
+    private companion object {
+        const val MAX_PHOTO_BYTES = 2 * 1024 * 1024 // 2 MiB local avatar cap
+        const val MAX_PHOTO_BASE64_CHARS = 3 * 1024 * 1024
     }
 }

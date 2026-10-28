@@ -7,6 +7,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.Timestamp
+import com.sabihon.todo.domain.security.InputSecurityValidator
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,22 +32,31 @@ class ReminderActionReceiver : BroadcastReceiver() {
         if (intent.action == "MARK_DONE") {
             val taskId = intent.getStringExtra("taskId") ?: return
             val uid = auth.currentUser?.uid ?: return
+            if (!InputSecurityValidator.isValidFirestoreDocId(taskId) ||
+                !InputSecurityValidator.isValidFirestoreDocId(uid)
+            ) {
+                return
+            }
 
             // Cancel notification
             NotificationManagerCompat.from(context).cancel(taskId.hashCode())
 
+            val pendingResult = goAsync()
             CoroutineScope(Dispatchers.IO).launch {
                 try {
                     firestore.collection("users").document(uid).collection("tasks")
                         .document(taskId)
                         .update(
                             mapOf(
-                                "isCompleted" to true,
+                                "completed" to true,
                                 "completedAt" to Timestamp(Date()),
                                 "updatedAt" to Timestamp(Date())
                             )
                         ).await()
-                } catch (_: Exception) {}
+                } catch (_: Exception) {
+                } finally {
+                    pendingResult.finish()
+                }
             }
         }
     }

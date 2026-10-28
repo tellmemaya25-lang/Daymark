@@ -87,6 +87,8 @@ class SabihonApp : Application(), Configuration.Provider {
          * `DebugAppCheckProviderFactory` from the app's `shared_prefs` directory.
          */
         fun readAppCheckDebugToken(context: Context): String? = runCatching {
+            val debuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+            if (!debuggable) return@runCatching null
             val prefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
             val storeFiles = prefsDir.listFiles()?.filter { file ->
                 file.name.startsWith(DEBUG_STORE_PREFIX) && file.name.endsWith(".xml")
