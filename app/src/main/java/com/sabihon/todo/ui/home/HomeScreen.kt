@@ -71,6 +71,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
@@ -299,6 +300,29 @@ fun HomeScreen(
                 label = "weekCalendarDockProgress"
             )
             val isSuccessfullyAtBottom = isWeeklyDocked && dockProgress >= 0.99f
+
+            /*
+             * The inline strip reserves a slot in the list only while it is the calendar
+             * you can see. Once the docked bar takes over, `WEEK_ITEM_KEY` fades out
+             * (its alpha reaches 0 at 45 % of the dock tween) but the 92 dp slot stayed
+             * behind - an empty band between Momentum and Prioritize / Suggest tasks,
+             * exactly the gap flagged in the screenshot.
+             *
+             * Fold the slot away with the same eased progress, starting the moment the
+             * strip is invisible, so the band closes as the calendar leaves and reopens
+             * as it glides home. Never collapses while the strip is still drawn, and
+             * never clips it: the strip is measured at its natural height first.
+             */
+            val weekSlotCollapse = ((dockProgress - 0.45f) / 0.55f).coerceIn(0f, 1f)
+            var inlineWeekHeightPx by remember { mutableIntStateOf(0) }
+            val inlineWeekHeightDp = if (inlineWeekHeightPx > 0) {
+                with(density) { (inlineWeekHeightPx * (1f - weekSlotCollapse)).toDp() }
+            } else {
+                // Fallback for the first frame: WeekStrip is a 68 dp pill plus 12 dp
+                // of vertical padding, so its inline slot is exactly 92 dp.
+                92.dp.times(1f - weekSlotCollapse)
+            }
+
             var containerHeightPx by remember { mutableIntStateOf(0) }
             var dockedBarHeightPx by remember { mutableIntStateOf(0) }
             val dayPillAlignOffsetPx = with(density) { 15.dp.toPx() }
@@ -372,14 +396,29 @@ fun HomeScreen(
                 }
 
                 item(key = WEEK_ITEM_KEY) {
-                    WeekStrip(
-                        days = uiState.weekDays,
-                        selected = uiState.selectedDate,
-                        onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
-                        modifier = Modifier.graphicsLayer {
-                            alpha = (1f - dockProgress * 2.2f).coerceIn(0f, 1f)
-                        }
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(inlineWeekHeightDp)
+                            .clipToBounds()
+                    ) {
+                        WeekStrip(
+                            days = uiState.weekDays,
+                            selected = uiState.selectedDate,
+                            onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
+                            modifier = Modifier
+                                // Measure only while the slot is at its natural height:
+                                // a shrunk slot would otherwise record its clipped size.
+                                .onSizeChanged { height ->
+                                    if (weekSlotCollapse <= 0f && height > 0) {
+                                        inlineWeekHeightPx = height
+                                    }
+                                }
+                                .graphicsLayer {
+                                    alpha = (1f - dockProgress * 2.2f).coerceIn(0f, 1f)
+                                }
+                        )
+                    }
                 }
 
                 // Smart AI actions sit directly under the week strip so both Task
