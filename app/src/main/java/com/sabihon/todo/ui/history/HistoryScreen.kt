@@ -64,11 +64,19 @@ import java.util.Locale
 fun HistoryScreen(
     onTaskClick: (String) -> Unit = {},
     onProfileClick: () -> Unit = {},
+    /**
+     * Rendered between the intro copy and the feed itself. Activity passes its
+     * `[Feed][Calendar]` switcher here so the control sits inside the scrolling content
+     * rather than floating above it; with the default `null` this screen is byte-for-byte
+     * what it was before the calendar existed.
+     */
+    headerExtra: (@Composable () -> Unit)? = null,
     viewModel: HistoryViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var sheetItem by remember { mutableStateOf<ActivityFeedItem?>(null) }
     val sheetState = rememberModalBottomSheetState()
+    val extra: (@Composable () -> Unit)? = headerExtra
     val snackbarHostState = remember { SnackbarHostState() }
 
     // Restore / reopen / delete-for-good all report here. Restoring is silent otherwise:
@@ -126,6 +134,14 @@ fun HistoryScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(24.dp))
+                }
+            }
+
+            if (extra != null) {
+                item {
+                    Box(modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 18.dp)) {
+                        extra()
+                    }
                 }
             }
 
