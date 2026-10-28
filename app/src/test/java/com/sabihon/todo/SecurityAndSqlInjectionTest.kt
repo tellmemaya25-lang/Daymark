@@ -28,6 +28,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -368,5 +369,25 @@ class SecurityAndSqlInjectionTest {
                 targetEmail = "tellmemaya25@gmail.com"
             )
         )
+    }
+
+    /* ---- 9. Timeline block length is bounded on write ---- */
+
+    @Test
+    fun `duration clamp bounds untrusted block lengths and preserves null`() {
+        // null means "not specified" and must not be invented into a number
+        assertNull(InputSecurityValidator.clampDurationMinutes(null))
+
+        // inside the window: untouched
+        assertEquals(5, InputSecurityValidator.clampDurationMinutes(5))
+        assertEquals(30, InputSecurityValidator.clampDurationMinutes(30))
+        assertEquals(720, InputSecurityValidator.clampDurationMinutes(720))
+
+        // outside: pinned to the bounds, never rejected or passed through
+        assertEquals(5, InputSecurityValidator.clampDurationMinutes(0))
+        assertEquals(5, InputSecurityValidator.clampDurationMinutes(-1))
+        assertEquals(5, InputSecurityValidator.clampDurationMinutes(Int.MIN_VALUE))
+        assertEquals(720, InputSecurityValidator.clampDurationMinutes(721))
+        assertEquals(720, InputSecurityValidator.clampDurationMinutes(Int.MAX_VALUE))
     }
 }

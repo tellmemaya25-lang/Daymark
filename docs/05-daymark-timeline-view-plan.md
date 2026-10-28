@@ -1,6 +1,6 @@
 # Daymark — Timeline View, View Toggle & Default View (System Design + Implementation Plan)
 
-**Status:** plan / not implemented
+**Status:** P0 (model plumbing) shipped — see §10. P1+ not started.
 **Branch base:** `main` @ `72e73d2`
 **Inspiration:** TickTick day calendar (`image-1`), Structured day timeline (`image-2`), app-switcher ref (`image-3`)
 
@@ -140,7 +140,7 @@ This list exists because `minimalTaskMap` (the flattened fallback writer) is the
 | `data/repository/TaskRepositoryImpl.kt` → `minimalTaskMap()` | `"durationMinutes" to task.duration…` | **fallback path loses it while the POJO path keeps it** — the divergence bug |
 | `domain/usecase/AddTaskUseCase.kt` / `UpdateTaskUseCase.kt` | clamp into `5..720`, `null` stays `null` | negative / 10 000-minute blocks |
 | `domain/security/InputSecurityValidator.kt` | `const val MIN_DURATION_MINUTES = 5`, `MAX_DURATION_MINUTES = 720`, `clampDurationMinutes(Int?)` | one shared bound instead of three copies |
-| `ui/addedit/AddEditUiState.kt` + `AddEditTaskScreen.kt` + `AddEditViewModel.kt` | duration chip row + state + save | users can't set it (feature still works on the fallback) |
+| `ui/addedit/AddEditUiState.kt` + `AddEditTaskScreen.kt` + `AddEditViewModel.kt` | **`durationMinutes = original?.durationMinutes` in `saveTask()`** (P0), then the chip row + state + save (P5) | `saveTask()` rebuilds `Task(...)` from the form, so without the preserve line **every edit silently clears the duration** |
 | `data/repository/AdminRepositoryImpl.kt` (`AdminTaskRecord` mapping, if it exposes timings) | pass through | admin edits would nil it out on save |
 
 **Firestore rules: no change required.** `validTaskPayload()` validates only `title` and `description` (`firestore.rules` L43–47), so an extra numeric field passes. Optional hardening: add `data.durationMinutes == null || (data.durationMinutes is number && data.durationMinutes >= 5 && data.durationMinutes <= 720)`.
@@ -472,7 +472,7 @@ python3 tools/typecheck.py               # real kotlinc on 49 dependency-free fi
 
 | Phase | Scope | Acceptance |
 |---|---|---|
-| **P0 — Model** | items 1–6, 17 | `durationMinutes` round-trips through `toDto()`/`toDomain()` and `minimalTaskMap`; old docs (no field) still parse; clamps hold |
+| **P0 — Model** ✅ | items 1–6, 17, **plus the `AddEditViewModel` preserve line** | `durationMinutes` round-trips through `toDto()`/`toDomain()` and `minimalTaskMap`; old docs (no field) still parse; clamps hold. Shipped: 28 assertions executed, `tools/check_write_parity.py` added |
 | **P1 — Engine** | item 8, 16 | all 12 `TimelineLayoutTest` cases green; zero Android imports in `TimelineLayout.kt` |
 | **P2 — Timeline UI** | 9, 10 (viewMode only), 12 | Timeline renders a real day; dock/reset behaviour from #71–#72 indistinguishable from list mode; toggle swaps both ways without scroll jump |
 | **P3 — Default view** | 11, 13, 14, 15 | Toggle survives app kill; Settings row changes the launch view; `typecheck.py` clean |

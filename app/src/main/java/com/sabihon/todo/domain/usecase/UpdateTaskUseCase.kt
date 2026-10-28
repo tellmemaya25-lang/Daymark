@@ -45,7 +45,8 @@ class UpdateTaskUseCase @Inject constructor(
             task.copy(
                 title = safeTitle,
                 description = safeDescription,
-                subTasks = safeSubTasks
+                subTasks = safeSubTasks,
+                durationMinutes = InputSecurityValidator.clampDurationMinutes(task.durationMinutes)
             )
         )
     }

@@ -23,6 +23,10 @@ data class TaskDto(
     val dueAt: Timestamp? = null,
     val reminderAt: Timestamp? = null,
 
+    // Timeline block length. Absent on every document written before this field
+    // existed; the default keeps those readable and Firestore omits nulls on write.
+    val durationMinutes: Int? = null,
+
     @get:PropertyName("completed")
     @set:PropertyName("completed")
     @PropertyName("completed")
