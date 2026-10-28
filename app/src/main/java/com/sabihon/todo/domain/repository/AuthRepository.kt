@@ -10,6 +10,7 @@ interface AuthRepository {
     fun getCurrentUserId(): String?
     fun getCurrentUserEmail(): String? = null
     fun isUserLoggedIn(): Boolean
+    suspend fun hasActiveSession(): Boolean = isUserLoggedIn()
     suspend fun isCurrentUserAdmin(): Boolean = false
     fun observeAuthState(): Flow<Boolean>
     suspend fun signUp(email: String, password: String, displayName: String): Result<String>

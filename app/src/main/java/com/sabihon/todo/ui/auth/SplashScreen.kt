@@ -98,7 +98,7 @@ class SplashViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            val loggedIn = authRepository.isUserLoggedIn()
+            val loggedIn = authRepository.hasActiveSession()
             val seenOnboarding = onboardingPreferences.hasSeenOnboardingNow()
             _startDestination.value = when {
                 loggedIn && authRepository.isCurrentUserAdmin() -> StartDestination.ADMIN

@@ -63,6 +63,9 @@ class AiQuotaGuard internal constructor(
     @Volatile
     private var circuitOpenUntilMillis: Long = 0L
 
+    @Volatile
+    var runtimeMaxDailyCalls: Int = AiPreferences.MAX_DAILY_CLOUD_CALLS
+
     private fun mutexFor(feature: AiFeature): Mutex =
         featureLocks.computeIfAbsent(feature) { Mutex() }
 
@@ -101,7 +104,8 @@ class AiQuotaGuard internal constructor(
 
         val epochDay = todayProvider().toEpochDay()
         val snapshot = prefs.getDailyQuota(safeUid, epochDay)
-        if (snapshot.calls >= AiPreferences.MAX_DAILY_CLOUD_CALLS ||
+        val effectiveDailyCap = runtimeMaxDailyCalls.coerceIn(1, 10_000)
+        if (snapshot.calls >= effectiveDailyCap ||
             snapshot.estimatedTokens + estimatedTokens.coerceAtLeast(1) > AiPreferences.MAX_DAILY_TOKENS
         ) {
             return ExecutionOutcome.Blocked(BlockReason.DAILY_QUOTA_EXCEEDED)

@@ -21,7 +21,6 @@ class AdminAccessPolicyTest {
 
     @Test
     fun `hasAdminPrivilege evaluates 3-tier RBAC hierarchy`() {
-        // Tier 1: Custom claim
         assertTrue(
             AdminAccessPolicy.hasAdminPrivilege(
                 email = "member@example.com",
@@ -30,7 +29,6 @@ class AdminAccessPolicyTest {
                 hasCustomAdminClaim = true
             )
         )
-        // Tier 2: Primary owner email
         assertTrue(
             AdminAccessPolicy.hasAdminPrivilege(
                 email = "tellmemaya25@gmail.com",
@@ -39,7 +37,6 @@ class AdminAccessPolicyTest {
                 hasCustomAdminClaim = false
             )
         )
-        // Tier 3: Delegated /admins/{uid} doc or /users/{uid}.role == ADMIN
         assertTrue(
             AdminAccessPolicy.hasAdminPrivilege(
                 email = "mod@example.com",
@@ -54,7 +51,6 @@ class AdminAccessPolicyTest {
                 hasDelegatedAdminDoc = false
             )
         )
-        // Standard user
         assertFalse(
             AdminAccessPolicy.hasAdminPrivilege(
                 email = "user@example.com",
@@ -66,8 +62,8 @@ class AdminAccessPolicyTest {
     }
 
     @Test
-    fun `anti-lockout blocks modifying primary owner or active session`() {
-        // Cannot demote or suspend primary owner
+    fun `anti-lockout blocks modifying suspending or deleting primary owner or self`() {
+        // Cannot demote, suspend, or delete primary owner
         assertFalse(
             AdminAccessPolicy.canModifyUserRole(
                 actorUid = "delegated-admin-uid",
@@ -82,7 +78,15 @@ class AdminAccessPolicyTest {
                 targetEmail = "tellmemaya25@gmail.com"
             )
         )
-        // Cannot demote or suspend self
+        assertFalse(
+            AdminAccessPolicy.canDeleteUser(
+                actorUid = "delegated-admin-uid",
+                targetUid = "owner-uid",
+                targetEmail = "tellmemaya25@gmail.com"
+            )
+        )
+
+        // Cannot demote, suspend, or delete self
         assertFalse(
             AdminAccessPolicy.canModifyUserRole(
                 actorUid = "same-uid",
@@ -97,6 +101,14 @@ class AdminAccessPolicyTest {
                 targetEmail = "mod@example.com"
             )
         )
+        assertFalse(
+            AdminAccessPolicy.canDeleteUser(
+                actorUid = "same-uid",
+                targetUid = "same-uid",
+                targetEmail = "mod@example.com"
+            )
+        )
+
         // Can manage regular non-owner user
         assertTrue(
             AdminAccessPolicy.canModifyUserRole(
@@ -112,6 +124,13 @@ class AdminAccessPolicyTest {
                 targetEmail = "member@example.com"
             )
         )
+        assertTrue(
+            AdminAccessPolicy.canDeleteUser(
+                actorUid = "owner-uid",
+                targetUid = "member-uid",
+                targetEmail = "member@example.com"
+            )
+        )
     }
 
     @Test
@@ -120,7 +139,6 @@ class AdminAccessPolicyTest {
         assertFalse(AdminAccessPolicy.matchesBootstrapCredential("tellmemaya25@gmail.com", ""))
         assertFalse(AdminAccessPolicy.matchesBootstrapCredential("tellmemaya25@gmail.com", "incorrect-pass"))
 
-        // Deterministic salted SHA-256 helper check using synthetic test vector
         val digestA = AdminAccessPolicy.computeDigestHex("salt-1", "a@b.com", "synthetic-secret")
         val digestB = AdminAccessPolicy.computeDigestHex("salt-1", "a@b.com", "synthetic-secret")
         val digestC = AdminAccessPolicy.computeDigestHex("salt-2", "a@b.com", "synthetic-secret")
@@ -130,20 +148,25 @@ class AdminAccessPolicyTest {
     }
 
     @Test
-    fun `platform metrics and AI daily stats compute safe percentages`() {
-        val emptyMetrics = AdminPlatformMetrics(totalTasks = 0, completedTasks = 0)
+    fun `platform metrics and AI daily stats compute safe percentages and averages`() {
+        val emptyMetrics = AdminPlatformMetrics(totalUsers = 0, totalTasks = 0, completedTasks = 0)
         assertEquals(0, emptyMetrics.completionRatePercent)
+        assertEquals("0.0", emptyMetrics.avgTasksPerUser)
 
-        val populatedMetrics = AdminPlatformMetrics(totalTasks = 40, completedTasks = 30)
+        val populatedMetrics = AdminPlatformMetrics(totalUsers = 8, totalTasks = 40, completedTasks = 30)
         assertEquals(75, populatedMetrics.completionRatePercent)
+        assertEquals("5.0", populatedMetrics.avgTasksPerUser)
 
         val aiStats = AdminAiDailyStats(
             dateKey = "2026-10-28",
             totalCalls = 20L,
             cloudSuccessCount = 15L,
-            totalLatencyMs = 8_400L
+            totalLatencyMs = 8_400L,
+            acceptedOutcomes = 9L,
+            dismissedOutcomes = 3L
         )
         assertEquals(75, aiStats.cloudHitRatePercent)
         assertEquals(420L, aiStats.averageLatencyMs)
+        assertEquals(75, aiStats.acceptanceRatePercent)
     }
 }

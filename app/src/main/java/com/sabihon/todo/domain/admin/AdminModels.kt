@@ -12,6 +12,11 @@ enum class UserRole {
     }
 }
 
+enum class AdminSessionMode {
+    FIREBASE_NATIVE,
+    HYBRID_OWNER_SESSION
+}
+
 data class AdminUserSummary(
     val uid: String,
     val displayName: String,
@@ -27,12 +32,33 @@ data class AdminUserSummary(
         get() = AdminAccessPolicy.isPrimaryAdminEmail(email)
 }
 
+data class AdminTaskRecord(
+    val taskId: String,
+    val ownerUid: String,
+    val ownerName: String,
+    val ownerEmail: String,
+    val title: String,
+    val description: String = "",
+    val priority: Priority = Priority.MEDIUM,
+    val categoryId: String? = null,
+    val categoryName: String = "",
+    val isCompleted: Boolean = false,
+    val dueAtMillis: Long? = null,
+    val completedAtMillis: Long? = null,
+    val createdAtMillis: Long = 0L,
+    val isRecurring: Boolean = false,
+    val streak: Int = 0,
+    val subTasksDone: Int = 0,
+    val subTasksTotal: Int = 0
+)
+
 data class AdminUserDetail(
     val user: AdminUserSummary,
     val openTaskCount: Int = 0,
     val completedTaskCount: Int = 0,
     val categoryCount: Int = 0,
-    val activeStreakMax: Int = 0
+    val activeStreakMax: Int = 0,
+    val recentTasks: List<AdminTaskRecord> = emptyList()
 )
 
 data class DailyTaskBucket(
@@ -41,8 +67,14 @@ data class DailyTaskBucket(
     val completedCount: Int
 )
 
+data class AdminCategoryStat(
+    val name: String,
+    val taskCount: Int
+)
+
 data class AdminPlatformMetrics(
     val totalUsers: Int = 0,
+    val activeUsersLast7Days: Int = 0,
     val activeAdmins: Int = 0,
     val suspendedUsers: Int = 0,
     val newUsersLast7Days: Int = 0,
@@ -52,13 +84,20 @@ data class AdminPlatformMetrics(
     val overdueOpenTasks: Int = 0,
     val totalCategories: Int = 0,
     val activeHabitTasks: Int = 0,
+    val maxHabitStreak: Int = 0,
     val priorityBreakdown: Map<Priority, Int> = emptyMap(),
+    val themeBreakdown: Map<String, Int> = emptyMap(),
+    val topCategories: List<AdminCategoryStat> = emptyList(),
     val sevenDayVelocity: List<DailyTaskBucket> = emptyList(),
+    val sevenDayAiTrend: List<AdminAiDailyStats> = emptyList(),
     val permissionLimited: Boolean = false,
     val diagnosticHint: String? = null
 ) {
     val completionRatePercent: Int
         get() = if (totalTasks <= 0) 0 else ((completedTasks * 100.0) / totalTasks).toInt()
+
+    val avgTasksPerUser: String
+        get() = if (totalUsers <= 0) "0.0" else String.format(java.util.Locale.US, "%.1f", totalTasks.toDouble() / totalUsers)
 }
 
 data class AdminAiDailyStats(
@@ -76,6 +115,12 @@ data class AdminAiDailyStats(
 
     val cloudHitRatePercent: Int
         get() = if (totalCalls <= 0L) 0 else ((cloudSuccessCount * 100.0) / totalCalls).toInt()
+
+    val acceptanceRatePercent: Int
+        get() {
+            val totalOutcomes = acceptedOutcomes + dismissedOutcomes
+            return if (totalOutcomes <= 0L) 0 else ((acceptedOutcomes * 100.0) / totalOutcomes).toInt()
+        }
 }
 
 data class AdminSystemConfig(
@@ -97,4 +142,32 @@ data class AdminAuditEntry(
     val targetId: String = "",
     val summary: String = "",
     val createdAtMillis: Long = 0L
+)
+
+enum class AdminExportType(val title: String, val subtitle: String, val extension: String, val mimeType: String) {
+    USERS_CSV(
+        title = "Users Directory (CSV)",
+        subtitle = "UID, name, email, role, status, theme, created & last login timestamps",
+        extension = "csv",
+        mimeType = "text/csv"
+    ),
+    TASKS_CSV(
+        title = "Global Tasks Ledger (CSV)",
+        subtitle = "All tasks across users with priority, completion, owner, project & streaks",
+        extension = "csv",
+        mimeType = "text/csv"
+    ),
+    FULL_SNAPSHOT_JSON(
+        title = "Full Admin Snapshot (JSON)",
+        subtitle = "Metrics, users, AI telemetry, runtime config, and latest audit logs",
+        extension = "json",
+        mimeType = "application/json"
+    )
+}
+
+data class AdminExportPayload(
+    val fileName: String,
+    val mimeType: String,
+    val content: String,
+    val rowCount: Int
 )

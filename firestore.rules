@@ -43,40 +43,36 @@ service cloud.firestore {
       return roleSafe && disabledSafe;
     }
 
-    // Users collection – owner can read/write own profile (non-privileged fields); admins can read/manage all.
+    // Users collection – owner can read/write own profile (non-privileged fields); admins have full governance CRUD.
     match /users/{uid} {
       allow read: if isOwner(uid) || isAdmin();
       allow create, update: if (isOwner(uid) && ownerUserWriteAllowed()) || isAdmin();
       allow delete: if isOwner(uid) || isAdmin();
 
       match /tasks/{taskId} {
-        allow read: if isOwner(uid) || isAdmin();
-        allow write: if isOwner(uid);
+        allow read, write: if isOwner(uid) || isAdmin();
       }
 
       match /categories/{categoryId} {
-        allow read: if isOwner(uid) || isAdmin();
-        allow write: if isOwner(uid);
+        allow read, write: if isOwner(uid) || isAdmin();
       }
 
       match /activity/{activityId} {
-        allow read: if isOwner(uid) || isAdmin();
-        allow write: if isOwner(uid);
+        allow read, write: if isOwner(uid) || isAdmin();
       }
 
       match /{document=**} {
-        allow read: if isOwner(uid) || isAdmin();
-        allow write: if isOwner(uid);
+        allow read, write: if isOwner(uid) || isAdmin();
       }
     }
 
-    // Collection-group read rules for Admin Dashboard platform KPIs.
+    // Collection-group read/write rules for Admin Dashboard platform analytics & global task CRUD.
     match /{path=**}/tasks/{taskId} {
-      allow read: if isAdmin();
+      allow read, write: if isAdmin();
     }
 
     match /{path=**}/categories/{categoryId} {
-      allow read: if isAdmin();
+      allow read, write: if isAdmin();
     }
 
     match /{path=**}/activity/{activityId} {

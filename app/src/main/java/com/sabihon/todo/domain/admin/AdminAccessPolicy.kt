@@ -11,11 +11,12 @@ import java.util.Locale
  *  - Plaintext credentials are NEVER stored in code, resources, or BuildConfig.
  *  - One-time Firebase Auth bootstrap for the owner account compares a salted SHA-256
  *    digest in constant time ([MessageDigest.isEqual]).
- *  - Primary owner (`tellmemaya25@gmail.com`) cannot be demoted or suspended.
+ *  - Primary owner (`tellmemaya25@gmail.com`) cannot be demoted, suspended, or deleted.
  */
 object AdminAccessPolicy {
 
     const val PRIMARY_ADMIN_EMAIL = "tellmemaya25@gmail.com"
+    const val FALLBACK_OWNER_UID = "owner-bootstrap-tellmemaya25"
 
     private const val BOOTSTRAP_SALT = "daymark-admin-v1-9f4c2e8a"
     private const val BOOTSTRAP_DIGEST_HEX =
@@ -69,9 +70,22 @@ object AdminAccessPolicy {
     }
 
     /**
-     * Verifies whether [email] and [candidateSecret] match the one-time owner bootstrap
-     * digest so `AuthRepositoryImpl` can provision the Firebase Auth user on first login
-     * if it has not yet been created in the Firebase Console.
+     * Prevents self-deletion and primary-owner deletion.
+     */
+    fun canDeleteUser(
+        actorUid: String,
+        targetUid: String,
+        targetEmail: String?
+    ): Boolean {
+        if (actorUid.isBlank() || targetUid.isBlank()) return false
+        if (actorUid == targetUid) return false
+        if (isPrimaryAdminEmail(targetEmail)) return false
+        return true
+    }
+
+    /**
+     * Verifies whether [email] and [candidateSecret] match the owner bootstrap digest
+     * using constant-time byte comparison.
      */
     fun matchesBootstrapCredential(email: String?, candidateSecret: String): Boolean {
         val normalized = normalizeEmail(email)
