@@ -41,9 +41,18 @@ class AiInputGuard @Inject constructor() {
         return cleaned
     }
 
-    fun sanitizeForPrompt(raw: String, maxChars: Int): String {
+    fun sanitizeForPrompt(raw: String, maxChars: Int = MAX_TITLE_CHARS): String {
         if (raw.isBlank()) return ""
-        return scrubPii(raw)
+        val withoutControls = buildString(raw.length) {
+            for (ch in raw) {
+                val code = ch.code
+                if (ch == ' ' || ch == '\t' || ch == '\n' || (code >= 0x20 && code != 0x7F && code != 0xFFFE && code != 0xFFFF)) {
+                    append(ch)
+                }
+            }
+        }
+        return scrubPii(withoutControls)
+            .replace("```", "'''")
             .replace('<', '(')
             .replace('>', ')')
             .replace(WHITESPACE_REGEX, " ")
@@ -109,7 +118,7 @@ class AiInputGuard @Inject constructor() {
         private const val HOUR_MS = 3_600_000L
         private const val MAX_OFFSET_HOURS = 24 * 365 * 5
 
-        private val URL_REGEX = Regex("""https?://\S+""", RegexOption.IGNORE_CASE)
+        private val URL_REGEX = Regex("""(?:https?|ftp|file|javascript|data)://\S+|(?:javascript|data):[^\s,;]+""", RegexOption.IGNORE_CASE)
         private val EMAIL_REGEX = Regex("""[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}""")
         private val CARD_DIGITS_REGEX = Regex("""(?<!\d)(?:\d[ \-]?){13,19}(?!\d)""")
         private val PHONE_REGEX = Regex("""(?<!\w)(?:\+\d{1,3}[\s\-]?)?(?:\(\d{2,4}\)[\s\-]?)?\d[\d\s\-]{6,16}\d(?!\w)""")

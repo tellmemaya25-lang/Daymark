@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.sabihon.todo.MainActivity
 import com.sabihon.todo.R
+import com.sabihon.todo.domain.security.InputSecurityValidator
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -47,43 +48,64 @@ class NotificationHelper @Inject constructor(
         taskDescription: String
     ): android.app.Notification {
         createChannel()
+        val safeTaskId = if (InputSecurityValidator.isValidFirestoreDocId(taskId)) taskId else ""
+        val safeTitle = InputSecurityValidator.sanitizeUserText(
+            taskTitle,
+            maxLength = InputSecurityValidator.MAX_WORK_TITLE_LENGTH
+        ).ifBlank { "Task reminder" }
+        val safeDescription = InputSecurityValidator.sanitizeUserText(
+            taskDescription,
+            maxLength = InputSecurityValidator.MAX_WORK_DESCRIPTION_LENGTH
+        ).ifBlank { "Task reminder" }
 
         // Deep link to Task Detail via MainActivity intent
         val contentIntent = Intent(context, MainActivity::class.java).apply {
-            putExtra("taskId", taskId)
+            if (safeTaskId.isNotEmpty()) putExtra("taskId", safeTaskId)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
         val contentPendingIntent = PendingIntent.getActivity(
             context,
-            taskId.hashCode(),
+            safeTaskId.hashCode(),
             contentIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Mark Done action
-        val markDoneIntent = Intent(context, ReminderActionReceiver::class.java).apply {
-            action = "MARK_DONE"
-            putExtra("taskId", taskId)
-        }
-        val markDonePendingIntent = PendingIntent.getBroadcast(
-            context,
-            REQUEST_CODE_MARK_DONE + taskId.hashCode(),
-            markDoneIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        return NotificationCompat.Builder(context, CHANNEL_ID)
+        // Redacted public lock-screen notification to prevent sensitive task PII exposure
+        val publicNotification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_popup_reminder)
-            .setContentTitle(taskTitle)
-            .setContentText(taskDescription.ifBlank { "Task reminder" })
+            .setContentTitle(context.getString(R.string.app_name))
+            .setContentText("You have a scheduled task reminder")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_popup_reminder)
+            .setContentTitle(safeTitle)
+            .setContentText(safeDescription)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicNotification)
             .setAutoCancel(true)
             .setContentIntent(contentPendingIntent)
-            .addAction(
+
+        if (safeTaskId.isNotEmpty()) {
+            val markDoneIntent = Intent(context, ReminderActionReceiver::class.java).apply {
+                action = "MARK_DONE"
+                putExtra("taskId", safeTaskId)
+            }
+            val markDonePendingIntent = PendingIntent.getBroadcast(
+                context,
+                REQUEST_CODE_MARK_DONE + safeTaskId.hashCode(),
+                markDoneIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.addAction(
                 android.R.drawable.checkbox_on_background,
                 context.getString(R.string.mark_done),
                 markDonePendingIntent
             )
-            .build()
+        }
+
+        return builder.build()
     }
 }

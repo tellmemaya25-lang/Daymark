@@ -10,6 +10,7 @@ import com.sabihon.todo.data.remote.dto.toDto
 import com.sabihon.todo.di.IoDispatcher
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.repository.CategoryRepository
+import com.sabihon.todo.domain.security.InputSecurityValidator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -26,7 +27,10 @@ class CategoryRepositoryImpl @Inject constructor(
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : CategoryRepository {
 
-    private fun uid(): String = auth.currentUser?.uid ?: throw IllegalStateException("Not authenticated")
+    private fun uid(): String {
+        val current = auth.currentUser?.uid ?: throw IllegalStateException("Not authenticated")
+        return InputSecurityValidator.requireSafeDocId(current, "uid")
+    }
     private fun categoriesCol() = firestore.collection("users").document(uid()).collection("categories")
     private fun tasksCol() = firestore.collection("users").document(uid()).collection("tasks")
 
@@ -60,8 +64,15 @@ class CategoryRepositoryImpl @Inject constructor(
 
     override suspend fun addCategory(category: Category): Result<String> = withContext(ioDispatcher) {
         try {
+            if (category.name.isBlank()) {
+                return@withContext Result.Error(IllegalArgumentException("Category name cannot be empty"))
+            }
             val dto = category.toDto()
-            val doc = if (category.id.isBlank()) categoriesCol().document() else categoriesCol().document(category.id)
+            val doc = if (category.id.isBlank()) {
+                categoriesCol().document()
+            } else {
+                categoriesCol().document(InputSecurityValidator.requireSafeDocId(category.id, "categoryId"))
+            }
             val finalDto = dto.copy(id = doc.id)
             doc.set(finalDto).await()
             Result.Success(doc.id)
@@ -70,18 +81,20 @@ class CategoryRepositoryImpl @Inject constructor(
 
     override suspend fun updateCategory(category: Category): Result<Unit> = withContext(ioDispatcher) {
         try {
-            categoriesCol().document(category.id).set(category.toDto()).await()
+            val safeId = InputSecurityValidator.requireSafeDocId(category.id, "categoryId")
+            categoriesCol().document(safeId).set(category.copy(id = safeId).toDto()).await()
             Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e) }
     }
 
     override suspend fun deleteCategory(categoryId: String): Result<Unit> = withContext(ioDispatcher) {
         try {
-            val tasksSnapshot = tasksCol().whereEqualTo("categoryId", categoryId).get().await()
+            val safeId = InputSecurityValidator.requireSafeDocId(categoryId, "categoryId")
+            val tasksSnapshot = tasksCol().whereEqualTo("categoryId", safeId).get().await()
             val batch = firestore.batch()
             tasksSnapshot.documents.forEach { doc -> batch.update(doc.reference, "categoryId", null) }
             batch.commit().await()
-            categoriesCol().document(categoryId).delete().await()
+            categoriesCol().document(safeId).delete().await()
             Result.Success(Unit)
         } catch (e: Exception) { Result.Error(e) }
     }
