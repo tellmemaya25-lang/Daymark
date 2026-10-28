@@ -26,13 +26,14 @@ class AddTaskUseCase @Inject constructor(
         if (task.categoryId != null && !InputSecurityValidator.isValidFirestoreDocId(task.categoryId)) {
             return Result.Error(IllegalArgumentException("Invalid category id"))
         }
-        val safeDescription = task.description?.let {
-            InputSecurityValidator.sanitizeUserText(
-                it,
-                maxLength = InputSecurityValidator.MAX_DESCRIPTION_LENGTH,
-                allowMultiline = true
-            ).ifBlank { null }
-        }
+        // `Task.description` is non-null; sanitize it in place so a blank description
+        // still assigns as String (the previous `?.let { … .ifBlank { null } }` produced
+        // a String? and failed to compile against `Task.copy(description = ...)`).
+        val safeDescription = InputSecurityValidator.sanitizeUserText(
+            task.description,
+            maxLength = InputSecurityValidator.MAX_DESCRIPTION_LENGTH,
+            allowMultiline = true
+        )
         val safeSubTasks = task.subTasks.take(50).mapNotNull { sub ->
             val subTitle = InputSecurityValidator.sanitizeUserText(
                 sub.title,
