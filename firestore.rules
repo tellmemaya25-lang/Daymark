@@ -12,34 +12,33 @@ service cloud.firestore {
 
     function isPrimaryAdminEmail() {
       return isSignedIn() &&
-        request.auth.token.email != null &&
-        request.auth.token.email == 'tellmemaya25@gmail.com';
+        request.auth.token.get('email', '').lower() == 'tellmemaya25@gmail.com';
     }
 
     function isDelegatedAdmin() {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.enabled == true;
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get('enabled', false) == true;
     }
 
     function isAdmin() {
       return isSignedIn() && (
-        request.auth.token.admin == true ||
+        request.auth.token.get('admin', false) == true ||
         isPrimaryAdminEmail() ||
         isDelegatedAdmin()
       );
     }
 
-    // Prevents non-admin clients from self-assigning role="ADMIN" or clearing disabled=true.
+    // Prevents non-admin clients from self-assigning role="ADMIN" or clearing disabled=true,
+    // while safely handling older /users/{uid} docs that predate `role` and `disabled`.
     function ownerUserWriteAllowed() {
       let incoming = request.resource.data;
-      let existing = resource == null ? null : resource.data;
-      let roleSafe = existing == null
-        ? (!('role' in incoming) || incoming.role == 'USER' || isPrimaryAdminEmail())
-        : (!('role' in incoming) || incoming.role == existing.role || isPrimaryAdminEmail());
-      let disabledSafe = existing == null
-        ? (!('disabled' in incoming) || incoming.disabled == false)
-        : (!('disabled' in incoming) || incoming.disabled == existing.disabled);
+      let nextRole = incoming.get('role', 'USER');
+      let nextDisabled = incoming.get('disabled', false);
+      let prevRole = resource == null ? 'USER' : resource.data.get('role', 'USER');
+      let prevDisabled = resource == null ? false : resource.data.get('disabled', false);
+      let roleSafe = (nextRole == prevRole) || isPrimaryAdminEmail();
+      let disabledSafe = (nextDisabled == prevDisabled);
       return roleSafe && disabledSafe;
     }
 
