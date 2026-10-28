@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyColumn
@@ -214,37 +213,60 @@ fun HomeScreen(
             }
 
             /*
-             * When scrolling downward reaches the weekly calendar (`HEADER_ITEM_KEY` and
-             * `MOMENTUM_ITEM_KEY` have scrolled clear above the viewport), smoothly glide
-             * the weekly calendar down onto the bottom of HomeScreen (flush above the
-             * bottom navigation bar).
+             * When scrolling downward reaches and passes the weekly calendar
+             * (`WEEK_ITEM_KEY` scrolls off the top), smoothly glide the weekly calendar
+             * down onto the bottom of HomeScreen (flush above the bottom navigation bar).
              *
-             * When scrolling back up, track the live Y position of `WEEK_ITEM_KEY` so the
-             * floating calendar decelerates directly onto its inline slot without ever
-             * overshooting upward into `MomentumCard` or `HomeHeader`.
+             * When scrolling upward reaches the weekly calendar's original position
+             * (`WEEK_ITEM_KEY` right above Prioritize / Suggest tasks re-entering from
+             * the top), immediately and smoothly reset the docked calendar back to its
+             * original inline slot without overshooting.
              */
+            val density = LocalDensity.current
+            val dockLeavePx = with(density) { 4.dp.toPx() }
+            val resetEnterPx = with(density) { 14.dp.toPx() }
             var isWeeklyDocked by remember { mutableStateOf(false) }
-            val scrollDockSignal by remember {
+            val scrollDockSignal by remember(dockLeavePx, resetEnterPx) {
                 derivedStateOf {
                     val info = listState.layoutInfo
                     val visible = info.visibleItemsInfo
                     if (visible.isEmpty()) return@derivedStateOf 0
+                    val viewportTop = info.viewportStartOffset
                     val headerVisible = visible.any { it.key == HEADER_ITEM_KEY }
                     val momentum = visible.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
-                    val momentumStillVisible = momentum != null &&
-                        momentum.offset + momentum.size > info.viewportStartOffset + 8
-                    val momentumFullyBack = momentum != null &&
-                        momentum.offset >= info.viewportStartOffset
+                    val week = visible.firstOrNull { it.key == WEEK_ITEM_KEY }
+                    val momentumVisible = momentum != null &&
+                        momentum.offset + momentum.size > viewportTop
+                    val weekReachedOriginalSlot = week != null &&
+                        week.offset + week.size >= viewportTop + resetEnterPx
+                    val weekScrolledOffTop = week == null ||
+                        week.offset + week.size <= viewportTop + dockLeavePx
+
                     when {
-                        !headerVisible && !momentumStillVisible -> 1 // dock at bottom
-                        headerVisible || momentumFullyBack -> -1 // return to inline slot
-                        else -> 0 // keep current state in transition band
+                        !headerVisible && !momentumVisible && weekScrolledOffTop -> 1 // dock at bottom
+                        headerVisible || momentumVisible || weekReachedOriginalSlot -> -1 // reset to original inline slot
+                        else -> 0 // narrow 10dp hysteresis band
                     }
                 }
             }
             LaunchedEffect(scrollDockSignal) {
                 if (scrollDockSignal == 1) isWeeklyDocked = true
                 else if (scrollDockSignal == -1) isWeeklyDocked = false
+            }
+
+            // If the user stops upward scrolling with the weekly strip only partly clipped
+            // above the top edge, gently settle `WEEK_ITEM_KEY` fully into its original
+            // inline position. Deliberately bounded to the tail of the return gesture so a
+            // normal mid-list stop is never yanked down.
+            LaunchedEffect(isWeeklyDocked, listState.isScrollInProgress) {
+                if (!isWeeklyDocked && !listState.isScrollInProgress) {
+                    val info = listState.layoutInfo
+                    val week = info.visibleItemsInfo.firstOrNull { it.key == WEEK_ITEM_KEY }
+                    val clippedPx = week?.let { info.viewportStartOffset - it.offset } ?: 0
+                    if (week != null && clippedPx in 1..(week.size / 2)) {
+                        listState.animateScrollToItem(week.index)
+                    }
+                }
             }
 
             val inlineWeekTopPx by remember {
@@ -272,14 +294,14 @@ fun HomeScreen(
                 targetValue = if (isWeeklyDocked) 1f else 0f,
                 animationSpec = tween(
                     durationMillis = 780,
-                    easing = if (isWeeklyDocked) FastOutSlowInEasing else LinearOutSlowInEasing
+                    easing = FastOutSlowInEasing
                 ),
                 label = "weekCalendarDockProgress"
             )
             val isSuccessfullyAtBottom = isWeeklyDocked && dockProgress >= 0.99f
             var containerHeightPx by remember { mutableIntStateOf(0) }
             var dockedBarHeightPx by remember { mutableIntStateOf(0) }
-            val dayPillAlignOffsetPx = with(LocalDensity.current) { 15.dp.toPx() }
+            val dayPillAlignOffsetPx = with(density) { 15.dp.toPx() }
 
             PullToRefreshBox(
                 isRefreshing = uiState.isRefreshing,
@@ -940,8 +962,6 @@ private fun HomeHeader(
     onSearchClick: () -> Unit,
     onAvatarClick: () -> Unit
 ) {
-    val today = rememberTodayLabel()
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -972,16 +992,13 @@ private fun HomeHeader(
             ),
             color = MaterialTheme.colorScheme.onBackground
         )
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
-        // Date line with the search button beside it
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = today,
-                style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.weight(1f))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             SearchCircleButton(onClick = onSearchClick)
         }
     }
@@ -992,7 +1009,7 @@ private fun HomeHeader(
  *
  * Portraits keep the greeting and the "Make today count." headline; here there is no
  * vertical room for either, so the row carries only what is still reachable
- * everywhere else: the brand, today's date, search, and the avatar.
+ * everywhere else: the brand, search, and the avatar.
  *
  * Reuses [BrandHeader]'s `actions` slot instead of rebuilding the lockup, so the mark
  * and wordmark cannot drift from the portrait version.
@@ -1013,23 +1030,9 @@ private fun HomeHeaderCompact(
         avatarUrl = avatarUrl,
         onAvatarClick = onAvatarClick,
         actions = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = rememberTodayLabel(),
-                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.width(6.dp))
-                SearchCircleButton(onClick = onSearchClick, size = 32, iconSize = 16)
-            }
+            SearchCircleButton(onClick = onSearchClick, size = 32, iconSize = 16)
         }
     )
-}
-
-/** Today's date line. Shared so the two header sizes can never disagree. */
-@Composable
-private fun rememberTodayLabel(): String = remember {
-    SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(Date())
 }
 
 /**

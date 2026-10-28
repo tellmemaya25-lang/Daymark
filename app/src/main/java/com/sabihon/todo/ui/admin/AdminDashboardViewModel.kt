@@ -2,7 +2,11 @@ package com.sabihon.todo.ui.admin
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.sabihon.todo.BuildConfig
+import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
+import com.sabihon.todo.data.ai.AiQuotaGuard
+import com.sabihon.todo.data.ai.AiSnapshotCache
 import com.sabihon.todo.domain.admin.AdminAuditEntry
 import com.sabihon.todo.domain.admin.AdminExportType
 import com.sabihon.todo.domain.admin.AdminRepository
@@ -28,7 +32,10 @@ import javax.inject.Inject
 @HiltViewModel
 class AdminDashboardViewModel @Inject constructor(
     private val adminRepository: AdminRepository,
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val aiPreferences: AiPreferenceStore,
+    private val aiSnapshotCache: AiSnapshotCache,
+    private val aiQuotaGuard: AiQuotaGuard
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AdminDashboardUiState())
@@ -57,10 +64,38 @@ class AdminDashboardViewModel @Inject constructor(
 
             observeUsers()
             observeSystemConfig()
+            observeGeminiApiKey()
             observeTodayAiStats()
             observeAuditLogs()
             reloadMetrics()
             reloadPlatformTasks()
+        }
+    }
+
+    private fun observeGeminiApiKey() {
+        viewModelScope.launch {
+            aiPreferences.geminiApiKey.collectLatest { savedKey ->
+                val effective = savedKey.ifBlank { BuildConfig.GEMINI_API_KEY }
+                _uiState.update { it.copy(geminiApiKey = effective) }
+            }
+        }
+    }
+
+    fun saveGeminiApiKey(rawKey: String) {
+        viewModelScope.launch {
+            val cleaned = rawKey.trim().removeSurrounding("\"").trim()
+            aiPreferences.setGeminiApiKey(cleaned)
+            aiSnapshotCache.clearAll()
+            aiQuotaGuard.resetRuntimeState()
+            _uiState.update {
+                it.copy(
+                    snackbarMessage = if (cleaned.isNotEmpty()) {
+                        "Gemini API key saved — Smart AI ready"
+                    } else {
+                        "Gemini API key cleared"
+                    }
+                )
+            }
         }
     }
 
