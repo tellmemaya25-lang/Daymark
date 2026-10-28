@@ -48,13 +48,14 @@ fun Task.toDto(): TaskDto {
         title,
         maxLength = InputSecurityValidator.MAX_TITLE_LENGTH
     )
-    val safeDescription = description?.let {
-        InputSecurityValidator.sanitizeUserText(
-            it,
-            maxLength = InputSecurityValidator.MAX_DESCRIPTION_LENGTH,
-            allowMultiline = true
-        )
-    }
+    // `Task.description` and `TaskDto.description` are both non-null Strings. A safe call
+    // here produced a String? that TaskDto(...) rejects, so sanitize it in place: a blank
+    // description stays "" (the DTO's own default) instead of becoming null.
+    val safeDescription = InputSecurityValidator.sanitizeUserText(
+        description,
+        maxLength = InputSecurityValidator.MAX_DESCRIPTION_LENGTH,
+        allowMultiline = true
+    )
     return TaskDto(
         id = id,
         title = safeTitle,
