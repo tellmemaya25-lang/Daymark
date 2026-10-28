@@ -213,21 +213,20 @@ fun HomeScreen(
             }
 
             /*
-             * When scrolling downward reaches the weekly calendar (`WEEK_ITEM_KEY` scrolls
-             * up past the top edge), smoothly glide the weekly calendar down onto the
-             * bottom of HomeScreen (flush above the bottom navigation bar).
+             * When scrolling downward reaches and passes the weekly calendar
+             * (`WEEK_ITEM_KEY` scrolls off the top), smoothly glide the weekly calendar
+             * down onto the bottom of HomeScreen (flush above the bottom navigation bar).
              *
-             * When scrolling back up, as soon as the original weekly calendar slot
-             * (`WEEK_ITEM_KEY`, right above Prioritize / Suggest tasks) reaches the
-             * visible viewport again, smoothly animate the docked calendar back to its
-             * original inline position without waiting for the entire MomentumCard to
-             * scroll back in and without overshooting upward.
+             * When scrolling upward reaches the weekly calendar's original position
+             * (`WEEK_ITEM_KEY` right above Prioritize / Suggest tasks re-entering from
+             * the top), immediately and smoothly reset the docked calendar back to its
+             * original inline slot without overshooting.
              */
             val density = LocalDensity.current
-            val dockTriggerPx = with(density) { 8.dp.toPx() }
-            val resetTriggerPx = with(density) { 4.dp.toPx() }
+            val dockLeavePx = with(density) { 4.dp.toPx() }
+            val resetEnterPx = with(density) { 14.dp.toPx() }
             var isWeeklyDocked by remember { mutableStateOf(false) }
-            val scrollDockSignal by remember(dockTriggerPx, resetTriggerPx) {
+            val scrollDockSignal by remember(dockLeavePx, resetEnterPx) {
                 derivedStateOf {
                     val info = listState.layoutInfo
                     val visible = info.visibleItemsInfo
@@ -236,23 +235,38 @@ fun HomeScreen(
                     val headerVisible = visible.any { it.key == HEADER_ITEM_KEY }
                     val momentum = visible.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
                     val week = visible.firstOrNull { it.key == WEEK_ITEM_KEY }
-                    val momentumBottomVisible = momentum != null &&
-                        momentum.offset + momentum.size >= viewportTop + resetTriggerPx
-                    val weekSlotBackInView = week != null &&
-                        week.offset >= viewportTop + resetTriggerPx
-                    val weekScrolledPastTop = week == null ||
-                        week.offset <= viewportTop - dockTriggerPx
+                    val momentumVisible = momentum != null &&
+                        momentum.offset + momentum.size > viewportTop
+                    val weekReachedOriginalSlot = week != null &&
+                        week.offset + week.size >= viewportTop + resetEnterPx
+                    val weekScrolledOffTop = week == null ||
+                        week.offset + week.size <= viewportTop + dockLeavePx
 
                     when {
-                        !headerVisible && !momentumBottomVisible && weekScrolledPastTop -> 1 // dock at bottom
-                        headerVisible || momentumBottomVisible || weekSlotBackInView -> -1 // smooth reset to inline slot
-                        else -> 0 // narrow 12dp hysteresis band to prevent Stationary jitter
+                        !headerVisible && !momentumVisible && weekScrolledOffTop -> 1 // dock at bottom
+                        headerVisible || momentumVisible || weekReachedOriginalSlot -> -1 // reset to original inline slot
+                        else -> 0 // narrow 10dp hysteresis band
                     }
                 }
             }
             LaunchedEffect(scrollDockSignal) {
                 if (scrollDockSignal == 1) isWeeklyDocked = true
                 else if (scrollDockSignal == -1) isWeeklyDocked = false
+            }
+
+            // If the user stops upward scrolling with the weekly strip only partly clipped
+            // above the top edge, gently settle `WEEK_ITEM_KEY` fully into its original
+            // inline position. Deliberately bounded to the tail of the return gesture so a
+            // normal mid-list stop is never yanked down.
+            LaunchedEffect(isWeeklyDocked, listState.isScrollInProgress) {
+                if (!isWeeklyDocked && !listState.isScrollInProgress) {
+                    val info = listState.layoutInfo
+                    val week = info.visibleItemsInfo.firstOrNull { it.key == WEEK_ITEM_KEY }
+                    val clippedPx = week?.let { info.viewportStartOffset - it.offset } ?: 0
+                    if (week != null && clippedPx in 1..(week.size / 2)) {
+                        listState.animateScrollToItem(week.index)
+                    }
+                }
             }
 
             val inlineWeekTopPx by remember {
