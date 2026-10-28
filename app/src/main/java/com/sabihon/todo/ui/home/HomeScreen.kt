@@ -409,9 +409,9 @@ fun HomeScreen(
                             modifier = Modifier
                                 // Measure only while the slot is at its natural height:
                                 // a shrunk slot would otherwise record its clipped size.
-                                .onSizeChanged { height ->
-                                    if (weekSlotCollapse <= 0f && height > 0) {
-                                        inlineWeekHeightPx = height
+                                .onSizeChanged { size ->
+                                    if (weekSlotCollapse <= 0f && size.height > 0) {
+                                        inlineWeekHeightPx = size.height
                                     }
                                 }
                                 .graphicsLayer {

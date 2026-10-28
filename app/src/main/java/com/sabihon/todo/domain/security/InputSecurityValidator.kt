@@ -30,7 +30,12 @@ object InputSecurityValidator {
     private val ANY_WHITESPACE_REGEX = Regex("""\s+""")
 
     private val SQL_INJECTION_SIGNATURES = listOf(
-        Regex("""(?i)(?:^|['"\s;)])\b(?:OR|AND)\b\s+['"]?\w+['"]?\s*=\s*['"]?\w+"""),
+        // Tautology must compare *identical* operands (`'1'='1`, `OR x = x`). Matching a
+        // bare `AND column = value` flagged ordinary predicates such as
+        // `WHERE uid = ? AND deleted = 0`, so the shape is pinned with backreferences.
+        Regex("""(?i)(?:^|['"\s;)])\b(?:OR|AND)\b\s+(['"]?)(\w+)\1\s*=\s*\1\2\1"""),
+        // Mixed quoting around numeric tautologies (`'1'=1`, `OR 1 = '1'`).
+        Regex("""(?i)(?:^|['"\s;)])\b(?:OR|AND)\b\s+['"]?\d+['"]?\s*=\s*['"]?\d+['"]?"""),
         Regex("""(?i);\s*(?:DROP|DELETE|TRUNCATE|ALTER|UPDATE|INSERT|EXEC|EXECUTE|ATTACH)\b"""),
         Regex("""(?i)\bUNION\s+(?:ALL\s+)?SELECT\b"""),
         Regex("""(?i)\b(?:WAITFOR\s+DELAY|PG_SLEEP|BENCHMARK)\b|\bSLEEP\s*\("""),
@@ -45,7 +50,8 @@ object InputSecurityValidator {
      * Rejects:
      *  - null, empty, whitespace-only, or > [MAX_DOC_ID_LENGTH] strings
      *  - path separators (`/`, `\`), dot segments (`.`, `..`), and reserved `__*__` names
-     *  - SQL/NoSQL metacharacters (`'`, `"`, `;`, `$`, `--`, `/*`) and control bytes
+     *  - SQL/NoSQL metacharacters (`'`, `"`, `;`, `$`, `--`) and block-comment
+     *    delimiters, plus control bytes
      */
     fun isValidFirestoreDocId(id: String?): Boolean {
         if (id.isNullOrEmpty() || id.length > MAX_DOC_ID_LENGTH) return false
