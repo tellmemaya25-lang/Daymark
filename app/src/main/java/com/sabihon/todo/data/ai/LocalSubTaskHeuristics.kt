@@ -48,6 +48,128 @@ class LocalSubTaskHeuristics @Inject constructor() {
             .take(MAX_STEPS)
     }
 
+    /**
+     * Richer local step breakdown used by the interactive UI when Cloud AI is switched
+     * off, offline, or cooling down.
+     *
+     * Tries explicit separator splitting first, then extracts bullet/line items from
+     * [description], and finally offers domain-aware concrete checklist steps grounded
+     * in the task's keywords so tapping "Suggest steps" always produces actionable chips.
+     */
+    fun suggestFallbackSteps(
+        title: String,
+        description: String? = null,
+        existingSubTasks: List<String> = emptyList()
+    ): List<String> {
+        val directSplit = split(title, existingSubTasks)
+        if (directSplit.isNotEmpty()) return directSplit
+
+        val seen = existingSubTasks.mapTo(mutableSetOf()) { it.normalized() }
+        val cleanTitle = title.trim().trimEnd('.', '!', '?')
+        if (cleanTitle.isEmpty()) return emptyList()
+        seen.add(cleanTitle.normalized())
+
+        // Extract explicit lines or bullets from the task description if present.
+        if (!description.isNullOrBlank()) {
+            val fromNotes = description
+                .split(Regex("""[\r\n]+|;\s+"""))
+                .map { line ->
+                    line.trim()
+                        .replace(LEADING_BULLET, "")
+                        .trim()
+                }
+                .filter { it.length in MIN_PART_CHARS..MAX_STEP_CHARS }
+                .filter { seen.add(it.normalized()) }
+                .take(MAX_STEPS)
+            if (fromNotes.size >= 2) return fromNotes
+        }
+
+        val lower = cleanTitle.lowercase()
+        val domainSteps = when {
+            lower.containsAny("call", "phone", "dentist", "doctor", "clinic", "appointment", "book", "schedule") -> listOf(
+                "Find contact number or booking link",
+                "Check open times on calendar",
+                "Confirm appointment details and set reminder"
+            )
+            lower.containsAny("buy", "shop", "grocer", "market", "order", "pick up", "errand", "store") -> listOf(
+                "List exact items and quantities needed",
+                "Check what is already at home",
+                "Pick up items and put them away"
+            )
+            lower.containsAny("study", "exam", "quiz", "homework", "assignment", "lecture", "chapter", "learn", "read") -> listOf(
+                "Gather notes and key topics to cover",
+                "Do a focused 25-minute review block",
+                "Practice key questions and note weak spots"
+            )
+            lower.containsAny("bug", "fix", "code", "implement", "refactor", "build", "deploy", "test", "api", "app", "pr") -> listOf(
+                "Reproduce issue and check relevant files",
+                "Implement the core change cleanly",
+                "Test edge cases and verify build"
+            )
+            lower.containsAny("write", "draft", "report", "slides", "deck", "presentation", "proposal", "email", "essay", "doc") -> listOf(
+                "Outline the key points and structure",
+                "Write the first complete draft",
+                "Proofread and send or submit"
+            )
+            lower.containsAny("pack", "trip", "travel", "flight", "hotel", "vacation", "airport") -> listOf(
+                "Confirm tickets, bookings, and itinerary",
+                "Pack clothes, chargers, and essentials",
+                "Check ID/documents and departure time"
+            )
+            lower.containsAny("clean", "tidy", "wash", "laundry", "organize", "kitchen", "room", "house", "declutter") -> listOf(
+                "Clear clutter and gather cleaning supplies",
+                "Clean the main surfaces and floor",
+                "Put everything back in its place"
+            )
+            lower.containsAny("pay", "bill", "invoice", "tax", "budget", "bank", "rent", "expense") -> listOf(
+                "Verify amount due and payment details",
+                "Submit payment before due date",
+                "Save receipt or confirmation"
+            )
+            lower.containsAny("dinner", "lunch", "breakfast", "cook", "meal", "recipe", "bake", "prep food") -> listOf(
+                "Check recipe and ingredients on hand",
+                "Prep and chop ingredients",
+                "Cook main dish and tidy kitchen"
+            )
+            lower.containsAny("webinar", "meeting", "workshop", "seminar", "conference", "zoom", "interview", "standup") -> listOf(
+                "Confirm meeting link, time, and audio setup",
+                "Review agenda or talking points beforehand",
+                "Capture key takeaways and follow-up actions"
+            )
+            lower.containsAny("thesis", "dissertation", "research", "paper", "capstone", "manuscript", "literature") -> listOf(
+                "Gather key references and outline section goals",
+                "Draft the next focused section (45 min block)",
+                "Review citations, notes, and advisor feedback"
+            )
+            lower.containsAny("workout", "gym", "run", "walk", "exercise", "yoga", "stretch", "train") -> listOf(
+                "Set out workout gear and water",
+                "Warm up for 5 minutes",
+                "Complete main session and cool down"
+            )
+            else -> {
+                val baseSubject = cleanTitle
+                    .replace(Regex("""^(?:follow up on|plan the next step for|gather details needed for)\s+""", RegexOption.IGNORE_CASE), "")
+                    .trim()
+                    .ifEmpty { cleanTitle }
+                    .take(36)
+                    .trim()
+                listOf(
+                    "Outline what's needed for $baseSubject",
+                    "Complete the main work block",
+                    "Review and wrap up $baseSubject"
+                )
+            }
+        }
+
+        return domainSteps
+            .map { it.take(MAX_STEP_CHARS) }
+            .filter { seen.add(it.normalized()) }
+            .take(MAX_STEPS)
+    }
+
+    private fun String.containsAny(vararg needles: String): Boolean =
+        needles.any { this.contains(it) }
+
     private fun String.normalized(): String = trim().lowercase().replace(WHITESPACE, " ")
 
     private companion object {
@@ -56,6 +178,7 @@ class LocalSubTaskHeuristics @Inject constructor() {
             """\s*,\s*|\s*;\s*|\s+and\s+|\s+then\s+|\s*&\s*|\s+\+\s+""",
             RegexOption.IGNORE_CASE
         )
+        val LEADING_BULLET = Regex("""^(?:[-*•]+|\d+[.)])\s*""")
         val WHITESPACE = Regex("""\s+""")
         const val MIN_PART_CHARS = 4
         const val MAX_STEP_CHARS = 80

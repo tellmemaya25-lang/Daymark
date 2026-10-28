@@ -1,8 +1,10 @@
 package com.sabihon.todo.di
 
+import com.sabihon.todo.data.repository.AdminRepositoryImpl
 import com.sabihon.todo.data.repository.AuthRepositoryImpl
 import com.sabihon.todo.data.repository.CategoryRepositoryImpl
 import com.sabihon.todo.data.repository.TaskRepositoryImpl
+import com.sabihon.todo.domain.admin.AdminRepository
 import com.sabihon.todo.domain.repository.AuthRepository
 import com.sabihon.todo.domain.repository.CategoryRepository
 import com.sabihon.todo.domain.repository.TaskRepository
@@ -18,6 +20,10 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class RepositoryModule {
+
+    @Binds
+    @Singleton
+    abstract fun bindAdminRepository(impl: AdminRepositoryImpl): AdminRepository
 
     @Binds
     @Singleton

@@ -120,7 +120,13 @@ class SuggestSubTasksUseCase private constructor(
         val gate = cloud
         if (gate != null && !gate.prefs.isCloudEnabledNow()) {
             Log.i(TAG, "steps: cloud AI is switched off, using the offline splitter")
-            return offline(cleanTitle, existing, "Smart AI is off - turn it on in Settings for suggested steps")
+            return offline(
+                title = cleanTitle,
+                description = description,
+                existing = existing,
+                messageWhenEmpty = "Smart AI is off - turn it on in Settings for suggested steps",
+                noteWhenFallback = "Suggested offline (enable Smart AI in Settings for Gemini steps)"
+            )
         }
 
         val estimatedTokens = estimateTokens(cleanTitle, description)
@@ -130,7 +136,7 @@ class SuggestSubTasksUseCase private constructor(
                     uid = uid,
                     feature = AiFeature.SUB_TASKS,
                     estimatedTokens = estimatedTokens,
-                    enforceCooldown = true
+                    enforceCooldown = false
                 ) {
                     withTimeoutOrNull(TIMEOUT_MS) {
                         aiTaskService.suggestSubTasks(cleanTitle, description, existing)
@@ -141,16 +147,22 @@ class SuggestSubTasksUseCase private constructor(
                     Log.w(TAG, "steps: blocked by quota guard (${outcome.reason})")
                     val message = when (outcome.reason) {
                         AiQuotaGuard.BlockReason.DAILY_QUOTA_EXCEEDED ->
-                            "Daily AI limit reached - try again tomorrow"
+                            "Daily AI limit reached - showing offline steps"
                         AiQuotaGuard.BlockReason.COOLDOWN,
                         AiQuotaGuard.BlockReason.IN_FLIGHT ->
                             "Give it a moment, then ask again"
                         AiQuotaGuard.BlockReason.CIRCUIT_OPEN ->
-                            "AI is cooling down after a failure - try again shortly"
+                            "Suggested offline while Cloud AI reconnects"
                         AiQuotaGuard.BlockReason.CLOUD_DISABLED ->
-                            "Smart AI is off - turn it on in Settings for suggested steps"
+                            "Suggested offline (enable Smart AI in Settings for Gemini steps)"
                     }
-                    return offline(cleanTitle, existing, message)
+                    return offline(
+                        title = cleanTitle,
+                        description = description,
+                        existing = existing,
+                        messageWhenEmpty = message,
+                        noteWhenFallback = message
+                    )
                 }
 
                 is AiQuotaGuard.ExecutionOutcome.Executed -> {
@@ -174,7 +186,32 @@ class SuggestSubTasksUseCase private constructor(
         val steps = clean(raw, existing)
         if (steps.isEmpty()) {
             Log.i(TAG, "steps: nothing usable came back, falling back to the offline splitter")
-            return offline(cleanTitle, existing, "AI didn't answer - try again")
+            val errMsg = (cloudResult as? Result.Error)?.exception?.message.orEmpty().lowercase()
+            val fallbackHint = when {
+                "has not been used" in errMsg ||
+                    "service_disabled" in errMsg ||
+                    "api_not_activated" in errMsg ||
+                    "is disabled" in errMsg ||
+                    "not been enabled" in errMsg ->
+                    "Suggested offline — paste a free key from aistudio.google.com/apikey in Settings > AI > Gemini API key"
+                "app check" in errMsg || "appcheck" in errMsg || "attestation" in errMsg ->
+                    "Suggested offline — copy 'App Check debug token' from Settings > AI into Firebase Console > App Check"
+                "api_key_service_blocked" in errMsg ||
+                    "api_key_android_app_blocked" in errMsg ||
+                    "are blocked" in errMsg ->
+                    "Suggested offline — allow Firebase AI Logic API on your Google Cloud API key"
+                "429" in errMsg || "quota" in errMsg || "resource_exhausted" in errMsg ->
+                    "Suggested offline — Gemini rate limit reached, try again shortly"
+                else ->
+                    "Suggested offline (Cloud AI unavailable right now)"
+            }
+            return offline(
+                title = cleanTitle,
+                description = description,
+                existing = existing,
+                messageWhenEmpty = "AI didn't answer - try again",
+                noteWhenFallback = fallbackHint
+            )
         }
 
         remember(cleanTitle, steps)
@@ -185,17 +222,28 @@ class SuggestSubTasksUseCase private constructor(
     /** The offline attempt, labelled, or an honest message when it has nothing to offer. */
     private fun offline(
         title: String,
+        description: String?,
         existing: List<String>,
-        messageWhenEmpty: String
+        messageWhenEmpty: String,
+        noteWhenFallback: String? = null
     ): SubTaskSuggestions {
-        val steps = clean(heuristics.split(title, existing), existing)
+        val rawOffline = if (cloud != null) {
+            heuristics.suggestFallbackSteps(title, description, existing)
+        } else {
+            heuristics.split(title, existing)
+        }
+        val steps = clean(rawOffline, existing)
         return if (steps.isEmpty()) {
             SubTaskSuggestions(
                 source = SubTaskSuggestions.Source.LOCAL,
                 message = messageWhenEmpty
             )
         } else {
-            SubTaskSuggestions(steps = steps, source = SubTaskSuggestions.Source.LOCAL)
+            SubTaskSuggestions(
+                steps = steps,
+                source = SubTaskSuggestions.Source.LOCAL,
+                message = if (cloud != null) noteWhenFallback else null
+            )
         }
     }
 
@@ -273,7 +321,7 @@ class SuggestSubTasksUseCase private constructor(
 
     private companion object {
         const val TAG = "SuggestSteps"
-        const val TIMEOUT_MS = 10_000L
+        const val TIMEOUT_MS = 15_000L
 
         const val MAX_STEPS = 6
         const val MAX_STEP_CHARS = 80

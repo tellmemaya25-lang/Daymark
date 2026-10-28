@@ -209,7 +209,7 @@ fun MainTabsScreen(
                                     initialPriority = candidate.priority.name,
                                     initialDueAt = candidate.dueOffsetHours?.let {
                                         System.currentTimeMillis() + it * 3_600_000L
-                                    }
+                                    } ?: -1L
                                 )
                             )
                         }
@@ -230,7 +230,8 @@ fun MainTabsScreen(
 
                     3 -> SettingsScreen(
                         onNavigateToHistory = { goToPage(2) },
-                        onNavigateToProfile = { navController.navigate(Route.Profile) }
+                        onNavigateToProfile = { navController.navigate(Route.Profile) },
+                        onNavigateToAdmin = { navController.navigate(Route.AdminDashboard) }
                     )
                 }
             }

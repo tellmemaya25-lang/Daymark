@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -64,6 +65,17 @@ interface AiPreferenceStore {
     suspend fun dismissSuggestion(id: String) = Unit
 
     suspend fun clearDismissedSuggestions() = Unit
+
+    /**
+     * Optional on-device Google AI Studio Gemini API key (`aistudio.google.com/apikey`)
+     * so users on the free Firebase Spark tier can run Gemini without upgrading to Blaze.
+     */
+    val geminiApiKey: Flow<String>
+        get() = kotlinx.coroutines.flow.flowOf("")
+
+    suspend fun getGeminiApiKeyNow(): String = ""
+
+    suspend fun setGeminiApiKey(key: String) = Unit
 }
 
 @Singleton
@@ -74,6 +86,7 @@ class AiPreferences @Inject constructor(
     private val cloudEnabledKey = booleanPreferencesKey("ai_cloud_enabled")
     private val consentPromptedKey = booleanPreferencesKey("ai_consent_prompted")
     private val dismissedSuggestionsKey = stringSetPreferencesKey("ai_dismissed_suggestions")
+    private val geminiApiKeyPref = stringPreferencesKey("ai_gemini_api_key")
 
     private fun dayKey(uid: String) = longPreferencesKey("ai_quota_${sanitizeKey(uid)}_day")
     private fun callsKey(uid: String) = intPreferencesKey("ai_quota_${sanitizeKey(uid)}_calls")
@@ -157,6 +170,25 @@ class AiPreferences @Inject constructor(
 
     override suspend fun clearDismissedSuggestions() {
         context.aiDataStore.edit { prefs -> prefs.remove(dismissedSuggestionsKey) }
+    }
+
+    override val geminiApiKey: Flow<String> = context.aiDataStore.data.map { prefs ->
+        prefs[geminiApiKeyPref].orEmpty()
+    }
+
+    override suspend fun getGeminiApiKeyNow(): String = geminiApiKey.first()
+
+    override suspend fun setGeminiApiKey(key: String) {
+        val cleaned = key.trim().removeSurrounding("\"").trim()
+        context.aiDataStore.edit { prefs ->
+            if (cleaned.isEmpty()) {
+                prefs.remove(geminiApiKeyPref)
+            } else {
+                prefs[geminiApiKeyPref] = cleaned
+                prefs[cloudEnabledKey] = true
+                prefs[consentPromptedKey] = true
+            }
+        }
     }
 
     private fun sanitizeKey(uid: String): String =

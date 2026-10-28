@@ -72,7 +72,9 @@ fun PrioritizeReviewSheet(
     onToggleProposal: (String, Boolean) -> Unit,
     onRefresh: () -> Unit,
     onApply: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    cloudEnabled: Boolean = true,
+    onEnableCloudAi: () -> Unit = {}
 ) {
     val surfaces = LocalDaymarkSurfaces.current
     val topFocus = plan.recommendations.filter { it.isTopFocus }.take(3)
@@ -131,6 +133,54 @@ fun PrioritizeReviewSheet(
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            if (!isRefining && !cloudEnabled) {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(surfaces.accentSurface)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Smart Cloud AI is turned off.",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        color = surfaces.onAccentSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onEnableCloudAi) {
+                        Text(
+                            text = "Turn on Gemini",
+                            style = MaterialTheme.typography.labelLarge.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = AccentBlue
+                        )
+                    }
+                }
+            } else if (!isRefining && plan.source == AiSource.LOCAL_FALLBACK && !plan.fallbackNote.isNullOrBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(surfaces.groupedCard)
+                        .border(1.dp, surfaces.cardBorder, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = plan.fallbackNote,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 11.5.sp,
+                            lineHeight = 16.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             Spacer(Modifier.height(14.dp))
 

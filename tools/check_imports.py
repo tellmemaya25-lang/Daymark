@@ -28,12 +28,16 @@ SOURCE_ROOT = ROOT / "app" / "src" / "main" / "java"
 # Symbols that always need an explicit import when they appear in code.
 # Scope members (RowScope.weight, Arrangement.spacedBy, Modifier.offset …) are
 # deliberately absent — they resolve off the receiver, not an import.
-# Members that genuinely hang off the Modifier receiver and need no import.
+# Members that genuinely hang off the Modifier / layout-scope receiver and need no import.
+# NOTE: Foundation layout extensions (width, height, size, padding, fillMax*, offset,
+# wrapContent*, clipToBounds) DO require explicit `androidx.compose.foundation.layout.*`
+# / `androidx.compose.ui.draw.*` imports and must NOT be listed here.
 MODIFIER_SCOPE_MEMBERS = {
     "menuAnchor",      # ExposedDropdownMenuBoxScope
-    "weight", "align", "then", "fillMaxWidth", "fillMaxHeight", "fillMaxSize",
-    "padding", "size", "height", "width", "heightIn", "widthIn", "offset",
-    "paddingValues", "clipToBounds", "wrapContentWidth", "wrapContentHeight",
+    "weight",          # RowScope / ColumnScope
+    "align",           # BoxScope / RowScope / ColumnScope
+    "matchParentSize", # BoxScope
+    "then",            # Modifier interface member
 }
 
 REQUIRED = [
@@ -125,8 +129,14 @@ def check_file(path: Path) -> list[str]:
         if not imported(name):
             problems.append(f"Icons.Filled.{name} is used but not imported")
 
-    # `Modifier.someExtension(` is unambiguous: these always need an import.
-    for name in sorted(set(re.findall(r"Modifier\.(\w+)\s*\(", body))):
+    # `Modifier.someExtension(` (including chained `.ext(` calls) is unambiguous:
+    # these always need an import unless they are receiver/scope members.
+    modifier_calls: set[str] = set()
+    for chain_match in re.finditer(r"\b[Mm]odifier(?:\s*\.\s*\w+\s*\([^()]*\))+", body):
+        modifier_calls.update(re.findall(r"\.\s*(\w+)\s*\(", chain_match.group(0)))
+    modifier_calls.update(re.findall(r"Modifier\.(\w+)\s*\(", body))
+
+    for name in sorted(modifier_calls):
         if name in MODIFIER_SCOPE_MEMBERS or imported(name):
             continue
         declared_here = name in declared

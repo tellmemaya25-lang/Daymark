@@ -2,29 +2,110 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Users collection – each user can only read/write their own doc
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isPrimaryAdminEmail() {
+      return isSignedIn() &&
+        request.auth.token.email != null &&
+        request.auth.token.email == 'tellmemaya25@gmail.com';
+    }
+
+    function isDelegatedAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.enabled == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.admin == true ||
+        isPrimaryAdminEmail() ||
+        isDelegatedAdmin()
+      );
+    }
+
+    // Prevents non-admin clients from self-assigning role="ADMIN" or clearing disabled=true.
+    function ownerUserWriteAllowed() {
+      let incoming = request.resource.data;
+      let existing = resource == null ? null : resource.data;
+      let roleSafe = existing == null
+        ? (!('role' in incoming) || incoming.role == 'USER' || isPrimaryAdminEmail())
+        : (!('role' in incoming) || incoming.role == existing.role || isPrimaryAdminEmail());
+      let disabledSafe = existing == null
+        ? (!('disabled' in incoming) || incoming.disabled == false)
+        : (!('disabled' in incoming) || incoming.disabled == existing.disabled);
+      return roleSafe && disabledSafe;
+    }
+
+    // Users collection – owner can read/write own profile (non-privileged fields); admins can read/manage all.
     match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if (isOwner(uid) && ownerUserWriteAllowed()) || isAdmin();
+      allow delete: if isOwner(uid) || isAdmin();
 
-      // Tasks subcollection – user can read/write their own tasks
       match /tasks/{taskId} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
 
-      // Categories subcollection
       match /categories/{categoryId} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
 
-      // Activity log
       match /activity/{activityId} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
+      }
+
+      match /{document=**} {
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if isOwner(uid);
       }
     }
 
-    // Fallback: allow user to create their own user doc on first sign-up
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+    // Collection-group read rules for Admin Dashboard platform KPIs.
+    match /{path=**}/tasks/{taskId} {
+      allow read: if isAdmin();
+    }
+
+    match /{path=**}/categories/{categoryId} {
+      allow read: if isAdmin();
+    }
+
+    match /{path=**}/activity/{activityId} {
+      allow read: if isAdmin();
+    }
+
+    // Delegated admin registry – users can check their own status; admins manage entries.
+    match /admins/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Global runtime configuration & system announcement banner.
+    match /system_config/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Zero-PII aggregated daily AI telemetry counters.
+    match /ai_telemetry_daily/{dayKey} {
+      allow read: if isAdmin();
+      allow create, update: if isSignedIn();
+      allow delete: if false;
+    }
+
+    // Append-only immutable administrative audit trail.
+    match /admin_audit_logs/{logId} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
     }
   }
 }

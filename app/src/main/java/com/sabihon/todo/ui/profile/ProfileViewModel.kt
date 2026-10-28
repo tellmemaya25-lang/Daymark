@@ -12,8 +12,10 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
+import com.sabihon.todo.BuildConfig
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.datastore.ThemePreferences
+import com.sabihon.todo.data.ai.AiQuotaGuard
 import com.sabihon.todo.data.ai.AiSnapshotCache
 import com.sabihon.todo.data.local.AvatarStore
 import com.sabihon.todo.core.datastore.ThemePref
@@ -56,7 +58,9 @@ data class ProfileUiState(
     val confirmNewPassword: String = "",
     val passwordError: String? = null,
     val aiCloudEnabled: Boolean = false,
-    val aiDailyCalls: Int = 0
+    val aiDailyCalls: Int = 0,
+    val geminiApiKey: String = "",
+    val isAdmin: Boolean = false
 )
 
 @HiltViewModel
@@ -69,6 +73,7 @@ class ProfileViewModel @Inject constructor(
     private val themePreferences: ThemePreferences,
     private val aiPreferences: AiPreferenceStore,
     private val aiSnapshotCache: AiSnapshotCache,
+    private val aiQuotaGuard: AiQuotaGuard,
     private val avatarStore: AvatarStore
 ) : ViewModel() {
 
@@ -84,6 +89,8 @@ class ProfileViewModel @Inject constructor(
     private fun loadProfile() {
         val user = auth.currentUser
         viewModelScope.launch {
+            val adminFlag = runCatching { authRepository.isCurrentUserAdmin() }.getOrDefault(false)
+            _uiState.update { it.copy(isAdmin = adminFlag) }
             try {
                 val uid = user?.uid
                 val localPath = loadLocalPhotoPath(uid)
@@ -205,11 +212,36 @@ class ProfileViewModel @Inject constructor(
                 _uiState.update { it.copy(aiDailyCalls = calls) }
             }
         }
+        viewModelScope.launch {
+            aiPreferences.geminiApiKey.collectLatest { savedKey ->
+                val effective = savedKey.ifBlank { BuildConfig.GEMINI_API_KEY }
+                _uiState.update { it.copy(geminiApiKey = effective) }
+            }
+        }
+    }
+
+    fun saveGeminiApiKey(rawKey: String) {
+        viewModelScope.launch {
+            val cleaned = rawKey.trim().removeSurrounding("\"").trim()
+            aiPreferences.setGeminiApiKey(cleaned)
+            aiSnapshotCache.clearAll()
+            aiQuotaGuard.resetRuntimeState()
+            _uiState.update {
+                it.copy(
+                    successMessage = if (cleaned.isNotEmpty()) {
+                        "Gemini API key saved — Smart AI ready"
+                    } else {
+                        "Gemini API key cleared"
+                    }
+                )
+            }
+        }
     }
 
     fun setAiCloudEnabled(enabled: Boolean) {
         viewModelScope.launch {
             aiPreferences.setCloudEnabled(enabled)
+            aiQuotaGuard.resetRuntimeState()
             if (!enabled) {
                 aiSnapshotCache.clearAll()
             }
@@ -219,6 +251,7 @@ class ProfileViewModel @Inject constructor(
     fun clearAiCache() {
         viewModelScope.launch {
             aiSnapshotCache.clearAll()
+            aiQuotaGuard.resetRuntimeState()
             aiPreferences.clearDismissedSuggestions()
             _uiState.update { it.copy(successMessage = "Smart AI cache cleared") }
         }

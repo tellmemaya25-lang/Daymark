@@ -35,6 +35,7 @@ fun LoginScreen(
     onNavigateToSignUp: () -> Unit,
     onNavigateToForgot: () -> Unit,
     onLoginSuccess: () -> Unit,
+    onLoginSuccessAdmin: () -> Unit = onLoginSuccess,
     viewModel: AuthViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -90,7 +91,7 @@ fun LoginScreen(
         AuthPrimaryButton(
             text = "Sign in",
             isLoading = uiState.isLoading,
-            onClick = { viewModel.signIn(onLoginSuccess) }
+            onClick = { viewModel.signIn(onSuccess = onLoginSuccess, onAdminSuccess = onLoginSuccessAdmin) }
         )
 
         Spacer(Modifier.height(22.dp))
@@ -100,7 +101,13 @@ fun LoginScreen(
         Spacer(Modifier.height(16.dp))
 
         GoogleAuthButton(
-            onIdTokenReceived = { token -> viewModel.signInWithGoogle(token, onLoginSuccess) },
+            onIdTokenReceived = { token ->
+                viewModel.signInWithGoogle(
+                    idToken = token,
+                    onSuccess = onLoginSuccess,
+                    onAdminSuccess = onLoginSuccessAdmin
+                )
+            },
             onError = { err -> viewModel.setError(err) },
             isLoading = uiState.isLoading,
             buttonText = "Continue with Google"

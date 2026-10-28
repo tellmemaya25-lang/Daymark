@@ -78,14 +78,15 @@ class AuthViewModel @Inject constructor(
         return valid
     }
 
-    fun signIn(onSuccess: () -> Unit) {
+    fun signIn(onSuccess: () -> Unit, onAdminSuccess: () -> Unit = onSuccess) {
         if (!validateLogin()) return
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             when (val result = authRepository.signIn(_uiState.value.email.trim(), _uiState.value.password)) {
                 is Result.Success -> {
+                    val isAdmin = authRepository.isCurrentUserAdmin()
                     _uiState.update { it.copy(isLoading = false, isLoggedIn = true) }
-                    onSuccess()
+                    if (isAdmin) onAdminSuccess() else onSuccess()
                 }
                 is Result.Error -> {
                     _uiState.update { it.copy(isLoading = false, errorMessage = result.message ?: "Login failed") }
@@ -95,7 +96,7 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    fun signUp(onSuccess: () -> Unit) {
+    fun signUp(onSuccess: () -> Unit, onAdminSuccess: () -> Unit = onSuccess) {
         if (!validateSignUp()) return
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
@@ -105,8 +106,9 @@ class AuthViewModel @Inject constructor(
                 displayName = _uiState.value.displayName.trim()
             )) {
                 is Result.Success -> {
+                    val isAdmin = authRepository.isCurrentUserAdmin()
                     _uiState.update { it.copy(isLoading = false, isLoggedIn = true) }
-                    onSuccess()
+                    if (isAdmin) onAdminSuccess() else onSuccess()
                 }
                 is Result.Error -> {
                     _uiState.update { it.copy(isLoading = false, errorMessage = result.message ?: "Sign up failed") }
@@ -116,13 +118,14 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    fun signInWithGoogle(idToken: String, onSuccess: () -> Unit) {
+    fun signInWithGoogle(idToken: String, onSuccess: () -> Unit, onAdminSuccess: () -> Unit = onSuccess) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             when (val result = authRepository.signInWithGoogle(idToken)) {
                 is Result.Success -> {
+                    val isAdmin = authRepository.isCurrentUserAdmin()
                     _uiState.update { it.copy(isLoading = false, isLoggedIn = true) }
-                    onSuccess()
+                    if (isAdmin) onAdminSuccess() else onSuccess()
                 }
                 is Result.Error -> {
                     _uiState.update { it.copy(isLoading = false, errorMessage = result.message ?: "Google sign-in failed") }

@@ -442,6 +442,9 @@ fun SearchScreen(
                                 } ?: "No date",
                                 description = task.description,
                                 subTasks = task.subTasks,
+                                onCheckedChange = { checked ->
+                                    viewModel.toggleComplete(task.id, checked)
+                                },
                                 onSubTaskChecked = { subTaskId, done ->
                                     viewModel.toggleSubTask(task.id, subTaskId, done)
                                 },

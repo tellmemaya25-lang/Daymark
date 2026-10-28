@@ -2,6 +2,10 @@ package com.sabihon.todo.core.telemetry
 
 import android.os.Bundle
 import com.google.firebase.analytics.FirebaseAnalytics
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
+import java.time.LocalDate
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -51,6 +55,27 @@ class FirebaseAiTelemetry @Inject constructor(
                 }
             )
         }
+        runCatching {
+            val dayKey = LocalDate.now().toString()
+            val normalizedSource = source.lowercase()
+            val normalizedStatus = status.lowercase()
+            val isCloudSuccess = normalizedSource.contains("cloud") && normalizedStatus == "ok"
+            val isLocalFallback = normalizedSource.contains("local") || normalizedSource.contains("fallback")
+            val isError = normalizedStatus != "ok" && !isLocalFallback
+            val updates = mutableMapOf<String, Any>(
+                "dateKey" to dayKey,
+                "totalCalls" to FieldValue.increment(1L),
+                "totalLatencyMs" to FieldValue.increment(latencyMs.coerceAtLeast(0L)),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            if (isCloudSuccess) updates["cloudSuccessCount"] = FieldValue.increment(1L)
+            if (isLocalFallback) updates["localFallbackCount"] = FieldValue.increment(1L)
+            if (isError) updates["errorCount"] = FieldValue.increment(1L)
+            FirebaseFirestore.getInstance()
+                .collection("ai_telemetry_daily")
+                .document(dayKey)
+                .set(updates, SetOptions.merge())
+        }
     }
 
     override fun logOutcome(feature: String, action: String, count: Int) {
@@ -63,6 +88,22 @@ class FirebaseAiTelemetry @Inject constructor(
                     putInt(PARAM_COUNT, count)
                 }
             )
+        }
+        runCatching {
+            val dayKey = LocalDate.now().toString()
+            val delta = count.coerceAtLeast(1).toLong()
+            val field = if (action == ACTION_ACCEPTED) "acceptedOutcomes" else "dismissedOutcomes"
+            FirebaseFirestore.getInstance()
+                .collection("ai_telemetry_daily")
+                .document(dayKey)
+                .set(
+                    mapOf(
+                        "dateKey" to dayKey,
+                        field to FieldValue.increment(delta),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    SetOptions.merge()
+                )
         }
     }
 

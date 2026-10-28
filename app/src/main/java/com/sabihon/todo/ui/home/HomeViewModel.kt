@@ -3,6 +3,8 @@ package com.sabihon.todo.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiSnapshotCache
@@ -72,6 +74,14 @@ class HomeViewModel @Inject constructor(
     /** Guards the single automatic suggestion load per screen lifetime. */
     private var nextSuggestionsRequested = false
 
+    private sealed interface PendingAiIntent {
+        data object Prioritize : PendingAiIntent
+        data object SuggestNext : PendingAiIntent
+        data class SuggestSteps(val taskId: String) : PendingAiIntent
+    }
+
+    private var pendingAiIntent: PendingAiIntent? = null
+
     private companion object {
         /** Above this many open tasks the user already knows what is next. */
         const val AUTO_SUGGEST_OPEN_THRESHOLD = 3
@@ -82,6 +92,7 @@ class HomeViewModel @Inject constructor(
 
     /** Live collectors, kept so a pull-to-refresh can restart them. */
     private val observeJobs = mutableListOf<Job>()
+    private var systemBannerReg: ListenerRegistration? = null
 
     private var categoriesList: List<Category> = emptyList()
     private var lastPriorityUndo: PrioritizationUndoSnapshot? = null
@@ -101,6 +112,36 @@ class HomeViewModel @Inject constructor(
         }
         startObserving()
         observeAvatar()
+        observeAiCloudEnabled()
+        observeSystemAnnouncement()
+    }
+
+    private fun observeSystemAnnouncement() {
+        runCatching {
+            systemBannerReg = FirebaseFirestore.getInstance()
+                .collection("system_config")
+                .document("global")
+                .addSnapshotListener { snap, _ ->
+                    val banner = snap?.getString("announcementBanner").orEmpty()
+                    val maint = snap?.getBoolean("maintenanceMode") ?: false
+                    _uiState.update {
+                        it.copy(announcementBanner = banner, maintenanceMode = maint)
+                    }
+                }
+        }
+    }
+
+    override fun onCleared() {
+        runCatching { systemBannerReg?.remove() }
+        super.onCleared()
+    }
+
+    private fun observeAiCloudEnabled() {
+        viewModelScope.launch {
+            aiPreferences.cloudEnabled.collectLatest { enabled ->
+                _uiState.update { it.copy(aiCloudEnabled = enabled) }
+            }
+        }
     }
 
     /**
@@ -221,10 +262,11 @@ class HomeViewModel @Inject constructor(
                         // that says "here is more work" is noise. Fires once per
                         // ViewModel lifetime; Refresh is the manual door.
                         if (!nextSuggestionsRequested &&
+                            allTasks.isNotEmpty() &&
                             allTasks.count { !it.isCompleted } <= AUTO_SUGGEST_OPEN_THRESHOLD
                         ) {
                             nextSuggestionsRequested = true
-                            loadNextSuggestions()
+                            loadNextSuggestions(forceInteractive = false)
                         }
 
                         // Real-time CDC: surgically evict completed/deleted tasks from
@@ -327,7 +369,7 @@ class HomeViewModel @Inject constructor(
             is HomeAction.ClearError -> _uiState.update { it.copy(errorMessage = null) }
             is HomeAction.ClearHabitLabel -> _uiState.update { it.copy(habitNextLabel = null) }
             is HomeAction.AddSubTask -> addSubTask(action.taskId, action.subTaskTitle)
-            is HomeAction.SuggestSubTasks -> suggestSteps(action.taskId)
+            is HomeAction.SuggestSubTasks -> onRequestSuggestSteps(action.taskId)
             is HomeAction.AcceptSuggestedStep -> {
                 addSubTask(action.taskId, action.step)
                 // Drop the accepted step so the row shrinks as steps land, and clear the
@@ -342,7 +384,7 @@ class HomeViewModel @Inject constructor(
             HomeAction.DismissSuggestedSteps -> _uiState.update {
                 it.copy(suggestedSteps = emptyList(), suggestedStepsMessage = null)
             }
-            HomeAction.RequestSuggestions -> loadNextSuggestions()
+            HomeAction.RequestSuggestions -> onRequestSuggestions()
             is HomeAction.AcceptSuggestion -> acceptSuggestion(action.suggestion)
             is HomeAction.DismissSuggestion -> dismissSuggestion(action.suggestion)
             HomeAction.ToggleSuggestionsExpanded -> _uiState.update {
@@ -429,8 +471,12 @@ class HomeViewModel @Inject constructor(
                 }
             }
             HomeAction.RequestPrioritize -> onRequestPrioritize()
+            HomeAction.EnableCloudAiFromSheet -> onEnableCloudAiFromSheet()
             is HomeAction.DecideAiConsent -> onDecideAiConsent(action.enableCloud)
-            HomeAction.DismissAiConsent -> _uiState.update { it.copy(showAiConsentSheet = false) }
+            HomeAction.DismissAiConsent -> {
+                pendingAiIntent = null
+                _uiState.update { it.copy(showAiConsentSheet = false) }
+            }
             HomeAction.RefreshPrioritize -> runPrioritization(forceRefresh = true)
             HomeAction.DismissPrioritizeSheet -> {
                 if (_uiState.value.prioritizationPlan != null) {
@@ -451,6 +497,7 @@ class HomeViewModel @Inject constructor(
         if (_uiState.value.isPrioritizing) return
         viewModelScope.launch {
             if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
+                pendingAiIntent = PendingAiIntent.Prioritize
                 _uiState.update { it.copy(showAiConsentSheet = true) }
             } else {
                 runPrioritization(forceRefresh = false)
@@ -458,11 +505,50 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private fun onRequestSuggestions() {
+        if (_uiState.value.isSuggestingNext) return
+        viewModelScope.launch {
+            if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
+                pendingAiIntent = PendingAiIntent.SuggestNext
+                _uiState.update { it.copy(showAiConsentSheet = true) }
+            } else {
+                loadNextSuggestions(forceInteractive = true)
+            }
+        }
+    }
+
+    private fun onRequestSuggestSteps(taskId: String) {
+        if (_uiState.value.isSuggestingSteps) return
+        viewModelScope.launch {
+            if (!aiPreferences.hasPromptedConsentNow() && !aiPreferences.isCloudEnabledNow()) {
+                pendingAiIntent = PendingAiIntent.SuggestSteps(taskId)
+                _uiState.update { it.copy(showAiConsentSheet = true) }
+            } else {
+                suggestSteps(taskId)
+            }
+        }
+    }
+
+    private fun onEnableCloudAiFromSheet() {
+        viewModelScope.launch {
+            aiPreferences.setCloudEnabled(true)
+            aiSnapshotCache.clearAll()
+            _uiState.update { it.copy(aiCloudEnabled = true) }
+            runPrioritization(forceRefresh = true)
+        }
+    }
+
     private fun onDecideAiConsent(enableCloud: Boolean) {
         viewModelScope.launch {
+            val intent = pendingAiIntent
+            pendingAiIntent = null
             aiPreferences.setCloudEnabled(enableCloud)
             _uiState.update { it.copy(showAiConsentSheet = false) }
-            runPrioritization(forceRefresh = false)
+            when (intent) {
+                PendingAiIntent.SuggestNext -> loadNextSuggestions(forceInteractive = true)
+                is PendingAiIntent.SuggestSteps -> suggestSteps(intent.taskId)
+                PendingAiIntent.Prioritize, null -> runPrioritization(forceRefresh = false)
+            }
         }
     }
 
@@ -710,9 +796,14 @@ class HomeViewModel @Inject constructor(
      * Nothing is written and nothing is created: the result is a list of candidates the
      * user may accept one at a time, mute, or ignore entirely by collapsing the card.
      */
-    private fun loadNextSuggestions() {
+    private fun loadNextSuggestions(forceInteractive: Boolean = false) {
         if (_uiState.value.isSuggestingNext) return
-        _uiState.update { it.copy(isSuggestingNext = true) }
+        _uiState.update {
+            it.copy(
+                isSuggestingNext = true,
+                suggestionsExpanded = if (forceInteractive) true else it.suggestionsExpanded
+            )
+        }
 
         viewModelScope.launch {
             try {
@@ -721,13 +812,14 @@ class HomeViewModel @Inject constructor(
                     openTasks = state.allTasks.filter { !it.isCompleted },
                     recentCompleted = state.allTasks.filter { it.isCompleted },
                     categories = categoriesList,
-                    uid = auth.currentUser?.uid
+                    uid = auth.currentUser?.uid,
+                    forceInteractive = forceInteractive
                 )
                 _uiState.update {
                     it.copy(
                         isSuggestingNext = false,
                         nextTaskSuggestions = result.candidates,
-                        suggestionsExpanded = it.suggestionsExpanded || result.candidates.isNotEmpty()
+                        suggestionsExpanded = if (forceInteractive) true else (it.suggestionsExpanded || result.candidates.isNotEmpty())
                     )
                 }
             } catch (e: Exception) {

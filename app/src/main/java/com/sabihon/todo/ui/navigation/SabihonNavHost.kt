@@ -29,7 +29,9 @@ import com.sabihon.todo.ui.onboarding.OnboardingViewModel
 import com.sabihon.todo.ui.categories.CategoriesScreen
 import com.sabihon.todo.ui.categories.CategoryDetailScreen
 import com.sabihon.todo.ui.profile.ProfileScreen
+import com.sabihon.todo.ui.projects.AllTasksScreen
 import com.sabihon.todo.ui.search.SearchScreen
+import com.sabihon.todo.ui.admin.AdminDashboardScreen
 import com.sabihon.todo.ui.addedit.AddEditTaskScreen
 
 @Composable
@@ -56,6 +58,7 @@ fun SabihonNavHost(
                 onFinished = { destination ->
                     val next: Route = when (destination) {
                         StartDestination.HOME -> Route.Home
+                        StartDestination.ADMIN -> Route.AdminDashboard
                         StartDestination.ONBOARDING -> Route.Onboarding
                         StartDestination.LOGIN -> Route.Login
                     }
@@ -100,6 +103,25 @@ fun SabihonNavHost(
                     navController.navigate(Route.Home) {
                         popUpTo(Route.Login) { inclusive = true }
                     }
+                },
+                onLoginSuccessAdmin = {
+                    navController.navigate(Route.AdminDashboard) {
+                        popUpTo(Route.Login) { inclusive = true }
+                    }
+                }
+            )
+        }
+        composable<Route.AdminDashboard> {
+            AdminDashboardScreen(
+                onOpenWorkspace = {
+                    navController.navigate(Route.Home) {
+                        launchSingleTop = true
+                    }
+                },
+                onSignedOut = {
+                    navController.navigate(Route.Login) {
+                        popUpTo(0) { inclusive = true }
+                    }
                 }
             )
         }
@@ -108,6 +130,11 @@ fun SabihonNavHost(
                 onNavigateBack = { navController.popBackStack() },
                 onSignUpSuccess = {
                     navController.navigate(Route.Home) {
+                        popUpTo(Route.SignUp) { inclusive = true }
+                    }
+                },
+                onSignUpSuccessAdmin = {
+                    navController.navigate(Route.AdminDashboard) {
                         popUpTo(Route.SignUp) { inclusive = true }
                     }
                 }
@@ -152,9 +179,9 @@ fun SabihonNavHost(
         }
         composable<Route.AllTasks> {
             MainScaffold(navController = navController) { _ ->
-                CategoriesScreen(
+                AllTasksScreen(
                     onBack = { navController.popBackStack() },
-                    onCategoryClick = { catId -> navController.navigate(Route.CategoryDetail(catId)) }
+                    onTaskClick = { taskId -> navController.navigate(Route.AddEditTask(taskId)) }
                 )
             }
         }
@@ -175,7 +202,7 @@ fun SabihonNavHost(
                             initialPriority = candidate.priority.name,
                             initialDueAt = candidate.dueOffsetHours?.let {
                                 System.currentTimeMillis() + it * 3_600_000L
-                            }
+                            } ?: -1L
                         )
                     )
                 }
@@ -189,7 +216,7 @@ fun SabihonNavHost(
                 initialDescription = args.initialDescription,
                 initialCategoryId = args.initialCategoryId,
                 initialPriority = args.initialPriority,
-                initialDueAt = args.initialDueAt,
+                initialDueAt = args.initialDueAt.takeIf { it > 0L },
                 onBack = { navController.popBackStack() },
                 onSaved = { navController.popBackStack() }
             )

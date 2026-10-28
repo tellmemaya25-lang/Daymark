@@ -100,7 +100,10 @@ class PrioritizeTasksUseCase internal constructor(
         )
         if (activeTasks.isEmpty()) return localPlan
 
-        if (!forceRefresh) {
+        val cloudEnabled = prefs.isCloudEnabledNow()
+        if (forceRefresh) {
+            quotaGuard.resetRuntimeState()
+        } else if (cloudEnabled) {
             val cached = snapshotCache.get(uid, today, activeTasks)
             if (cached != null) {
                 telemetry.logCall(
@@ -113,17 +116,20 @@ class PrioritizeTasksUseCase internal constructor(
             }
         }
 
-        val cloudEnabled = prefs.isCloudEnabledNow()
         val tier = router.chooseTier(activeTasks, categories, cloudEnabled)
         if (tier == AiModelTier.LOCAL) {
-            snapshotCache.put(uid, today, activeTasks, localPlan)
             telemetry.logCall(
                 feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
                 source = "local",
                 status = "ok",
                 latencyMs = (clock() - nowMillis).coerceAtLeast(0L)
             )
-            return localPlan
+            val note = if (!cloudEnabled) {
+                "Smart Cloud AI is turned off in Settings."
+            } else {
+                "Add at least 2 open tasks for Gemini trade-off ranking."
+            }
+            return localPlan.copy(fallbackNote = note)
         }
 
         val promptItems = inputGuard.buildPromptItems(
@@ -140,7 +146,7 @@ class PrioritizeTasksUseCase internal constructor(
             uid = uid,
             feature = AiFeature.PRIORITIZE,
             estimatedTokens = estimatedTokens,
-            enforceCooldown = true
+            enforceCooldown = !forceRefresh
         ) {
             callCloudWithSingleTransientRetry(promptItems, tier)
         }
@@ -153,7 +159,17 @@ class PrioritizeTasksUseCase internal constructor(
                     status = "blocked_${execution.reason.name.lowercase()}",
                     latencyMs = (clock() - nowMillis).coerceAtLeast(0L)
                 )
-                localPlan
+                val blockedNote = when (execution.reason) {
+                    AiQuotaGuard.BlockReason.DAILY_QUOTA_EXCEEDED ->
+                        "Daily Gemini limit reached (25/day) — using offline smart rules until tomorrow."
+                    AiQuotaGuard.BlockReason.CLOUD_DISABLED ->
+                        "Smart Cloud AI is turned off in Settings."
+                    AiQuotaGuard.BlockReason.COOLDOWN,
+                    AiQuotaGuard.BlockReason.IN_FLIGHT,
+                    AiQuotaGuard.BlockReason.CIRCUIT_OPEN ->
+                        "Gemini is cooling down briefly — tap ↻ to retry now."
+                }
+                localPlan.copy(fallbackNote = blockedNote)
             }
             is AiQuotaGuard.ExecutionOutcome.Executed -> {
                 val cloudResult = execution.value
@@ -189,7 +205,7 @@ class PrioritizeTasksUseCase internal constructor(
                         status = "fallback",
                         latencyMs = (clock() - nowMillis).coerceAtLeast(0L)
                     )
-                    localPlan
+                    localPlan.copy(fallbackNote = describeCloudFailure(cloudResult, err))
                 }
             }
         }
@@ -323,8 +339,46 @@ class PrioritizeTasksUseCase internal constructor(
         )
     }
 
+    private fun describeCloudFailure(
+        cloudResult: Result<CloudPrioritizationDraft>?,
+        error: Throwable
+    ): String {
+        if (cloudResult == null) {
+            return "Gemini took too long to respond — tap ↻ to retry."
+        }
+        val raw = error.message.orEmpty()
+        val lower = raw.lowercase()
+        return when {
+            "vertex ai in firebase" in lower ||
+                "has not been used" in lower ||
+                "service_disabled" in lower ||
+                "api_not_activated" in lower ||
+                "is disabled" in lower ||
+                "not been enabled" in lower ->
+                "Paste a free Gemini key from aistudio.google.com/apikey in Settings > AI > Gemini API key (or enable 'Vertex AI in Firebase API' in Google Cloud Console for sabihon-todo), then tap ↻."
+            "app check" in lower || "appcheck" in lower || "attestation" in lower ->
+                "App Check debug token needed — go to Settings > AI > tap 'App Check debug token' to copy it, add it in Firebase Console > App Check > Apps > Manage debug tokens, then tap ↻."
+            "api_key_service_blocked" in lower ||
+                "api_key_android_app_blocked" in lower ||
+                "requests to this api" in lower ||
+                "are blocked" in lower ->
+                "API key restriction blocked Gemini — allow 'Firebase AI Logic API' & 'Generative Language API' (and your debug SHA-1) in Google Cloud Console > Credentials."
+            "429" in lower || "quota" in lower || "resource_exhausted" in lower ->
+                "Gemini free-tier rate limit reached — wait a moment, then tap ↻."
+            "unable to resolve host" in lower || "network" in lower || "offline" in lower || "socket" in lower ->
+                "Couldn't reach Gemini (check internet connection), then tap ↻."
+            else -> {
+                val brief = sanitizeLine(
+                    raw.lineSequence().firstOrNull { it.isNotBlank() },
+                    120
+                ) ?: "request failed"
+                "Gemini error ($brief) — check Firebase Console > Build > AI Logic, then tap ↻."
+            }
+        }
+    }
+
     companion object {
-        const val TIMEOUT_MS = 10_000L
+        const val TIMEOUT_MS = 15_000L
         private const val RETRY_DELAY_MS = 450L
         private const val BASE_PROMPT_CHARS = 1_100
         private const val MAX_REASON_CHARS = 90

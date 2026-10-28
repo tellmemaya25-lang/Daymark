@@ -8,7 +8,9 @@ import kotlinx.coroutines.flow.Flow
  */
 interface AuthRepository {
     fun getCurrentUserId(): String?
+    fun getCurrentUserEmail(): String? = null
     fun isUserLoggedIn(): Boolean
+    suspend fun isCurrentUserAdmin(): Boolean = false
     fun observeAuthState(): Flow<Boolean>
     suspend fun signUp(email: String, password: String, displayName: String): Result<String>
     suspend fun signIn(email: String, password: String): Result<String>

@@ -101,6 +101,7 @@ data class HomeUiState(
     val habitNextLabel: String? = null,
 
     // ---- Smart AI prioritization ----
+    val aiCloudEnabled: Boolean = false,
     val showAiConsentSheet: Boolean = false,
     val showPrioritizeSheet: Boolean = false,
     val isPrioritizing: Boolean = false,
@@ -123,7 +124,11 @@ data class HomeUiState(
     val nextTaskSuggestions: List<SuggestedTaskCandidate> = emptyList(),
     val isSuggestingNext: Boolean = false,
     /** Collapsible card state; remembered per screen lifetime. */
-    val suggestionsExpanded: Boolean = true
+    val suggestionsExpanded: Boolean = true,
+
+    // ---- live global system notice (Admin Dashboard) ----
+    val announcementBanner: String = "",
+    val maintenanceMode: Boolean = false
 )
 
 sealed interface HomeAction {
@@ -162,6 +167,7 @@ sealed interface HomeAction {
 
     // ---- Smart AI prioritization ----
     data object RequestPrioritize : HomeAction
+    data object EnableCloudAiFromSheet : HomeAction
     data class DecideAiConsent(val enableCloud: Boolean) : HomeAction
     data object DismissAiConsent : HomeAction
     data object RefreshPrioritize : HomeAction

@@ -346,4 +346,17 @@ class SuggestNextTasksUseCaseTest {
         assertEquals(10, seen!!.openTitles.size)
         assertEquals(8, seen!!.recentCompletedTitles.size)
     }
+
+    @Test
+    fun `interactive fallback offers calm starter suggestions even on a fresh list`() = runTest {
+        val result = useCase(
+            openTasks = emptyList(),
+            recentCompleted = emptyList(),
+            categories = listOf(work),
+            forceInteractive = true
+        )
+
+        assertTrue(result.candidates.isNotEmpty())
+        assertTrue(result.candidates.size <= 3)
+    }
 }

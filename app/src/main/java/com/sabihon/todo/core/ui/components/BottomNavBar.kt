@@ -115,8 +115,8 @@ fun RoundedBottomNavBar(
         ) {
             tabs.forEach { tab ->
                 val isSelected = when (tab.route) {
-                    "home" -> currentRoute.contains("Home") || currentRoute.contains("AllTasks") || currentRoute.contains("Categories")
-                    "projects" -> currentRoute.contains("Projects") || currentRoute.contains("Categories")
+                    "home" -> currentRoute.contains("Home")
+                    "projects" -> currentRoute.contains("Projects") || currentRoute.contains("AllTasks") || currentRoute.contains("Categories")
                     "activity" -> currentRoute.contains("History") || currentRoute.contains("Activity")
                     "settings" -> currentRoute.contains("Settings") || currentRoute.contains("Profile")
                     "add" -> false

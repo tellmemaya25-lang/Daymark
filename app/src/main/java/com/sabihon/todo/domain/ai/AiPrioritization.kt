@@ -17,8 +17,8 @@ enum class AiSource {
  */
 enum class AiModelTier(val modelId: String) {
     LOCAL("local-scorer"),
-    FLASH_LITE("gemini-3.5-flash-lite"),
-    FLASH("gemini-3.5-flash")
+    FLASH_LITE("gemini-2.5-flash-lite"),
+    FLASH("gemini-2.5-flash")
 }
 
 /**
@@ -84,7 +84,8 @@ data class PrioritizationPlan(
     val summaryHeadline: String,
     val source: AiSource,
     val modelTier: AiModelTier = AiModelTier.LOCAL,
-    val generatedAtMillis: Long = System.currentTimeMillis()
+    val generatedAtMillis: Long = System.currentTimeMillis(),
+    val fallbackNote: String? = null
 ) {
     val proposedChangesCount: Int
         get() = recommendations.count { it.hasPriorityChange }

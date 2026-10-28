@@ -12,6 +12,9 @@ data class UserDto(
     val photoUrl: String? = null,
     @ServerTimestamp
     val createdAt: Timestamp? = null,
+    val lastLoginAt: Timestamp? = null,
     val themePref: String = "SYSTEM", // SYSTEM | LIGHT | DARK
+    val role: String = "USER", // USER | ADMIN
+    val disabled: Boolean = false,
     val fcmToken: String? = null
 )

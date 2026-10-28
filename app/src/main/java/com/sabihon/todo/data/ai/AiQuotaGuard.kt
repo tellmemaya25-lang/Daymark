@@ -133,16 +133,14 @@ class AiQuotaGuard internal constructor(
         val immediateTrip = "429" in message ||
             "quota" in message ||
             "resource_exhausted" in message ||
-            "rate limit" in message ||
-            "403" in message ||
-            "permission_denied" in message ||
-            "app check" in message ||
-            "appcheck" in message
+            "rate limit" in message
 
         if (immediateTrip) {
             consecutiveFailures += 1
             circuitOpenUntilMillis = clock() + CIRCUIT_OPEN_MS
-        } else {
+        } else if ("403" !in message && "permission_denied" !in message) {
+            // Transient 5xx / network failures open the breaker after 2 consecutive misses;
+            // 403 config errors do not lock the user out for 60s once fixed in Console.
             consecutiveFailures += 1
             if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
                 circuitOpenUntilMillis = clock() + CIRCUIT_OPEN_MS

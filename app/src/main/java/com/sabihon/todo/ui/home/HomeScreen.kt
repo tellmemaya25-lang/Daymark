@@ -3,7 +3,6 @@ package com.sabihon.todo.ui.home
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,12 +12,16 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyColumn
@@ -62,6 +65,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -69,7 +73,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -92,7 +98,9 @@ import com.sabihon.todo.core.ui.util.isCompactHeight
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.Task
 import java.text.SimpleDateFormat
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -129,6 +137,7 @@ fun HomeScreen(
     val revealCoordinator = remember { RevealCoordinator() }
     var completedExpanded by remember { mutableStateOf(true) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var showMonthlyCalendar by remember { mutableStateOf(false) }
     val bottomSheetState = rememberModalBottomSheetState()
     val addSheetState = rememberModalBottomSheetState()
 
@@ -180,9 +189,13 @@ fun HomeScreen(
         }
     }
 
+    // Outer MainTabsScreen Scaffold already consumes bottom navigation-bar insets for
+    // RoundedBottomNavBar; restricting this nested Scaffold to statusBars prevents a
+    // duplicate bottom inset gap so DockedWeeklyCalendarBar sits flush on the bottom nav.
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets.statusBars
     ) { innerPadding ->
         if (uiState.isLoading) {
             LoadingShimmer(modifier = Modifier.padding(innerPadding))
@@ -201,45 +214,72 @@ fun HomeScreen(
             }
 
             /*
-             * Everything on this page scrolls, header included, and the week strip pins
-             * itself when it reaches the top.
+             * When scrolling downward reaches the weekly calendar (`HEADER_ITEM_KEY` and
+             * `MOMENTUM_ITEM_KEY` have scrolled clear above the viewport), smoothly glide
+             * the weekly calendar down onto the bottom of HomeScreen (flush above the
+             * bottom navigation bar).
              *
-             * `stripStuck` is that moment, and it does two jobs: it fades in the strip's
-             * divider so the pinned band reads as a separate surface, and it arms the
-             * day swipe. Arming is the important half - Home is page 0 of the tab pager,
-             * so an always-on horizontal drag here would steal the swipe that changes
-             * tabs. Until the strip is pinned, that drag belongs to the pager.
+             * When scrolling back up, track the live Y position of `WEEK_ITEM_KEY` so the
+             * floating calendar decelerates directly onto its inline slot without ever
+             * overshooting upward into `MomentumCard` or `HomeHeader`.
              */
-            val stripStuck by remember {
+            var isWeeklyDocked by remember { mutableStateOf(false) }
+            val scrollDockSignal by remember {
                 derivedStateOf {
                     val info = listState.layoutInfo
-                    val week = info.visibleItemsInfo.firstOrNull { it.key == WEEK_ITEM_KEY }
-                        ?: return@derivedStateOf false
-                    if (week.offset > info.viewportStartOffset) return@derivedStateOf false
-                    // The strip is pinned once the card above it has scrolled clear. If
-                    // that card is still on screen the strip is only part-way up, and a
-                    // horizontal drag there is still the user's attempt to change tabs.
-                    val momentum = info.visibleItemsInfo.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
-                    momentum == null || momentum.offset + momentum.size <= info.viewportStartOffset
+                    val visible = info.visibleItemsInfo
+                    if (visible.isEmpty()) return@derivedStateOf 0
+                    val headerVisible = visible.any { it.key == HEADER_ITEM_KEY }
+                    val momentum = visible.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
+                    val momentumStillVisible = momentum != null &&
+                        momentum.offset + momentum.size > info.viewportStartOffset + 8
+                    val momentumFullyBack = momentum != null &&
+                        momentum.offset >= info.viewportStartOffset
+                    when {
+                        !headerVisible && !momentumStillVisible -> 1 // dock at bottom
+                        headerVisible || momentumFullyBack -> -1 // return to inline slot
+                        else -> 0 // keep current state in transition band
+                    }
                 }
             }
-            val stripDividerAlpha by animateFloatAsState(
-                targetValue = if (stripStuck) 1f else 0f,
-                animationSpec = tween(180),
-                label = "stripDivider"
-            )
-
-            // Read here, not inside the LazyColumn builder: that lambda is not
-            // @Composable, so MaterialTheme cannot be touched from within it.
-            val stripBg = MaterialTheme.colorScheme.background
-
-            // Right is yesterday, left is tomorrow – the direction a paper calendar moves
-            // when you flip back and then forward again.
-            val shiftDay: (Int) -> Unit = { days ->
-                viewModel.onAction(
-                    HomeAction.SelectDate(uiState.selectedDate.plusDays(days.toLong()))
-                )
+            LaunchedEffect(scrollDockSignal) {
+                if (scrollDockSignal == 1) isWeeklyDocked = true
+                else if (scrollDockSignal == -1) isWeeklyDocked = false
             }
+
+            val inlineWeekTopPx by remember {
+                derivedStateOf {
+                    val info = listState.layoutInfo
+                    val visible = info.visibleItemsInfo
+                    val week = visible.firstOrNull { it.key == WEEK_ITEM_KEY }
+                    val rawOffset = when {
+                        week != null -> week.offset - info.viewportStartOffset
+                        else -> {
+                            val momentum = visible.firstOrNull { it.key == MOMENTUM_ITEM_KEY }
+                            val header = visible.firstOrNull { it.key == HEADER_ITEM_KEY }
+                            when {
+                                momentum != null -> momentum.offset + momentum.size - info.viewportStartOffset
+                                header != null -> header.offset + header.size - info.viewportStartOffset
+                                else -> 0
+                            }
+                        }
+                    }
+                    rawOffset.coerceAtLeast(0)
+                }
+            }
+
+            val dockProgress by animateFloatAsState(
+                targetValue = if (isWeeklyDocked) 1f else 0f,
+                animationSpec = tween(
+                    durationMillis = 780,
+                    easing = if (isWeeklyDocked) FastOutSlowInEasing else LinearOutSlowInEasing
+                ),
+                label = "weekCalendarDockProgress"
+            )
+            val isSuccessfullyAtBottom = isWeeklyDocked && dockProgress >= 0.99f
+            var containerHeightPx by remember { mutableIntStateOf(0) }
+            var dockedBarHeightPx by remember { mutableIntStateOf(0) }
+            val dayPillAlignOffsetPx = with(LocalDensity.current) { 15.dp.toPx() }
 
             PullToRefreshBox(
                 isRefreshing = uiState.isRefreshing,
@@ -248,16 +288,18 @@ fun HomeScreen(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { containerHeightPx = it.height }
+            ) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
+                    modifier = Modifier.fillMaxSize()
                 ) {
                 // The header scrolls with everything else. A short window gets the
                 // compact variant, which is about the height available, not about what
-                // sticks - nothing in this list is exempt from scrolling except the strip.
+                // sticks - nothing in this list is exempt from scrolling.
                 item(key = HEADER_ITEM_KEY) {
                     if (compactHeader) {
                         HomeHeaderCompact(
@@ -279,6 +321,27 @@ fun HomeScreen(
                 }
 
                 item(key = MOMENTUM_ITEM_KEY) {
+                    if (uiState.announcementBanner.isNotBlank()) {
+                        val bannerAccent = if (uiState.maintenanceMode) Color(0xFFF2994A) else AccentBlue
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 6.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(bannerAccent.copy(alpha = 0.12f))
+                                .border(1.dp, bannerAccent.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Text(
+                                text = uiState.announcementBanner,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                     MomentumCard(
                         total = uiState.momentum.total,
                         done = uiState.momentum.done,
@@ -286,34 +349,35 @@ fun HomeScreen(
                     )
                 }
 
-                stickyHeader(key = WEEK_ITEM_KEY) {
-                    Column(modifier = Modifier.background(stripBg)) {
-                        WeekStripBar(
-                            days = uiState.weekDays,
-                            selected = uiState.selectedDate,
-                            onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
-                            onShiftDay = shiftDay,
-                            // The drag only exists while pinned. With no handler
-                            // attached the gesture falls through to the tab pager,
-                            // which is what should happen while the strip is at rest.
-                            swipeEnabled = stripStuck
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(
-                                    MaterialTheme.colorScheme.onSurface.copy(
-                                        alpha = 0.10f * stripDividerAlpha
-                                    )
-                                )
-                        )
-                    }
+                item(key = WEEK_ITEM_KEY) {
+                    WeekStrip(
+                        days = uiState.weekDays,
+                        selected = uiState.selectedDate,
+                        onSelect = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
+                        modifier = Modifier.graphicsLayer {
+                            alpha = (1f - dockProgress * 2.2f).coerceIn(0f, 1f)
+                        }
+                    )
                 }
 
-                // Suggestions sit directly under the strip: near enough to be the first
-                // thing read when the list is nearly clear, and gone entirely once the
-                // user collapses them.
+                // Smart AI actions sit directly under the week strip so both Task
+                // Prioritization and Contextual Task Suggestions are always visible
+                // regardless of how many tasks are scheduled on the currently selected day.
+                item {
+                    HomeAiActionRow(
+                        isPrioritizing = uiState.isPrioritizing,
+                        isSuggesting = uiState.isSuggestingNext,
+                        onPrioritizeClick = { viewModel.onAction(HomeAction.RequestPrioritize) },
+                        onSuggestClick = { viewModel.onAction(HomeAction.RequestSuggestions) },
+                        modifier = Modifier.padding(
+                            start = 20.dp,
+                            end = 20.dp,
+                            top = 8.dp,
+                            bottom = 4.dp
+                        )
+                    )
+                }
+
                 if (uiState.nextTaskSuggestions.isNotEmpty() || uiState.isSuggestingNext) {
                     item {
                         SuggestedTasksCard(
@@ -331,24 +395,11 @@ fun HomeScreen(
                             },
                             onRefresh = { viewModel.onAction(HomeAction.RequestSuggestions) },
                             onEdit = onNavigateToAddTaskPrefilled,
-                            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp)
-                        )
-                    }
-                }
-
-                // Today / Upcoming / All tasks used to live here. They are gone: with a
-                // sticky week strip and a day swipe, the strip is the browser, and two
-                // ways to change what you are looking at was one too many. "All tasks"
-                // moved to the Projects tab, which is where you go to see everything.
-                if (uiState.visibleTasks.size >= 2) {
-                    item {
-                        PrioritizeTaskButton(
-                            onClick = { viewModel.onAction(HomeAction.RequestPrioritize) },
                             modifier = Modifier.padding(
                                 start = 20.dp,
                                 end = 20.dp,
-                                top = 4.dp,
-                                bottom = 10.dp
+                                top = 6.dp,
+                                bottom = 6.dp
                             )
                         )
                     }
@@ -445,7 +496,38 @@ fun HomeScreen(
                     }
                 }
 
-                item { Spacer(Modifier.height(110.dp)) }
+                item { Spacer(Modifier.height(320.dp)) }
+                }
+
+                if (dockProgress > 0.005f) {
+                    val bottomRestY = (containerHeightPx - dockedBarHeightPx)
+                        .coerceAtLeast(0)
+                        .toFloat()
+                    val inlineTargetY = (inlineWeekTopPx.toFloat() - dayPillAlignOffsetPx)
+                        .coerceIn(0f, bottomRestY)
+                    val travelDistancePx = (bottomRestY - inlineTargetY).coerceAtLeast(0f)
+                    DockedWeeklyCalendarBar(
+                        days = uiState.weekDays,
+                        selectedDate = uiState.selectedDate,
+                        isDockedAtBottom = isSuccessfullyAtBottom,
+                        dockProgress = dockProgress,
+                        onSelectDate = { date ->
+                            viewModel.onAction(HomeAction.SelectDate(date))
+                        },
+                        onShiftDays = { deltaDays ->
+                            viewModel.onAction(
+                                HomeAction.SelectDate(uiState.selectedDate.plusDays(deltaDays))
+                            )
+                        },
+                        onExpandMonthCalendar = { showMonthlyCalendar = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .onSizeChanged { dockedBarHeightPx = it.height }
+                            .graphicsLayer {
+                                translationY = -travelDistancePx * (1f - dockProgress)
+                                alpha = (dockProgress * 3.2f).coerceIn(0f, 1f)
+                            }
+                    )
                 }
             }
             }
@@ -785,6 +867,29 @@ fun HomeScreen(
             }
         }
 
+        if (showMonthlyCalendar) {
+            val daysWithTasks = remember(uiState.allTasks) {
+                val today = LocalDate.now()
+                val zone = ZoneId.systemDefault()
+                uiState.allTasks
+                    .filter { !it.isCompleted }
+                    .map { task ->
+                        val dueDate = task.dueAt
+                            ?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+                            ?: today
+                        if (dueDate.isBefore(today)) today else dueDate
+                    }
+                    .map { it.toEpochDay() }
+                    .toSet()
+            }
+            MonthlyCalendarSheet(
+                selectedDate = uiState.selectedDate,
+                daysWithTasks = daysWithTasks,
+                onSelectDate = { date -> viewModel.onAction(HomeAction.SelectDate(date)) },
+                onDismiss = { showMonthlyCalendar = false }
+            )
+        }
+
         if (uiState.showAiConsentSheet) {
             AiConsentSheet(
                 onEnableCloudAi = { viewModel.onAction(HomeAction.DecideAiConsent(true)) },
@@ -803,6 +908,8 @@ fun HomeScreen(
                 categoryNames = uiState.categoryNames,
                 selectedChanges = uiState.selectedPriorityChanges,
                 isRefining = uiState.isPrioritizing,
+                cloudEnabled = uiState.aiCloudEnabled,
+                onEnableCloudAi = { viewModel.onAction(HomeAction.EnableCloudAiFromSheet) },
                 onToggleProposal = { taskId, checked ->
                     viewModel.onAction(HomeAction.TogglePriorityProposal(taskId, checked))
                 },
@@ -961,59 +1068,6 @@ private fun SearchCircleButton(
 /* ------------------------------------------------------------------ */
 
 /**
- * The sparkle that opens the focus-plan sheet.
- *
- * Only drawn when there are at least two open tasks: a plan that ranks one task is not
- * a plan, and offering it on an empty list is offering nothing.
- */
-/**
- * The week strip, pinned in the top bar, with a horizontal drag that moves the
- * selected day by one.
- *
- * The gesture is always live here – the whole point of moving the strip out of the list
- * is that it is permanently on screen, so there is no "only when pinned" state left to
- * wait for. The cost is honest: a horizontal drag started *on the strip* moves the day
- * instead of the tabs, because this handler consumes it before the pager sees it. Tab
- * swiping still works everywhere else on the screen – the header, the momentum card and
- * the task list all still belong to the pager.
- *
- * Right is yesterday, left is tomorrow: the direction a paper calendar moves when you
- * flip back and then forward again.
- */
-@Composable
-private fun WeekStripBar(
-    days: List<WeekDay>,
-    selected: LocalDate,
-    onSelect: (LocalDate) -> Unit,
-    onShiftDay: (Int) -> Unit,
-    swipeEnabled: Boolean,
-    modifier: Modifier = Modifier
-) {
-    WeekStrip(
-        days = days,
-        selected = selected,
-        onSelect = onSelect,
-        modifier = modifier.pointerInput(selected, swipeEnabled) {
-            if (!swipeEnabled) return@pointerInput
-            // toPx() lives out here: the gesture callbacks are plain lambdas, not a
-            // Density scope. Re-keyed on `selected` so a drag always resolves against
-            // the day that is on screen.
-            val threshold = 48.dp.toPx()
-            var dragged = 0f
-            detectHorizontalDragGestures(
-                onDragStart = { dragged = 0f },
-                onDragEnd = {
-                    when {
-                        dragged > threshold -> onShiftDay(-1)
-                        dragged < -threshold -> onShiftDay(1)
-                    }
-                }
-            ) { _, amount -> dragged += amount }
-        }
-    )
-}
-
-/**
  * "Prioritize Task" – a full-width row of its own.
  *
  * It was a pill wedged onto the tabs row, competing with three other controls for the
@@ -1021,38 +1075,88 @@ private fun WeekStripBar(
  * says what it does instead of relying on a sparkle to explain itself.
  */
 @Composable
-private fun PrioritizeTaskButton(
-    onClick: () -> Unit,
+private fun HomeAiActionRow(
+    isPrioritizing: Boolean,
+    isSuggesting: Boolean,
+    onPrioritizeClick: () -> Unit,
+    onSuggestClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val surfaces = LocalDaymarkSurfaces.current
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(surfaces.accentSurface)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            // Null content description: the button's own Text is the label, and a
-            // second one would have TalkBack saying "prioritize tasks, prioritize task".
-            imageVector = Icons.Filled.AutoAwesome,
-            contentDescription = null,
-            tint = AccentBlue,
-            modifier = Modifier.size(16.dp)
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = "Prioritize Task",
-            style = MaterialTheme.typography.labelLarge.copy(
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold
-            ),
-            color = surfaces.onAccentSurface
-        )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(surfaces.accentSurface)
+                .clickable(enabled = !isPrioritizing, onClick = onPrioritizeClick)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (isPrioritizing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    strokeWidth = 2.dp,
+                    color = AccentBlue
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    tint = AccentBlue,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = "Prioritize",
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                ),
+                color = surfaces.onAccentSurface
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(surfaces.accentSurface)
+                .clickable(enabled = !isSuggesting, onClick = onSuggestClick)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (isSuggesting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    strokeWidth = 2.dp,
+                    color = AccentBlue
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    tint = AccentBlue,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = "Suggest tasks",
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                ),
+                color = surfaces.onAccentSurface
+            )
+        }
     }
 }
 

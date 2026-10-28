@@ -38,7 +38,7 @@ sealed interface Route {
         val initialDescription: String? = null,
         val initialCategoryId: String? = null,
         val initialPriority: String? = null,
-        val initialDueAt: Long? = null
+        val initialDueAt: Long = -1L
     ) : Route
 
     @Serializable
@@ -49,6 +49,9 @@ sealed interface Route {
 
     @Serializable
     data object Categories : Route
+
+    @Serializable
+    data object AdminDashboard : Route
 
 }
 

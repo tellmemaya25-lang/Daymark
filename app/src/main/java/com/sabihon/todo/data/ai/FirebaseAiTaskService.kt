@@ -1,9 +1,17 @@
 package com.sabihon.todo.data.ai
 
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.type.generationConfig
+import com.google.firebase.firestore.FirebaseFirestore
+import com.sabihon.todo.BuildConfig
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
+import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.ai.AiModelTier
 import com.sabihon.todo.domain.ai.AiTaskDraft
@@ -16,46 +24,283 @@ import com.sabihon.todo.domain.ai.SuggestionContext
 import com.sabihon.todo.domain.model.Category
 import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import java.net.URL
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import javax.net.ssl.HttpsURLConnection
 
 /**
  * The only file that talks to Gemini.
  *
- * Deliberately thin: it builds a prompt, asks for JSON, and maps the answer. Whether
- * that answer is trustworthy - whether the task id or category exists, whether the
- * date is sane, whether Top Focus was inflated - is decided by the domain use cases,
- * so this class stays replaceable and all validation can be tested without a network.
- *
- * No API key lives here. Firebase AI Logic authorises the request through the Firebase
- * project, which is why App Check is installed before the first call (see `SabihonApp`).
+ * Supports two zero-cost transports transparently:
+ *  1. Direct Google AI Studio Gemini API (`aistudio.google.com/apikey`) when a free key is
+ *     configured in `Settings > AI` or gitignored `local.properties` (`GEMINI_API_KEY=...`) —
+ *     works on Firebase Spark without upgrading to the Blaze billing plan.
+ *  2. Firebase AI Logic (`Firebase.ai`), with automatic fallback to the project's
+ *     `Gemini Developer API` endpoint if debug App Check blocks the first SDK call.
  */
 @Singleton
-class FirebaseAiTaskService @Inject constructor() : AiTaskService {
+class FirebaseAiTaskService @Inject constructor(
+    @ApplicationContext private val appContext: Context,
+    private val aiPreferences: AiPreferenceStore
+) : AiTaskService {
 
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
      * Built on first use, not at construction: this class is injected into ViewModels
      * that also run in previews and unit tests, where there is no Firebase to talk to.
+     *
+     * Model IDs on the Gemini Developer API evolve over time, so we cache models per ID
+     * and fall back across supported Flash tiers if a project rejects one with 404.
      */
-    private val flashLiteModel by lazy { buildModel(AiModelTier.FLASH_LITE.modelId) }
-    private val flashModel by lazy { buildModel(AiModelTier.FLASH.modelId) }
+    private val modelCache = java.util.concurrent.ConcurrentHashMap<String, com.google.firebase.ai.GenerativeModel>()
 
-    private fun buildModel(modelName: String) =
-        Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
-            modelName = modelName,
-            generationConfig = generationConfig {
-                // Ask for JSON rather than prose; the prompt pins the shape.
-                responseMimeType = "application/json"
+    @Volatile
+    private var resolvedLiteModelId: String = AiModelTier.FLASH_LITE.modelId
+
+    @Volatile
+    private var resolvedFlashModelId: String = AiModelTier.FLASH.modelId
+
+    @Volatile
+    private var preferProjectRestFallback: Boolean = false
+
+    @Volatile
+    private var cachedGlobalAiEnabled: Boolean = true
+
+    @Volatile
+    private var globalAiCheckedAtMillis: Long = 0L
+
+    private suspend fun isGlobalCloudAiEnabled(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - globalAiCheckedAtMillis < 60_000L) {
+            return cachedGlobalAiEnabled
+        }
+        val enabled = runCatching {
+            withTimeoutOrNull(1_500L) {
+                FirebaseFirestore.getInstance()
+                    .collection("system_config")
+                    .document("global")
+                    .get()
+                    .await()
+            }?.getBoolean("cloudAiGlobalEnabled") ?: true
+        }.getOrDefault(true)
+        cachedGlobalAiEnabled = enabled
+        globalAiCheckedAtMillis = now
+        return enabled
+    }
+
+    private fun getOrBuildModel(modelName: String) =
+        modelCache.getOrPut(modelName) {
+            Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
+                modelName = modelName,
+                generationConfig = generationConfig {
+                    // Ask for JSON rather than prose; the prompt pins the shape.
+                    responseMimeType = "application/json"
+                }
+            )
+        }
+
+    private suspend fun generateJsonText(prompt: String, tier: AiModelTier): String? {
+        if (!isGlobalCloudAiEnabled()) {
+            throw IllegalStateException("Cloud AI temporarily disabled by administrator.")
+        }
+        val candidates = when (tier) {
+            AiModelTier.FLASH -> listOf(
+                resolvedFlashModelId,
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-2.5-flash-lite"
+            ).distinct()
+            else -> listOf(
+                resolvedLiteModelId,
+                "gemini-2.5-flash-lite",
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-2.0-flash-lite"
+            ).distinct()
+        }
+
+        val directApiKey = aiPreferences.getGeminiApiKeyNow()
+            .trim()
+            .ifBlank { BuildConfig.GEMINI_API_KEY.trim() }
+        val projectApiKey = firebaseGoogleApiKey()
+
+        var lastError: Exception? = null
+        for (candidateId in candidates) {
+            try {
+                val text = if (directApiKey.isNotEmpty()) {
+                    callGoogleAiStudioRest(
+                        apiKey = directApiKey,
+                        modelName = candidateId,
+                        prompt = prompt,
+                        includeAndroidCertHeaders = false
+                    )
+                } else if (preferProjectRestFallback && !projectApiKey.isNullOrBlank()) {
+                    callGoogleAiStudioRest(
+                        apiKey = projectApiKey,
+                        modelName = candidateId,
+                        prompt = prompt,
+                        includeAndroidCertHeaders = true
+                    )
+                } else {
+                    try {
+                        getOrBuildModel(candidateId).generateContent(prompt).text
+                    } catch (sdkErr: Exception) {
+                        if (sdkErr is CancellationException) throw sdkErr
+                        val sdkMsg = sdkErr.message.orEmpty().lowercase()
+                        val sdkModelMissing = "404" in sdkMsg ||
+                            "not_found" in sdkMsg ||
+                            "not found" in sdkMsg ||
+                            "invalid model" in sdkMsg
+                        if (!sdkModelMissing && !projectApiKey.isNullOrBlank()) {
+                            runCatching {
+                                callGoogleAiStudioRest(
+                                    apiKey = projectApiKey,
+                                    modelName = candidateId,
+                                    prompt = prompt,
+                                    includeAndroidCertHeaders = true
+                                )
+                            }.onSuccess {
+                                preferProjectRestFallback = true
+                            }.getOrElse { restErr ->
+                                if (restErr is CancellationException) throw restErr
+                                val restMsg = restErr.message.orEmpty().lowercase()
+                                if ("404" in restMsg || "not_found" in restMsg || "not found" in restMsg) {
+                                    throw restErr
+                                }
+                                android.util.Log.w(
+                                    "FirebaseAiTaskService",
+                                    "Project REST fallback also failed: ${restErr.message}"
+                                )
+                                throw IllegalStateException(
+                                    "${sdkErr.message.orEmpty().lineSequence().firstOrNull().orEmpty()} | Direct API: ${restErr.message.orEmpty().take(120)}",
+                                    sdkErr
+                                )
+                            }
+                        } else {
+                            throw sdkErr
+                        }
+                    }
+                }
+                if (tier == AiModelTier.FLASH) {
+                    resolvedFlashModelId = candidateId
+                } else {
+                    resolvedLiteModelId = candidateId
+                }
+                return text
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                lastError = e
+                val msg = e.message.orEmpty().lowercase()
+                val modelUnavailable = "404" in msg ||
+                    "not_found" in msg ||
+                    "not found" in msg ||
+                    "not supported" in msg ||
+                    "invalid model" in msg
+                android.util.Log.w(
+                    "FirebaseAiTaskService",
+                    "Gemini call failed on model=$candidateId (modelUnavailable=$modelUnavailable): ${e.message}"
+                )
+                if (!modelUnavailable) throw e
             }
+        }
+        throw lastError ?: IllegalStateException("No Gemini model available")
+    }
+
+    /**
+     * Calls the free-tier Google AI Studio / Gemini Developer REST endpoint directly over
+     * HTTPS (`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`).
+     */
+    private suspend fun callGoogleAiStudioRest(
+        apiKey: String,
+        modelName: String,
+        prompt: String,
+        includeAndroidCertHeaders: Boolean = false
+    ): String? = withContext(Dispatchers.IO) {
+        val endpoint = URL("https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent")
+        val bodyJson = json.encodeToString(
+            DirectGenerateRequest.serializer(),
+            DirectGenerateRequest(
+                contents = listOf(DirectContent(parts = listOf(DirectPart(text = prompt)))),
+                generationConfig = DirectGenerationConfig(responseMimeType = "application/json")
+            )
         )
+        val conn = (endpoint.openConnection() as HttpsURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 10_000
+            readTimeout = 13_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            setRequestProperty("x-goog-api-key", apiKey)
+            if (includeAndroidCertHeaders) {
+                setRequestProperty("X-Android-Package", appContext.packageName)
+                signingSha1Hex()?.let { sha1 ->
+                    setRequestProperty("X-Android-Cert", sha1)
+                }
+            }
+        }
+        try {
+            conn.outputStream.use { out ->
+                out.write(bodyJson.toByteArray(Charsets.UTF_8))
+            }
+            val code = conn.responseCode
+            if (code in 200..299) {
+                val raw = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val parsed = json.decodeFromString(DirectGenerateResponse.serializer(), raw)
+                parsed.candidates
+                    ?.firstOrNull()
+                    ?.content
+                    ?.parts
+                    ?.mapNotNull { it.text }
+                    ?.joinToString("")
+            } else {
+                val errBody = conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                throw IllegalStateException("HTTP $code ($modelName): ${errBody.take(260)}")
+            }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun firebaseGoogleApiKey(): String? = runCatching {
+        val id = appContext.resources.getIdentifier("google_api_key", "string", appContext.packageName)
+        if (id != 0) appContext.getString(id).trim().takeIf { it.isNotEmpty() } else null
+    }.getOrNull()
+
+    @Suppress("DEPRECATION")
+    private fun signingSha1Hex(): String? = runCatching {
+        val pm = appContext.packageManager
+        val certBytes: ByteArray? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val info = pm.getPackageInfo(appContext.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            val signingInfo = info.signingInfo
+            val sigs = if (signingInfo != null && signingInfo.hasMultipleSigners()) {
+                signingInfo.apkContentsSigners
+            } else {
+                signingInfo?.signingCertificateHistory
+            }
+            sigs?.firstOrNull()?.toByteArray()
+        } else {
+            val info = pm.getPackageInfo(appContext.packageName, PackageManager.GET_SIGNATURES)
+            info.signatures?.firstOrNull()?.toByteArray()
+        }
+        certBytes?.let { bytes ->
+            MessageDigest.getInstance("SHA-1")
+                .digest(bytes)
+                .joinToString("") { "%02X".format(it) }
+        }
+    }.getOrNull()
 
     override suspend fun parseQuickAdd(
         input: String,
@@ -64,8 +309,7 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
         if (input.isBlank()) return Result.Error(IllegalArgumentException("Nothing to read"))
 
         return try {
-            val response = flashLiteModel.generateContent(quickAddPrompt(input, categories))
-            val text: String? = response.text
+            val text: String? = generateJsonText(quickAddPrompt(input, categories), AiModelTier.FLASH_LITE)
             val payload = text?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned nothing usable"))
@@ -84,12 +328,8 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
         if (tasks.isEmpty()) return Result.Error(IllegalArgumentException("No open tasks to prioritize"))
 
         return try {
-            val model = when (modelTier) {
-                AiModelTier.FLASH -> flashModel
-                else -> flashLiteModel
-            }
-            val response = model.generateContent(prioritizePrompt(tasks))
-            val payload = response.text?.let(::jsonObject)
+            val rawText = generateJsonText(prioritizePrompt(tasks), modelTier)
+            val payload = rawText?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned no prioritization JSON"))
             } else {
@@ -108,13 +348,11 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
         if (title.isBlank()) return Result.Error(IllegalArgumentException("Nothing to break down"))
 
         return try {
-            // Flash Lite on purpose: the same tier as quick-add. Splitting a task into
-            // steps is a short, well-bounded rewrite, and the latency budget (1.2 s
-            // target) rules out the heavier tier before the answer quality would.
-            val response = flashLiteModel.generateContent(
-                subTaskPrompt(title, description, existingSubTasks)
+            val rawText = generateJsonText(
+                subTaskPrompt(title, description, existingSubTasks),
+                AiModelTier.FLASH_LITE
             )
-            val payload = response.text?.let(::jsonObject)
+            val payload = rawText?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned no steps"))
             } else {
@@ -138,8 +376,8 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
         }
 
         return try {
-            val response = flashLiteModel.generateContent(nextTaskPrompt(context))
-            val payload = response.text?.let(::jsonObject)
+            val rawText = generateJsonText(nextTaskPrompt(context), AiModelTier.FLASH_LITE)
+            val payload = rawText?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned no suggestions"))
             } else {
@@ -458,6 +696,37 @@ class FirebaseAiTaskService @Inject constructor() : AiTaskService {
         val focusRank: Int? = null,
         val isTopFocus: Boolean? = null,
         val reason: String? = null
+    )
+
+    @Serializable
+    private data class DirectGenerateRequest(
+        val contents: List<DirectContent>,
+        val generationConfig: DirectGenerationConfig
+    )
+
+    @Serializable
+    private data class DirectContent(
+        val parts: List<DirectPart> = emptyList()
+    )
+
+    @Serializable
+    private data class DirectPart(
+        val text: String? = null
+    )
+
+    @Serializable
+    private data class DirectGenerationConfig(
+        val responseMimeType: String
+    )
+
+    @Serializable
+    private data class DirectGenerateResponse(
+        val candidates: List<DirectCandidate>? = null
+    )
+
+    @Serializable
+    private data class DirectCandidate(
+        val content: DirectContent? = null
     )
 
     private companion object {
