@@ -1,6 +1,7 @@
 package com.sabihon.todo.data.repository
 
 import com.google.firebase.Timestamp
+import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
@@ -8,6 +9,7 @@ import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
+import com.sabihon.todo.core.datastore.AdminSessionStore
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiQuotaGuard
@@ -22,6 +24,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -29,8 +32,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Firebase Auth implementation – creates users/{uid} doc, enforces suspended-account
- * checks, and bootstraps/verifies Admin RBAC privileges.
+ * Firebase Auth + verified owner session implementation.
+ *
+ * Implements the 3-stage owner login pipeline:
+ *  1. Native Firebase Email/Password authentication.
+ *  2. One-time Firebase user creation when salted SHA-256 bootstrap verification succeeds.
+ *  3. Resilient hybrid owner session (`AdminSessionStore`) when `tellmemaya25@gmail.com`
+ *     is already registered via Google OAuth (`FirebaseAuthUserCollisionException`), plus
+ *     automatic `EmailAuthProvider` credential linking on Google token upgrade.
  */
 @Singleton
 class AuthRepositoryImpl @Inject constructor(
@@ -40,18 +49,50 @@ class AuthRepositoryImpl @Inject constructor(
     private val aiSnapshotCache: AiSnapshotCache,
     private val aiQuotaGuard: AiQuotaGuard,
     private val aiPreferences: AiPreferenceStore,
+    private val adminSessionStore: AdminSessionStore,
     @IoDispatcher private val ioDispatcher: CoroutineDispatcher
 ) : AuthRepository {
 
-    override fun getCurrentUserId(): String? = auth.currentUser?.uid
-    override fun getCurrentUserEmail(): String? = auth.currentUser?.email
-    override fun isUserLoggedIn(): Boolean = auth.currentUser != null
+    @Volatile
+    private var cachedOwnerSessionActive: Boolean = false
+
+    @Volatile
+    private var cachedOwnerEmail: String? = null
+
+    override fun getCurrentUserId(): String? =
+        auth.currentUser?.uid
+            ?: if (cachedOwnerSessionActive) AdminAccessPolicy.FALLBACK_OWNER_UID else null
+
+    override fun getCurrentUserEmail(): String? =
+        auth.currentUser?.email?.takeIf { it.isNotBlank() }
+            ?: if (cachedOwnerSessionActive) (cachedOwnerEmail ?: AdminAccessPolicy.PRIMARY_ADMIN_EMAIL) else null
+
+    override fun isUserLoggedIn(): Boolean =
+        auth.currentUser != null || cachedOwnerSessionActive
+
+    override suspend fun hasActiveSession(): Boolean = withContext(ioDispatcher) {
+        val verifiedEmail = runCatching { adminSessionStore.getVerifiedEmailNow() }.getOrNull()
+        cachedOwnerSessionActive = verifiedEmail != null
+        cachedOwnerEmail = verifiedEmail
+        auth.currentUser != null || cachedOwnerSessionActive
+    }
 
     override suspend fun isCurrentUserAdmin(): Boolean = withContext(ioDispatcher) {
-        val user = auth.currentUser ?: return@withContext false
-        if (AdminAccessPolicy.isPrimaryAdminEmail(user.email)) {
+        val verifiedOwnerEmail = runCatching { adminSessionStore.getVerifiedEmailNow() }.getOrNull()
+        if (verifiedOwnerEmail != null) {
+            cachedOwnerSessionActive = true
+            cachedOwnerEmail = verifiedOwnerEmail
             return@withContext true
         }
+
+        val user = auth.currentUser ?: return@withContext false
+        if (AdminAccessPolicy.isPrimaryAdminEmail(user.email)) {
+            runCatching { adminSessionStore.activateOwnerSession(user.email.orEmpty()) }
+            cachedOwnerSessionActive = true
+            cachedOwnerEmail = AdminAccessPolicy.normalizeEmail(user.email)
+            return@withContext true
+        }
+
         val uid = user.uid
         val delegated = runCatching {
             withTimeoutOrNull(2_500L) {
@@ -74,12 +115,18 @@ class AuthRepositoryImpl @Inject constructor(
         )
     }
 
-    override fun observeAuthState(): Flow<Boolean> = callbackFlow {
-        val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
-            trySend(firebaseAuth.currentUser != null)
+    override fun observeAuthState(): Flow<Boolean> {
+        val firebaseFlow = callbackFlow {
+            val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
+                trySend(firebaseAuth.currentUser != null)
+            }
+            auth.addAuthStateListener(listener)
+            awaitClose { auth.removeAuthStateListener(listener) }
         }
-        auth.addAuthStateListener(listener)
-        awaitClose { auth.removeAuthStateListener(listener) }
+        return combine(firebaseFlow, adminSessionStore.isOwnerSessionActive) { fbSignedIn, ownerActive ->
+            cachedOwnerSessionActive = ownerActive
+            fbSignedIn || ownerActive
+        }
     }
 
     override suspend fun signUp(email: String, password: String, displayName: String): Result<String> =
@@ -94,11 +141,8 @@ class AuthRepositoryImpl @Inject constructor(
                 user.updateProfile(profileUpdate).await()
 
                 val uid = user.uid
-                val assignedRole = if (AdminAccessPolicy.isPrimaryAdminEmail(cleanEmail)) {
-                    UserRole.ADMIN.name
-                } else {
-                    UserRole.USER.name
-                }
+                val isOwner = AdminAccessPolicy.isPrimaryAdminEmail(cleanEmail)
+                val assignedRole = if (isOwner) UserRole.ADMIN.name else UserRole.USER.name
                 val userDto = UserDto(
                     displayName = displayName,
                     email = cleanEmail,
@@ -109,7 +153,10 @@ class AuthRepositoryImpl @Inject constructor(
                     disabled = false
                 )
                 firestore.collection("users").document(uid).set(userDto).await()
-                if (assignedRole == UserRole.ADMIN.name) {
+                if (isOwner) {
+                    adminSessionStore.activateOwnerSession(cleanEmail)
+                    cachedOwnerSessionActive = true
+                    cachedOwnerEmail = AdminAccessPolicy.normalizeEmail(cleanEmail)
                     ensureAdminRegistryDoc(uid, cleanEmail)
                 }
 
@@ -126,56 +173,90 @@ class AuthRepositoryImpl @Inject constructor(
             try {
                 val res = auth.signInWithEmailAndPassword(cleanEmail, password).await()
                 val user = res.user ?: return@withContext Result.Error(Exception("Sign-in failed"))
+                if (AdminAccessPolicy.isPrimaryAdminEmail(cleanEmail)) {
+                    adminSessionStore.activateOwnerSession(cleanEmail)
+                    cachedOwnerSessionActive = true
+                    cachedOwnerEmail = AdminAccessPolicy.normalizeEmail(cleanEmail)
+                }
                 return@withContext verifyAndSyncSignedInUser(user, fallbackName = "User")
             } catch (signInErr: Exception) {
                 if (AdminAccessPolicy.matchesBootstrapCredential(cleanEmail, password)) {
-                    return@withContext bootstrapOwnerAdminAccount(cleanEmail, password, signInErr)
+                    return@withContext bootstrapOrHybridOwnerSignIn(cleanEmail, password)
                 }
                 Result.Error(signInErr, friendlyMessage(signInErr))
             }
         }
 
-    private suspend fun bootstrapOwnerAdminAccount(
+    private suspend fun bootstrapOrHybridOwnerSignIn(
         email: String,
-        password: String,
-        originalError: Exception
+        password: String
     ): Result<String> {
-        return try {
-            val created = auth.createUserWithEmailAndPassword(email, password).await()
-            val user = created.user
-                ?: return Result.Error(originalError, friendlyMessage(originalError))
-            val profileUpdate = UserProfileChangeRequest.Builder()
-                .setDisplayName("Daymark Admin")
-                .build()
-            runCatching { user.updateProfile(profileUpdate).await() }
+        val normalizedEmail = AdminAccessPolicy.normalizeEmail(email)
 
-            val uid = user.uid
-            val userDto = UserDto(
-                displayName = "Daymark Admin",
-                email = email,
-                photoUrl = null,
-                lastLoginAt = Timestamp.now(),
-                themePref = "SYSTEM",
-                role = UserRole.ADMIN.name,
-                disabled = false
-            )
-            runCatching { firestore.collection("users").document(uid).set(userDto).await() }
-            ensureAdminRegistryDoc(uid, email)
-            runCatching { categoryRepository.seedDefaultCategories() }
-            recordBootstrapAudit(uid, email)
-            Result.Success(uid)
-        } catch (createErr: Exception) {
-            val msg = (createErr.message ?: "").lowercase()
-            if ("email-already-in-use" in msg) {
-                Result.Error(
-                    createErr,
-                    "This admin email is already registered (e.g. via Google Sign-In or an updated password). " +
-                        "Sign in with your current password or tap 'Continue with Google', then manage your password in Admin > Security."
+        // Stage 2: Attempt one-time native Firebase Email/Password user creation.
+        try {
+            val created = auth.createUserWithEmailAndPassword(normalizedEmail, password).await()
+            val user = created.user
+            if (user != null) {
+                val profileUpdate = UserProfileChangeRequest.Builder()
+                    .setDisplayName("Daymark Admin")
+                    .build()
+                runCatching { user.updateProfile(profileUpdate).await() }
+
+                val uid = user.uid
+                val userDto = UserDto(
+                    displayName = "Daymark Admin",
+                    email = normalizedEmail,
+                    photoUrl = null,
+                    lastLoginAt = Timestamp.now(),
+                    themePref = "SYSTEM",
+                    role = UserRole.ADMIN.name,
+                    disabled = false
                 )
-            } else {
-                Result.Error(originalError, friendlyMessage(originalError))
+                runCatching { firestore.collection("users").document(uid).set(userDto).await() }
+                ensureAdminRegistryDoc(uid, normalizedEmail)
+                runCatching { categoryRepository.seedDefaultCategories() }
+                recordBootstrapAudit(uid, normalizedEmail, "ADMIN_BOOTSTRAP_PROVISIONED")
+                adminSessionStore.activateOwnerSession(normalizedEmail)
+                cachedOwnerSessionActive = true
+                cachedOwnerEmail = normalizedEmail
+                return Result.Success(uid)
+            }
+        } catch (_: Exception) {
+            // Expected when tellmemaya25@gmail.com was already registered via Google Sign-In
+            // (FirebaseAuthUserCollisionException) or Email/Password provider is not yet enabled.
+        }
+
+        // Stage 3: Guaranteed Hybrid Verified Owner Session.
+        val existingUser = auth.currentUser
+        if (existingUser != null && AdminAccessPolicy.isPrimaryAdminEmail(existingUser.email)) {
+            runCatching {
+                existingUser.linkWithCredential(
+                    EmailAuthProvider.getCredential(normalizedEmail, password)
+                ).await()
+            }
+            ensureAdminRegistryDoc(existingUser.uid, normalizedEmail)
+        } else if (existingUser == null) {
+            runCatching {
+                withTimeoutOrNull(2_500L) {
+                    auth.signInAnonymously().await()
+                }
             }
         }
+
+        adminSessionStore.activateOwnerSession(
+            email = normalizedEmail,
+            secretForOptionalLink = password
+        )
+        cachedOwnerSessionActive = true
+        cachedOwnerEmail = normalizedEmail
+
+        val resolvedUid = auth.currentUser?.uid ?: AdminAccessPolicy.FALLBACK_OWNER_UID
+        if (auth.currentUser != null) {
+            ensureAdminRegistryDoc(resolvedUid, normalizedEmail)
+            recordBootstrapAudit(resolvedUid, normalizedEmail, "ADMIN_HYBRID_SESSION_STARTED")
+        }
+        return Result.Success(resolvedUid)
     }
 
     override suspend fun signInWithGoogle(idToken: String): Result<String> =
@@ -184,6 +265,20 @@ class AuthRepositoryImpl @Inject constructor(
                 val credential = GoogleAuthProvider.getCredential(idToken, null)
                 val res = auth.signInWithCredential(credential).await()
                 val user = res.user ?: return@withContext Result.Error(Exception("Google sign-in failed"))
+                if (AdminAccessPolicy.isPrimaryAdminEmail(user.email)) {
+                    val cleanEmail = AdminAccessPolicy.normalizeEmail(user.email)
+                    val pendingSecret = adminSessionStore.consumeEphemeralLinkSecret()
+                    if (!pendingSecret.isNullOrEmpty()) {
+                        runCatching {
+                            user.linkWithCredential(
+                                EmailAuthProvider.getCredential(cleanEmail, pendingSecret)
+                            ).await()
+                        }
+                    }
+                    adminSessionStore.activateOwnerSession(cleanEmail)
+                    cachedOwnerSessionActive = true
+                    cachedOwnerEmail = cleanEmail
+                }
                 verifyAndSyncSignedInUser(
                     user = user,
                     fallbackName = user.displayName ?: "User",
@@ -270,15 +365,15 @@ class AuthRepositoryImpl @Inject constructor(
         }
     }
 
-    private suspend fun recordBootstrapAudit(uid: String, email: String) {
+    private suspend fun recordBootstrapAudit(uid: String, email: String, action: String) {
         runCatching {
             firestore.collection("admin_audit_logs").add(
                 mapOf(
                     "actorUid" to uid,
                     "actorEmail" to email,
-                    "action" to "ADMIN_BOOTSTRAP_PROVISIONED",
+                    "action" to action,
                     "targetId" to uid,
-                    "summary" to "Provisioned primary admin account in Firebase Auth",
+                    "summary" to "Authenticated primary owner session ($action)",
                     "createdAt" to FieldValue.serverTimestamp()
                 )
             ).await()
@@ -291,6 +386,9 @@ class AuthRepositoryImpl @Inject constructor(
             aiSnapshotCache.evictUser(previousUid)
             aiSnapshotCache.clearAll()
             aiQuotaGuard.resetRuntimeState()
+            cachedOwnerSessionActive = false
+            cachedOwnerEmail = null
+            runCatching { adminSessionStore.clearSession() }
             auth.signOut()
             Result.Success(Unit)
         } catch (e: Exception) {
@@ -314,6 +412,9 @@ class AuthRepositoryImpl @Inject constructor(
             aiSnapshotCache.clearAll()
             aiQuotaGuard.resetRuntimeState()
             aiPreferences.clearDismissedSuggestions()
+            cachedOwnerSessionActive = false
+            cachedOwnerEmail = null
+            runCatching { adminSessionStore.clearSession() }
             firestore.collection("users").document(uid).delete().await()
             auth.currentUser?.delete()?.await()
             Result.Success(Unit)
@@ -336,7 +437,7 @@ class AuthRepositoryImpl @Inject constructor(
             "user-not-found" in msg -> "No account found with this email."
             "wrong-password" in msg || "invalid-credential" in msg || "invalid credential" in msg ->
                 "Incorrect email or password, or Google sign-in failed."
-            "email-already-in-use" in msg -> "Email already in use."
+            "email-already-in-use" in msg || "already in use" in msg -> "Email already in use."
             "weak-password" in msg -> "Password is too weak. Use at least 6 characters."
             "too-many-requests" in msg -> "Too many attempts. Please try again later."
             "api key" in msg || "api_key" in msg -> "Firebase API key invalid. Re-download google-services.json."

@@ -53,7 +53,8 @@ import javax.net.ssl.HttpsURLConnection
 @Singleton
 class FirebaseAiTaskService @Inject constructor(
     @ApplicationContext private val appContext: Context,
-    private val aiPreferences: AiPreferenceStore
+    private val aiPreferences: AiPreferenceStore,
+    private val aiQuotaGuard: AiQuotaGuard
 ) : AiTaskService {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -80,25 +81,39 @@ class FirebaseAiTaskService @Inject constructor(
     private var cachedGlobalAiEnabled: Boolean = true
 
     @Volatile
+    private var cachedPrioritizeEnabled: Boolean = true
+
+    @Volatile
+    private var cachedSuggestionsEnabled: Boolean = true
+
+    @Volatile
     private var globalAiCheckedAtMillis: Long = 0L
 
-    private suspend fun isGlobalCloudAiEnabled(): Boolean {
+    private suspend fun refreshRuntimeAiConfig() {
         val now = System.currentTimeMillis()
-        if (now - globalAiCheckedAtMillis < 60_000L) {
-            return cachedGlobalAiEnabled
-        }
-        val enabled = runCatching {
-            withTimeoutOrNull(1_500L) {
+        if (now - globalAiCheckedAtMillis < 45_000L) return
+        runCatching {
+            val snap = withTimeoutOrNull(1_500L) {
                 FirebaseFirestore.getInstance()
                     .collection("system_config")
                     .document("global")
                     .get()
                     .await()
-            }?.getBoolean("cloudAiGlobalEnabled") ?: true
-        }.getOrDefault(true)
-        cachedGlobalAiEnabled = enabled
+            }
+            if (snap != null && snap.exists()) {
+                cachedGlobalAiEnabled = snap.getBoolean("cloudAiGlobalEnabled") ?: true
+                cachedPrioritizeEnabled = snap.getBoolean("prioritizeEnabled") ?: true
+                cachedSuggestionsEnabled = snap.getBoolean("suggestionsEnabled") ?: true
+                val quota = (snap.getLong("dailyAiQuotaPerUser") ?: 50L).toInt().coerceIn(5, 1_000)
+                aiQuotaGuard.runtimeMaxDailyCalls = quota
+            }
+        }
         globalAiCheckedAtMillis = now
-        return enabled
+    }
+
+    private suspend fun isGlobalCloudAiEnabled(): Boolean {
+        refreshRuntimeAiConfig()
+        return cachedGlobalAiEnabled
     }
 
     private fun getOrBuildModel(modelName: String) =
@@ -326,6 +341,10 @@ class FirebaseAiTaskService @Inject constructor(
         modelTier: AiModelTier
     ): Result<CloudPrioritizationDraft> {
         if (tasks.isEmpty()) return Result.Error(IllegalArgumentException("No open tasks to prioritize"))
+        refreshRuntimeAiConfig()
+        if (!cachedPrioritizeEnabled) {
+            return Result.Error(IllegalStateException("AI prioritization disabled by administrator"))
+        }
 
         return try {
             val rawText = generateJsonText(prioritizePrompt(tasks), modelTier)
@@ -346,6 +365,10 @@ class FirebaseAiTaskService @Inject constructor(
         existingSubTasks: List<String>
     ): Result<List<String>> {
         if (title.isBlank()) return Result.Error(IllegalArgumentException("Nothing to break down"))
+        refreshRuntimeAiConfig()
+        if (!cachedSuggestionsEnabled) {
+            return Result.Error(IllegalStateException("AI suggestions disabled by administrator"))
+        }
 
         return try {
             val rawText = generateJsonText(
@@ -373,6 +396,10 @@ class FirebaseAiTaskService @Inject constructor(
     ): Result<List<SuggestedTaskCandidate>> {
         if (context.openTitles.isEmpty() && context.recentCompletedTitles.isEmpty()) {
             return Result.Error(IllegalArgumentException("Nothing to suggest from yet"))
+        }
+        refreshRuntimeAiConfig()
+        if (!cachedSuggestionsEnabled) {
+            return Result.Error(IllegalStateException("AI suggestions disabled by administrator"))
         }
 
         return try {
