@@ -1,6 +1,6 @@
 # Daymark — Calendar in the Activity Tab (System Design + Implementation Plan)
 
-**Status:** P0 (model plumbing) and P1 (layout engine + tests) shipped — see §10. P2+ not started.
+**Status:** P0 (model plumbing), P1 (layout engine + tests) and P2 (Activity shell + calendar screen) shipped — see §10. P3+ not started.
 **Branch base:** `main` @ `bae8547`
 **Inspiration:** TickTick day calendar (`image-1`), Structured day timeline (`image-2`), app-switcher ref (`image-3`)
 
@@ -189,50 +189,62 @@ enum class ActivitySegment { FEED, CALENDAR }
 
 ```kotlin
 data class CalendarUiState(
+    val today: LocalDate = LocalDate.now(),
     val selectedDate: LocalDate = LocalDate.now(),
-    val day: TimelineDay = TimelineDay.Empty,   // TimelineDay(emptyList(), emptyList(), null)
-    val isLoading: Boolean = false,
-    val daysWithTasks: Set<Long> = emptySet()   // for MonthlyCalendarSheet dots
+    val weekDays: List<WeekDay> = emptyList(),
+    val day: TimelineDay = TimelineDay(),
+    val isLoading: Boolean = true,
+    val userInitials: String = "DM",
+    val userPhotoUrl: String? = null,
+    val message: String? = null
 )
 ```
 
 Recompute triggers: the `allTasks` flow, `selectedDate`, `ZoneId.systemDefault()`. A 1-minute ticker exists **only** for the now-line and lives inside the composable (§6.6), never in this state — a per-minute `StateFlow` emission would recompose the whole day.
 
-`daysWithTasks` is already computed for Home's week strip; reuse that derivation rather than adding a second one.
+`buildWeek` derives the strip's busy dots from the same task list, so the calendar shows the
+same dots Home does without a second query.
 
-### 4.3 Screen split (`HistoryScreen` → `ActivityScreen` + bodies)
+### 4.3 Screen composition (`ActivityScreen` + a header slot)
 
-Today:
+The plan called for splitting `HistoryScreen` into a shell and a feed body. **P2 shipped a
+smaller change that achieves the same thing with far less risk:** `HistoryScreen` keeps its
+scaffold, header and list exactly as they are, and gains one optional parameter:
 
-```
-HistoryScreen            Scaffold + snackbar + LazyColumn
-  ├ item  BrandHeader
-  ├ item  "Your activity." intro block        L92–105, L107–135
-  └ items FeedRow…                          L221
-```
-
-After P2:
-
-```
-ActivityScreen(onTaskClick, onProfileClick)          ui/activity/ActivityScreen.kt  (new)
-  Scaffold
-    ├ BrandHeader                                    unchanged composable
-    ├ title block                                    per-segment copy
-    ├ SegmentControl([Feed][Calendar])
-    ├ snackbar host
-    └ when (segment)
-        FEED     -> ActivityFeedBody(...)             extracted from HistoryScreen
-        CALENDAR -> CalendarScreen(...)               ui/activity/CalendarScreen.kt (new)
-
-ActivityFeedBody      verticalScroll-free LazyColumn, existing item keys, existing FeedRow/EmptyFeed
-CalendarScreen        LazyColumn: WeekStrip, Anytime band, hour rows, gap rows
+```kotlin
+headerExtra: (@Composable () -> Unit)? = null   // rendered after the intro item
 ```
 
-`HistoryScreen.kt` survives as a thin wrapper (or is renamed outright — the file is only reachable from `MainTabsScreen.kt` page 2 and from `BottomNavBar`'s `"activity"` route match, so there is nothing else to update).
+`ActivityScreen` owns the segment and passes the same `ActivitySegmentBar` to both bodies:
 
-**Per-segment copy.** The feed's intro ("A look back at what you've moved forward.") is wrong above a calendar. In calendar mode the intro becomes the date line ("Your day." + `Thu 29 Oct`); in feed mode it stays exactly as it is today.
+```
+ActivityScreen(onTaskClick, onProfileClick)            ui/activity/ActivityScreen.kt
+  segment: rememberSaveable { "FEED" }
+  when (segment)
+    FEED     -> HistoryScreen(…, headerExtra = segmentBar)    unchanged file + one slot
+    CALENDAR -> CalendarScreen(…, headerExtra = segmentBar)   ui/activity/CalendarScreen.kt
+```
 
-**Deep links and `onNavigateToHistory`.** `MainTabsScreen` already routes Home's and Settings' "history" actions to `goToPage(2)`. Those should open the segment the user last used (D6), not force `FEED` — with one exception: any future entry point that means "the log" should pass `ActivitySegment.FEED` explicitly. Keep the pager API as `goToPage(2)` and let `ActivityScreen` restore the persisted segment.
+Why this is better than the planned split:
+
+- The feed's 340-line scaffold/list is **not touched**, so the highest-severity risk in §9
+  (breaking how the log scrolls) is removed rather than mitigated.
+- Each body keeps its own `Scaffold`, scroll state and snackbar host, which is exactly what
+  D2 asks for. Nothing is shared but the segment value.
+- The switcher still sits *inside* the scrolling content of each body, in the same place on
+  both screens, instead of floating above the header.
+
+If the two headers ever drift far enough apart to be worth merging, the split can still
+happen later — it is a refactor with no user-visible effect, not a dependency.
+
+**Per-segment copy.** The feed's intro ("A look back at what you've moved forward.") is
+wrong above a calendar, so calendar mode has its own intro: *"Your day."* plus a one-line
+summary (`Today · Thu 29 Oct · 4 blocks · 2h 15m planned`).
+
+**Deep links and `onNavigateToHistory`.** `MainTabsScreen` routes Home's and Settings'
+"history" actions to `goToPage(2)`; that now lands on whatever segment Activity opens in.
+P3 adds the remembered preference; until then the segment resets to `FEED`, which is what
+those entry points mean anyway.
 
 ---
 
@@ -388,20 +400,37 @@ This keeps virtualisation (off-screen hours cost nothing) **and** lets a `Gap` r
 ### 6.4 Block content (first segment only)
 
 ```
-●────── 09:00 - 09:30 · 30m          ← 12.sp, onSurfaceVariant
-  Answer Emails                     ← 14.sp semibold, maxLines 2, ellipsis
-  ⌁ Work at Home · 3/4 steps        ← 11.sp, category + sub-task progress (optional)
-                                ○   ← CircleCheckbox, right-aligned, 48 dp target
+Answer Emails                       ← 12.sp semibold, maxLines 2, ellipsis (what P2 ships)
+09:00 - 09:30 · 30m                 ← 10.sp muted, only when the slice is ≥ 40 min
+                            ●  ○    ← priority dot (urgent/high only) + open/done mark
 ```
 
-- Whole block: `clickable` → task detail; `combinedClickable(onLongClick)` → the existing action sheet (`showActionSheet` + `selectedTask`), so long-press behaves identically to the feed and to Home.
-- Checkbox: `onCheckedChange` **must** dispatch the existing toggle-complete use case — never write `isCompleted` locally. `ToggleCompleteUseCase` refuses while sub-tasks are open, and the rest of the app already relies on that answer.
+- Whole block: `clickable` → task detail. **The calendar is read-only in P2**: no inline
+  checkbox and no long-press sheet yet. Both need a 48 dp target inside a 32 dp block, and
+  getting that wrong is worse than not having it — they are P4 items (item 21).
+- The open/done mark is a 14 dp circle: filled `AccentBlue` when complete, hairline
+  `cardBorder` when open. Decorative (`contentDescription` comes from the block), so it
+  cannot be a stale interactive control.
+- When inline completion lands, `onCheckedChange` **must** dispatch the existing
+  toggle-complete use case — never write `isCompleted` locally. `ToggleCompleteUseCase`
+  refuses while sub-tasks are open, and the rest of the app already relies on that answer.
 
 ### 6.5 Calendar header
 
-`WeekStrip` (`core/ui/components/WeekStrip.kt`, already shared and already imported by `DockedWeeklyCalendarBar`) with `compact = false`, plus a month label that opens `MonthlyCalendarSheet` for long jumps.
+**Shipped in P2:** `WeekStrip` (`core/ui/components/WeekStrip.kt`, already shared and already
+imported by `DockedWeeklyCalendarBar`) with `compact = false`, flanked by `‹` `›` buttons that
+shift the whole strip a week at a time (`onShiftWeek`), plus a *"Back to today"* chip that
+appears whenever the selected day is not today. That covers day-to-day and week-to-week
+movement with zero new dependencies.
 
-`MonthlyCalendarSheet` currently lives in `ui/home/HomeCalendarDock.kt` L279 but is already self-contained (`selectedDate`, `daysWithTasks`, `onSelectDate`, `onDismiss`). Move it to `core/ui/components/MonthCalendarSheet.kt` — a pure move, no behaviour change — so both Home and Activity use one sheet. One wart to fix while moving: it reads `remember { LocalDate.now() }` instead of accepting `today`, which makes it untestable and puts the clock inside a composable. Add a `today: LocalDate` parameter with a default.
+**Deferred to P4:** the month jump. `MonthlyCalendarSheet` lives in
+`ui/home/HomeCalendarDock.kt` L279 and is already self-contained (`selectedDate`,
+`daysWithTasks`, `onSelectDate`, `onDismiss`), so moving it to
+`core/ui/components/MonthCalendarSheet.kt` is a pure move — but it is a move inside a file
+that Home's dock depends on, and P2 was deliberately confined to additive changes. One wart
+to fix while moving: it reads `remember { LocalDate.now() }` instead of accepting `today`,
+which puts the clock inside a composable and makes it untestable. Add a `today: LocalDate`
+parameter with a default.
 
 ### 6.6 Now-line
 
@@ -493,20 +522,23 @@ val segment by viewModel.segment.collectAsStateWithLifecycle()
 | 8 | **`ui/activity/TimelineLayout.kt`** *(new)* | lanes, gaps, anytime, minute math | ✅ P1 | 3 h |
 | 9 | **`test/…/TimelineLayoutTest.kt`** *(new)* | 14 cases (§5) | ✅ P1 | 2 h |
 | 10 | `tools/junit_shim/*` *(new)* | offline JUnit subset + reflection runner | ✅ P1 | 30 m |
-| 11 | **`core/ui/components/MonthCalendarSheet.kt`** *(new)* | move from `HomeCalendarDock.kt` L279, add `today` param | P2 | 40 m |
-| 12 | `ui/home/HomeCalendarDock.kt` | delete the moved sheet, import the new one | P2 | 10 m |
-| 13 | **`ui/activity/ActivityScreen.kt`** *(new)* | scaffold, header, segment, body switch | P2 | 3 h |
-| 14 | `ui/history/HistoryScreen.kt` | split: keep the feed body, drop the scaffold/header | P2 | 2 h |
-| 15 | **`ui/activity/CalendarScreen.kt`** *(new)* | week strip, anytime band, hour rows, blocks, gap rows | P2 | 5 h |
-| 16 | **`ui/activity/CalendarViewModel.kt` + `CalendarUiState.kt`** *(new)* | selected date, `TimelineDay`, `daysWithTasks` | P2 | 2 h |
-| 17 | `ui/navigation/MainTabsScreen.kt` | page 2 → `ActivityScreen` | P2 | 15 m |
+| 11 | **`core/ui/components/MonthCalendarSheet.kt`** *(new)* | move from `HomeCalendarDock.kt` L279, add `today` param | P4 (deferred — week arrows cover navigation) | 40 m |
+| 12 | `ui/home/HomeCalendarDock.kt` | delete the moved sheet, import the new one | P4 (with item 11) | 10 m |
+| 13 | **`ui/activity/ActivityScreen.kt`** *(new)* | segment state + body switch | ✅ P2 | 1 h |
+| 14 | `ui/history/HistoryScreen.kt` | **one optional `headerExtra` slot instead of a split** (§4.3) | ✅ P2 | 15 m |
+| 15 | **`ui/activity/CalendarScreen.kt`** *(new)* | week strip, anytime band, hour rows, blocks, gap rows | ✅ P2 | 5 h |
+| 16 | **`ui/activity/CalendarViewModel.kt` + `CalendarUiState.kt`** *(new)* | selected date, `TimelineDay`, week strip | ✅ P2 | 2 h |
+| 17 | `ui/navigation/MainTabsScreen.kt` | page 2 → `ActivityScreen` | ✅ P2 | 15 m |
 | 18 | **`core/datastore/ActivityViewPreferences.kt`** *(new)* | store | P3 | 30 m |
 | 19 | `ui/profile/ProfileViewModel.kt` | expose + set | P3 | 30 m |
 | 20 | `ui/settings/SettingsScreen.kt` | `Activity opens` row + sheet | P3 | 1 h |
-| 21 | `ui/activity/*` | `+N more`, gap tap-to-expand, now-line, a11y, auto-scroll | P4 | 3 h |
-| 22 | `docs/` (this file) | keep updated | — | — |
+| 21 | `ui/activity/*` | `+N more`, gap tap-to-expand, now-line, inline complete, dashed rail, a11y | P4 | 4 h |
+| 22 | **`ui/activity/ActivitySegmentBar.kt`** *(new)* | `[Feed][Calendar]` pill, `Role.Tab` | ✅ P2 | 40 m |
+| 23 | **`ui/activity/TimelineLabels.kt`** *(new)* | hour / minute / duration text, 24 h | ✅ P2 | 20 m |
+| 24 | **`test/…/TimelineLabelsTest.kt`** *(new)* | 6 cases, incl. `1440 -> "24:00"` | ✅ P2 | 20 m |
+| 25 | `docs/` (this file) | keep updated | — | — |
 
-**Remaining ≈ 21–23 h** (P0 + P1's ~6 h are done). The `.kt` volume is small; the risk is concentrated in item 14 (splitting a 340-line screen without changing how it scrolls).
+**Remaining ≈ 8–10 h** (P0, P1 and P2 are done; P3 is preferences plumbing, P4 is polish). The risk that is left is concentrated in item 21 — the calendar's interactive details — not in wiring.
 
 ---
 
@@ -514,12 +546,12 @@ val segment by viewModel.segment.collectAsStateWithLifecycle()
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| **Splitting `HistoryScreen` changes feed behaviour** (scroll position, `rememberSaveable` state, snackbar host) | High | D2 hard rule: same item keys, same hoisted `LazyListState`, scaffold stays owned by `ActivityScreen`. Add a before/after manual check to the PR description |
+| **The feed's scroll/state breaks while adding the switcher** | High → **avoided** | P2 did not split `HistoryScreen`; it added one optional slot (§4.3). The only change to the feed is one extra list item when Activity passes it |
 | **Untimed tasks vanish from the calendar** | High | D5 Anytime band, pinned by tests #1 and #14 |
 | **`String?` → non-null regression** (already shipped 3×) | High | `durationMinutes` is `Int?` by design; run `tools/check_kotlin_syntax.py`, `tools/check_imports.py`, `tools/typecheck.py` (50 files) and `tools/check_write_parity.py` before pushing |
 | Pager swipe collides with a day-swipe gesture | High **if D10 is ignored** | No horizontal drag on the calendar body; day changes via `WeekStrip` taps only |
 | `minimalTaskMap` silently diverges from `toDto()` | Medium | Table row §3.2 + `tools/check_write_parity.py` (8 fields) + mapper round-trip test |
-| Segment switcher loses the other body's scroll position | Medium | One `rememberLazyListState` per segment, held in `ActivityScreen`; never shared |
+| Segment switcher loses the other body's scroll position | Medium | Each body owns its own scroll container, so there is no shared state to lose; only the segment is shared |
 | Per-minute recomposition jank | Medium | Now-line ticker is composable-local (§6.6) |
 | DST / timezone drift | Medium | `Instant.atZone(zone)` + injected `ZoneId` + tests #9–#10 |
 | A 15-minute block is unreadable at 16 dp | Medium | `minimumInteractiveComponentSize` + compact block variant (time on one line, title ellipsised) |
@@ -545,9 +577,9 @@ Tests: compile the test file against `tools/junit_shim/` and run `sandbox.Runner
 |---|---|---|
 | **P0 — Model** ✅ | items 1–7 | `durationMinutes` round-trips through `toDto()`/`toDomain()` and `minimalTaskMap`; old docs (no field) still parse; clamps hold. Shipped in PR #76: 28 assertions executed, parity check added |
 | **P1 — Engine** ✅ | items 8–10 | all 14 `TimelineLayoutTest` cases green, 0 Android imports in `TimelineLayout.kt`; typecheck 50 files |
-| **P2 — Activity shell + calendar** | items 11–17 | `[Feed][Calendar]` switches both ways with no scroll jump; the calendar renders a real day (anytime band, hour rows, blocks, gap rows); the feed is visually identical to today; the month sheet opens from both tabs; **Home is byte-for-byte unchanged** |
+| **P2 — Activity shell + calendar** ✅ | items 13–17, 22–24 | `[Feed][Calendar]` switches both ways; the calendar renders a real day (anytime band, hour rows, lane-packed blocks, gap rows, week paging, auto-scroll to the first block); the feed gains one `[Feed][Calendar]` pill and is otherwise unchanged; **Home is untouched**. Deferred to P4: month sheet, inline complete, now-line, tap-to-expand gaps |
 | **P3 — Remembered segment** | items 18–20 | the segment survives an app kill; the Settings row changes what opens; `typecheck.py` clean |
-| **P4 — Polish** | item 21 | gap tap expands; 4 concurrent tasks readable via `+N more`; now-line tracks the clock; TalkBack reads a block correctly; auto-scroll lands on the first block / now |
+| **P4 — Polish** | items 11, 12, 21 | month sheet moves to shared components and opens from both tabs; gap tap expands; 4 concurrent tasks readable via `+N more`; now-line tracks the clock; inline complete with a 48 dp target; TalkBack reads a block correctly |
 | **P5 — Optional** | duration chips in Add/Edit (§3.3); "compress empty hours" switch; opt-in day-swipe via `nestedScroll` | new tasks can set a real duration |
 
 P1 is merged on its own branch commit and safe to ship alone: it is invisible, pure and fully tested. P2 is the first user-visible phase and the only one with real regression risk.

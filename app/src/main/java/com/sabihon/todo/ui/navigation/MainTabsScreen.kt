@@ -20,7 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import com.sabihon.todo.core.ui.components.RoundedBottomNavBar
-import com.sabihon.todo.ui.history.HistoryScreen
+import com.sabihon.todo.ui.activity.ActivityScreen
 import com.sabihon.todo.ui.home.HomeScreen
 import com.sabihon.todo.ui.projects.ProjectsScreen
 import com.sabihon.todo.ui.settings.SettingsScreen
@@ -223,7 +223,7 @@ fun MainTabsScreen(
                         onAddRequestHandled = { addProjectRequest = 0 }
                     )
 
-                    2 -> HistoryScreen(
+                    2 -> ActivityScreen(
                         onTaskClick = { navController.navigate(Route.AddEditTask(it)) },
                         onProfileClick = { navController.navigate(Route.Profile) }
                     )

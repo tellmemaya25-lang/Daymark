@@ -97,7 +97,8 @@ java -cp "/tmp/t/classes.jar:/tmp/daymark-toolchain/stubs/stubs.jar:$KOTLIN_LIB/
   sandbox.Runner com.sabihon.todo.TimelineLayoutTest
 ```
 
-Last run: **24 passed, 0 failed** (`TimelineLayoutTest` 14, `MappersTest` 10).
+Last run: **30 passed, 0 failed** (`TimelineLayoutTest` 14, `MappersTest` 10,
+`TimelineLabelsTest` 6).
 
 One fidelity gap worth knowing: Kotlin will not resolve `import org.junit.Assert.*`
 against an object, so a test using the wildcard import has to be given explicit imports to
