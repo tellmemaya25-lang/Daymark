@@ -23,6 +23,16 @@ object InputSecurityValidator {
     const val MAX_WORK_TITLE_LENGTH = 200
     const val MAX_WORK_DESCRIPTION_LENGTH = 500
 
+    /**
+     * Bounds for [Task][com.sabihon.todo.domain.model.Task.durationMinutes].
+     *
+     * 5 minutes is the shortest block that can still show a title on the timeline;
+     * 12 hours is the longest a same-day block can be. Enforced on write so an
+     * imported or hand-edited document cannot produce a block that runs off the grid.
+     */
+    const val MIN_DURATION_MINUTES = 5
+    const val MAX_DURATION_MINUTES = 720
+
     private val SAFE_DOC_ID_CHAR_REGEX = Regex("""^[A-Za-z0-9._:\-]+$""")
     private val HEX_SQL_PAYLOAD_REGEX = Regex("""^0x[0-9a-f]{12,}$""")
     private val HEX_COLOR_REGEX = Regex("""^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$""")
@@ -131,6 +141,16 @@ object InputSecurityValidator {
 
     fun isSafeHexColor(hex: String?): Boolean =
         !hex.isNullOrBlank() && HEX_COLOR_REGEX.matches(hex.trim())
+
+    /**
+     * Clamps an untrusted duration into [MIN_DURATION_MINUTES]..[MAX_DURATION_MINUTES].
+     *
+     * Null survives as null: "no duration given" is a valid state that the timeline
+     * renders with its default block length, and must not be silently turned into a
+     * number here - that would make a task look like it was scheduled for 5 minutes.
+     */
+    fun clampDurationMinutes(raw: Int?): Int? =
+        raw?.coerceIn(MIN_DURATION_MINUTES, MAX_DURATION_MINUTES)
 
     /**
      * Detects classic SQL injection metacharacter/tautology/stacked-query patterns for

@@ -120,6 +120,10 @@ class TaskRepositoryImpl @Inject constructor(
             "priority" to task.priority.name,
             "dueAt" to task.dueAt?.let { Timestamp(Date(it)) },
             "reminderAt" to task.reminderAt?.let { Timestamp(Date(it)) },
+            // Kept in step with Task.toDto(): the fallback path must not drop a field the
+            // POJO path writes, or a task's block length vanishes only when the write
+            // had to fall back.
+            "durationMinutes" to InputSecurityValidator.clampDurationMinutes(task.durationMinutes),
             "completed" to task.isCompleted,
             "deleted" to task.isDeleted,
             "searchKeywords" to generateSearchKeywords(safeTitle),

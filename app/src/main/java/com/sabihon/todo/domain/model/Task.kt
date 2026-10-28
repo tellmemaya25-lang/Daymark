@@ -11,6 +11,19 @@ data class Task(
     val priority: Priority = Priority.MEDIUM,
     val dueAt: Long? = null, // epoch millis
     val reminderAt: Long? = null,
+
+    /**
+     * How long this task occupies, in minutes, for the timeline.
+     *
+     * Null means "not specified" - the timeline then falls back to a default block
+     * length rather than hiding the task. Nullable on purpose: documents written
+     * before this existed read back as null with no migration, and a task with only
+     * a start time is a real thing people have.
+     *
+     * Bounds live in [com.sabihon.todo.domain.security.InputSecurityValidator]:
+     * 5..720 minutes, applied on write.
+     */
+    val durationMinutes: Int? = null,
     val isCompleted: Boolean = false,
     val completedAt: Long? = null,
     val subTasks: List<SubTask> = emptyList(),

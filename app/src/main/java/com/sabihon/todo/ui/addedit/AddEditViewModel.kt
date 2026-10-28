@@ -715,6 +715,11 @@ class AddEditViewModel @Inject constructor(
                     dueAt = dueAt,
                     reminderAt = if (state.reminderEnabled) state.reminderAt ?: dueAt else null,
                     subTasks = state.subTasks,
+                    // Carried over from the stored task: this object is rebuilt from the
+                    // form on every save, so anything without a field on the form is lost
+                    // on edit unless it is copied forward like this. The duration chips
+                    // (P5) will read it from the form instead.
+                    durationMinutes = original?.durationMinutes,
                     isCompleted = original?.isCompleted ?: false,
                     completedAt = original?.completedAt,
                     repeat = state.repeat,

@@ -22,6 +22,24 @@ python3 tools/check_kotlin_syntax.py path/to/src
 Checks that every symbol used in an `update { }` lambda is imported, and that no
 `return@` label dangles.
 
+## `check_write_parity.py`
+
+`TaskRepositoryImpl` writes a task twice — normally as a POJO through `Task.toDto()`, and
+as a flattened map through `minimalTaskMap()` when Firestore rejects POJO serialisation.
+Those two field lists live in different files and are maintained by hand, so a field added
+to one and missed in the other only misbehaves when a particular write happens to fall
+back.
+
+```bash
+python3 tools/check_write_parity.py
+# OK: both task write paths carry all 8 timeline-critical fields.
+```
+
+It checks a deliberately small set (the timing/identity fields the Home timeline reads:
+`title`, `description`, `dueAt`, `reminderAt`, `durationMinutes`, `isCompleted`,
+`isDeleted`, `subTasks`). `minimalTaskMap` is *meant* to be a subset — it drops `repeat`,
+`streak` and `seriesId` — so a full diff would be all noise.
+
 ## `typecheck.py` — the one that catches real compile errors
 
 ```bash
