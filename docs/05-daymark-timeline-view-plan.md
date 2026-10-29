@@ -561,11 +561,17 @@ val segment by viewModel.segment.collectAsStateWithLifecycle()
 ### Pre-push gate (all four must pass; none need the Android SDK)
 
 ```bash
-python3 tools/check_kotlin_syntax.py     # nested comments / brackets
-python3 tools/check_imports.py           # update-lambda symbols
-python3 tools/check_write_parity.py      # toDto() vs minimalTaskMap()
-python3 tools/typecheck.py               # real kotlinc on 50 dependency-free files
+python3 tools/check_kotlin_syntax.py       # nested comments / brackets
+python3 tools/check_imports.py             # update-lambda symbols
+python3 tools/check_write_parity.py        # toDto() vs minimalTaskMap()
+python3 tools/check_compose_modifiers.py   # Compose padding overloads (UI files)
+python3 tools/typecheck.py                 # real kotlinc on 53 dependency-free files
 ```
+
+`typecheck.py` drops every androidx-dependent file, so the whole UI partition is
+unchecked by it. `check_compose_modifiers.py` closes the narrowest part of that gap
+after `Modifier.padding(start, end, vertical)` — which matches no overload — reached
+`main` and failed only on a real `assembleDebug`.
 
 Tests: compile the test file against `tools/junit_shim/` and run `sandbox.Runner` (see §5).
 
