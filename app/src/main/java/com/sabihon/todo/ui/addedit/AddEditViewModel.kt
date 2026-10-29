@@ -12,15 +12,18 @@ import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.SubTask
 import com.sabihon.todo.domain.model.Task
+import com.sabihon.todo.domain.model.TaskFilter
 import com.sabihon.todo.domain.reminder.ReminderSettings
 import com.sabihon.todo.domain.repository.CategoryRepository
 import com.sabihon.todo.domain.repository.TaskRepository
 import com.sabihon.todo.domain.usecase.AddTaskUseCase
 import com.sabihon.todo.domain.usecase.DeleteTaskUseCase
+import com.sabihon.todo.domain.usecase.DueDateConflictPolicy
 import com.sabihon.todo.domain.usecase.ParseQuickAddUseCase
 import com.sabihon.todo.domain.usecase.QuickAddResult
 import com.sabihon.todo.domain.usecase.RepeatScheduler
 import com.sabihon.todo.domain.usecase.SuggestSubTasksUseCase
+import com.sabihon.todo.domain.usecase.ToggleCompleteUseCase
 import com.sabihon.todo.domain.usecase.UpdateTaskUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +48,7 @@ class AddEditViewModel @Inject constructor(
     private val addTaskUseCase: AddTaskUseCase,
     private val updateTaskUseCase: UpdateTaskUseCase,
     private val deleteTaskUseCase: DeleteTaskUseCase,
+    private val toggleCompleteUseCase: ToggleCompleteUseCase,
     private val taskRepository: TaskRepository,
     private val categoryRepository: CategoryRepository,
     private val parseQuickAddUseCase: ParseQuickAddUseCase,
@@ -57,6 +61,7 @@ class AddEditViewModel @Inject constructor(
     private companion object {
         /** Hard ceiling for one save round-trip; keeps the Save button honest. */
         const val SAVE_TIMEOUT_MS = 20_000L
+        const val DUE_CONFLICT_QUERY_TIMEOUT_MS = 5_000L
     }
 
     private val _uiState = MutableStateFlow(AddEditUiState())
@@ -82,6 +87,9 @@ class AddEditViewModel @Inject constructor(
     )
 
     private var quickAddUndo: QuickAddSnapshot? = null
+
+    /** A write may succeed before completion fails; retry only the completion, never create twice. */
+    private var persistedVoiceCompletionTaskId: String? = null
 
     /**
      * The form is seeded from Firestore exactly once. Later emissions (including the
@@ -168,9 +176,11 @@ class AddEditViewModel @Inject constructor(
 
     fun loadTask(taskId: String?) {
         if (taskId == null) {
-            _uiState.update { it.copy(isEditMode = false) }
+            persistedVoiceCompletionTaskId = null
+            _uiState.update { it.copy(isEditMode = false, voiceCompletionRequested = false) }
             return
         }
+        persistedVoiceCompletionTaskId = null
         _uiState.update { it.copy(isLoading = true, taskId = taskId, isEditMode = true) }
         viewModelScope.launch {
             try {
@@ -242,6 +252,16 @@ class AddEditViewModel @Inject constructor(
 
     fun onTitleChange(title: String) {
         _uiState.update { it.copy(title = title, titleError = null) }
+    }
+
+    /** Called only by the title-field mic when the spoken sentence ends with "done". */
+    fun requestVoiceCompletion() {
+        _uiState.update { it.copy(voiceCompletionRequested = true, errorMessage = null) }
+    }
+
+    fun cancelVoiceCompletion() {
+        persistedVoiceCompletionTaskId = null
+        _uiState.update { it.copy(voiceCompletionRequested = false) }
     }
 
     fun onDescriptionChange(desc: String) {
@@ -735,6 +755,23 @@ class AddEditViewModel @Inject constructor(
         return if (parts.isEmpty()) label else "$label: ${parts.joinToString(" · ")}"
     }
 
+    private suspend fun findDueTimeConflict(candidateDueAt: Long, editingTaskId: String?): Task? {
+        val observed = withTimeoutOrNull(DUE_CONFLICT_QUERY_TIMEOUT_MS) {
+            taskRepository.observeTasks(TaskFilter())
+                .first { it !is Result.Loading }
+        } ?: throw IllegalStateException("Couldn't verify this due time. Please try again.")
+
+        val tasks = when (observed) {
+            is Result.Success -> observed.data
+            is Result.Error -> throw IllegalStateException(
+                "Couldn't check other tasks for a matching due time. Please try again.",
+                observed.exception
+            )
+            is Result.Loading -> emptyList()
+        }
+        return DueDateConflictPolicy.findConflict(tasks, candidateDueAt, editingTaskId)
+    }
+
     fun saveTask(onSuccess: () -> Unit) {
         // Ignore double taps – a second save while one is in flight causes ghost docs.
         if (_uiState.value.isSaving) return
@@ -753,6 +790,12 @@ class AddEditViewModel @Inject constructor(
             _uiState.update { it.copy(isSaving = true, errorMessage = null) }
             try {
                 val state = _uiState.value
+                if (state.voiceCompletionRequested && state.subTasks.any { !it.isDone }) {
+                    _uiState.update {
+                        it.copy(errorMessage = "Complete all sub-tasks before using the voice command ‘done’.")
+                    }
+                    return@launch
+                }
                 android.util.Log.d(
                     "AddEditVM",
                     "Saving task: title=${state.title} uid=${currentUser.uid} dueAt=${state.dueAt} cat=${state.categoryId}"
@@ -765,6 +808,16 @@ class AddEditViewModel @Inject constructor(
                     RepeatScheduler.dueAtMillis(java.time.LocalDate.now())
                 } else {
                     null
+                }
+
+                if (dueAt != null) {
+                    val conflict = findDueTimeConflict(dueAt, state.taskId)
+                    if (conflict != null) {
+                        _uiState.update {
+                            it.copy(errorMessage = "Another task already uses this date and time.")
+                        }
+                        return@launch
+                    }
                 }
 
                 val task = Task(
@@ -794,13 +847,23 @@ class AddEditViewModel @Inject constructor(
                     seriesId = original?.seriesId
                 )
 
-                // Bounded so a missing Firestore ack can never leave the button spinning.
+                // A previously saved voice-completion task retries only its completion; it
+                // must never be added a second time if the first completion attempt failed.
+                var persistedTaskId: String? = persistedVoiceCompletionTaskId
+                    ?: task.id.takeIf { it.isNotBlank() }
                 val result = withTimeoutOrNull(SAVE_TIMEOUT_MS) {
-                    if (state.isEditMode) {
-                        updateTaskUseCase(task)
-                    } else {
-                        when (val res = addTaskUseCase(task)) {
-                            is Result.Success -> Result.Success(Unit)
+                    when {
+                        state.voiceCompletionRequested && persistedVoiceCompletionTaskId != null ->
+                            Result.Success(Unit)
+                        state.isEditMode -> {
+                            persistedTaskId = task.id
+                            updateTaskUseCase(task)
+                        }
+                        else -> when (val res = addTaskUseCase(task)) {
+                            is Result.Success -> {
+                                persistedTaskId = res.data
+                                Result.Success(Unit)
+                            }
                             is Result.Error -> {
                                 android.util.Log.e("AddEditVM", "addTaskUseCase failed: ${res.message}", res.exception)
                                 res
@@ -821,7 +884,54 @@ class AddEditViewModel @Inject constructor(
                     }
                     result is Result.Success -> {
                         android.util.Log.d("AddEditVM", "Task saved successfully")
-                        onSuccess()
+                        if (state.voiceCompletionRequested && original?.isCompleted != true) {
+                            val savedId = persistedTaskId
+                            if (savedId == null) {
+                                _uiState.update {
+                                    it.copy(errorMessage = "Task saved, but its ID was missing. Reopen it to mark it done.")
+                                }
+                                return@launch
+                            }
+                            when (val completion = withTimeoutOrNull(SAVE_TIMEOUT_MS) {
+                                toggleCompleteUseCase(savedId, true)
+                            }) {
+                                is Result.Success -> {
+                                    persistedVoiceCompletionTaskId = null
+                                    onSuccess()
+                                }
+                                is Result.Error -> {
+                                    persistedVoiceCompletionTaskId = savedId
+                                    originalTask = task.copy(id = savedId)
+                                    _uiState.update {
+                                        it.copy(
+                                            taskId = savedId,
+                                            isEditMode = true,
+                                            errorMessage = "Task saved, but couldn't mark it done. Tap Save to retry."
+                                        )
+                                    }
+                                }
+                                null -> {
+                                    persistedVoiceCompletionTaskId = savedId
+                                    originalTask = task.copy(id = savedId)
+                                    _uiState.update {
+                                        it.copy(
+                                            taskId = savedId,
+                                            isEditMode = true,
+                                            errorMessage = "Task saved, but completion timed out. Tap Save to retry."
+                                        )
+                                    }
+                                }
+                                else -> {
+                                    persistedVoiceCompletionTaskId = savedId
+                                    originalTask = task.copy(id = savedId)
+                                    _uiState.update {
+                                        it.copy(taskId = savedId, isEditMode = true, errorMessage = "Task saved, but couldn't mark it done. Tap Save to retry.")
+                                    }
+                                }
+                            }
+                        } else {
+                            onSuccess()
+                        }
                     }
                     result is Result.Error -> {
                         val msg = result.message ?: "Failed to save task"
