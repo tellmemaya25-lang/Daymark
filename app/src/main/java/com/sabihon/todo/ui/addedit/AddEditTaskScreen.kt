@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.ManagedActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -572,7 +571,9 @@ fun AddEditTaskScreen(
                         // notifications" has an obvious reason.
                         if (enabled && viewModel.shouldAskForNotificationPermission()) {
                             viewModel.onNotificationPermissionAsked()
-                            askForNotificationPermission(context, notificationPermission)
+                            askForNotificationPermission(context) {
+                                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
                         }
                     },
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = AccentBlue)
@@ -883,10 +884,7 @@ private fun safeFormatTime(millis: Long): String {
  * Deliberately silent otherwise: Android stops re-prompting after two denials, so spending the
  * prompt at a moment with no context is how an app loses the ability to ever ask again.
  */
-private fun askForNotificationPermission(
-    context: Context,
-    launcher: ManagedActivityResultLauncher<String, Boolean>
-) {
+private fun askForNotificationPermission(context: Context, request: () -> Unit) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
     if (ContextCompat.checkSelfPermission(
             context,
@@ -895,7 +893,7 @@ private fun askForNotificationPermission(
     ) {
         return
     }
-    launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    request()
 }
 
 /**
