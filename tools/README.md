@@ -58,7 +58,7 @@ The script rebuilds the resource index the way `aapt2` does — declarations in
 
 | Check | Fails on |
 |---|---|
-| Duplicate declarations | the same `type/name` twice in one qualifier bucket (`values`, `values-night`, …) — the `aapt2` error above |
+| Duplicate declarations | the same `type/name` twice in one qualifier bucket (`values`, `values-night`, …), or two files with one base name in one bucket (`mipmap-hdpi/ic_launcher.png` next to `mipmap-hdpi/ic_launcher.xml`) — both are the `aapt2` error above |
 | Dangling references | `R.string.foo` / `@string/foo` / `@style/foo` / manifest `@style/foo` with no declaration |
 
 ```bash
@@ -66,10 +66,10 @@ python3 tools/check_resources.py            # OK: 97 resources, no duplicates, e
 python3 tools/check_resources.py --list     # counts per type
 ```
 
-Verified by reintroducing the exact defect: the duplicate is reported with its file, a
-typoed `R.string.snooze_typo` is reported at its line, and a bogus
-`@style/Theme.SabihonMissing` in `AndroidManifest.xml` is reported twice. `android.R.*`
-is excluded, because that is Android's resource table, not ours.
+Verified by reintroducing each defect: the duplicate string is reported with its file, a
+typoed `R.string.snooze_typo` at its line, a bogus `@style/Theme.SabihonMissing` in
+`AndroidManifest.xml` twice, and an added `mipmap-hdpi/ic_launcher.xml` as the same-bucket
+file collision. `android.R.*` is excluded, because that is Android's resource table, not ours.
 
 ## `check_compose_modifiers.py` — the gap `typecheck.py` leaves
 
