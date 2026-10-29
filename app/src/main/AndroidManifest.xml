@@ -8,6 +8,19 @@
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <!--
+      Reminders are alarms, not deferred work: a 09:00 reminder delivered at 09:25 is worse
+      than none. SCHEDULE_EXACT_ALARM is user-grantable (Android 12+) and denied by default
+      from Android 14; when it is not granted the scheduler falls back to an inexact
+      Doze-piercing alarm, so reminders stay within minutes rather than hours.
+
+      USE_EXACT_ALARM is deliberately NOT requested: it is auto-granted but Play restricts it
+      to alarm-clock and calendar apps, and a to-do app claiming it is a policy violation.
+    -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!--
       Dictation hands the microphone to the system speech recogniser. From targetSdk 30
       the app must be able to see that service, or isRecognitionAvailable() reports false
       on a device that has one and the mic would be hidden for no reason.
@@ -61,6 +74,41 @@
         <receiver
             android:name=".notifications.ReminderActionReceiver"
             android:exported="false" />
+
+        <!-- Fired by AlarmManager. Not exported: only the system delivers this. -->
+        <receiver
+            android:name=".notifications.ReminderAlarmReceiver"
+            android:exported="false" />
+
+        <!--
+          Re-arms pending reminders after a restart. AlarmManager forgets everything at
+          shutdown, so without this the app silently stops reminding people after the first
+          reboot - the kind of failure that is only noticed days later.
+        -->
+        <receiver
+            android:name=".notifications.ReminderBootReceiver"
+            android:exported="false"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          Alarm-style reminders open here, over the lock screen. excludeFromRecents and
+          noHistory keep a reminder out of the app's own history: it is a moment, not a page.
+        -->
+        <activity
+            android:name=".ui.reminder.ReminderAlarmActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Sabihon" />
 
     </application>
 

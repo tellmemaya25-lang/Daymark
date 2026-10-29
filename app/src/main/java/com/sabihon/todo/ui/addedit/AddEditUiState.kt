@@ -19,6 +19,14 @@ data class AddEditUiState(
     val dueAt: Long? = null,
     val reminderEnabled: Boolean = false,
     val reminderAt: Long? = null,
+
+    /**
+     * True when reminders are switched off for the whole app (Settings > Reminders).
+     *
+     * Shown on the task form so a switch that is on but will stay silent has an explanation
+     * instead of looking broken.
+     */
+    val remindersMuted: Boolean = false,
     val subTasks: List<SubTask> = emptyList(),
     val newSubTaskTitle: String = "",
     val isLoading: Boolean = false,

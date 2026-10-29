@@ -81,4 +81,6 @@
     <string name="notification_channel_tasks">Task Reminders</string>
     <string name="notification_channel_desc">Reminders for your tasks</string>
     <string name="mark_done">Mark done</string>
+    <string name="snooze">Snooze</string>
+    <string name="reminder">Reminder</string>
 </resources>
