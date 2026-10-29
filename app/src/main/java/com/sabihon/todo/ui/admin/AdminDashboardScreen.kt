@@ -50,7 +50,6 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
@@ -191,7 +190,6 @@ fun AdminDashboardScreen(
                     adminEmail = uiState.currentAdminEmail,
                     sessionMode = uiState.sessionMode,
                     onExportClick = { viewModel.setShowExportSheet(true) },
-                    onRefresh = { viewModel.refreshAll() },
                     onOpenWorkspace = onOpenWorkspace
                 )
 
@@ -390,7 +388,6 @@ private fun AdminTopHeader(
     adminEmail: String,
     sessionMode: AdminSessionMode,
     onExportClick: () -> Unit,
-    onRefresh: () -> Unit,
     onOpenWorkspace: () -> Unit
 ) {
     val surfaces = LocalDaymarkSurfaces.current
@@ -438,18 +435,6 @@ private fun AdminTopHeader(
                 Icon(
                     imageVector = Icons.Filled.Download,
                     contentDescription = "Export CSV or JSON",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(19.dp)
-                )
-            }
-
-            IconButton(
-                onClick = onRefresh,
-                modifier = Modifier.size(34.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Refresh,
-                    contentDescription = "Refresh console",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(19.dp)
                 )
