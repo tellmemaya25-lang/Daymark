@@ -8,6 +8,7 @@ import androidx.work.Configuration
 import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
+import com.sabihon.todo.notifications.AppForegroundTracker
 import com.sabihon.todo.notifications.NotificationHelper
 import dagger.hilt.android.HiltAndroidApp
 import java.io.File
@@ -26,6 +27,9 @@ class SabihonApp : Application(), Configuration.Provider {
     @Inject
     lateinit var notificationHelper: NotificationHelper
 
+    @Inject
+    lateinit var foregroundTracker: AppForegroundTracker
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -34,11 +38,20 @@ class SabihonApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         installAppCheck()
-        // Create notification channel early to avoid crashes
+
+        // "Is a screen visible?" decides whether a due reminder becomes an in-app popup or a
+        // system notification, so it has to be tracked from the first activity onwards.
         try {
-            notificationHelper.createChannel()
+            foregroundTracker.attach(this)
         } catch (e: Exception) {
-            android.util.Log.e("SabihonApp", "Failed to create notification channel", e)
+            android.util.Log.e("SabihonApp", "Foreground tracking unavailable", e)
+        }
+
+        // All three reminder channels, early: posting to a missing channel throws on O+.
+        try {
+            notificationHelper.ensureChannels()
+        } catch (e: Exception) {
+            android.util.Log.e("SabihonApp", "Failed to create notification channels", e)
         }
     }
 

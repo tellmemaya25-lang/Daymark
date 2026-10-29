@@ -14,13 +14,18 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
 import com.sabihon.todo.BuildConfig
 import com.sabihon.todo.core.datastore.AiPreferenceStore
+import com.sabihon.todo.core.datastore.ReminderPreferences
 import com.sabihon.todo.core.datastore.ThemePreferences
 import com.sabihon.todo.data.ai.AiQuotaGuard
 import com.sabihon.todo.data.ai.AiSnapshotCache
 import com.sabihon.todo.data.local.AvatarStore
 import com.sabihon.todo.core.datastore.ThemePref
 import com.sabihon.todo.domain.ai.AiProvider
+import com.sabihon.todo.domain.reminder.ReminderAlertStyle
+import com.sabihon.todo.domain.reminder.ReminderPolicy
+import com.sabihon.todo.domain.reminder.ReminderSettings
 import com.sabihon.todo.domain.repository.AuthRepository
+import com.sabihon.todo.notifications.ReminderScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -62,7 +67,13 @@ data class ProfileUiState(
     val aiDailyCalls: Int = 0,
     val aiClaudeDailyCalls: Int = 0,
     val geminiApiKey: String = "",
-    val isAdmin: Boolean = false
+    val isAdmin: Boolean = false,
+
+    // Reminders - see Settings > REMINDERS and docs/07.
+    val remindersEnabled: Boolean = ReminderSettings.DEFAULT.enabled,
+    val reminderLeadMinutes: Int = ReminderSettings.DEFAULT.leadMinutes,
+    val reminderAlertStyle: ReminderAlertStyle = ReminderSettings.DEFAULT.alertStyle,
+    val reminderSnoozeMinutes: Int = ReminderSettings.DEFAULT.snoozeMinutes
 )
 
 @HiltViewModel
@@ -76,7 +87,9 @@ class ProfileViewModel @Inject constructor(
     private val aiPreferences: AiPreferenceStore,
     private val aiSnapshotCache: AiSnapshotCache,
     private val aiQuotaGuard: AiQuotaGuard,
-    private val avatarStore: AvatarStore
+    private val avatarStore: AvatarStore,
+    private val reminderPreferences: ReminderPreferences,
+    private val reminderScheduler: ReminderScheduler
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ProfileUiState())
@@ -86,6 +99,7 @@ class ProfileViewModel @Inject constructor(
         loadProfile()
         observeTheme()
         observeAiPreferences()
+        observeReminderPreferences()
     }
 
     private fun loadProfile() {
@@ -230,6 +244,63 @@ class ProfileViewModel @Inject constructor(
                 _uiState.update { it.copy(geminiApiKey = effective) }
             }
         }
+    }
+
+    private fun observeReminderPreferences() {
+        viewModelScope.launch {
+            reminderPreferences.settings.collectLatest { settings ->
+                _uiState.update {
+                    it.copy(
+                        remindersEnabled = settings.enabled,
+                        reminderLeadMinutes = settings.leadMinutes,
+                        reminderAlertStyle = settings.alertStyle,
+                        reminderSnoozeMinutes = settings.snoozeMinutes
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Turning reminders back on re-arms everything still queued.
+     *
+     * The alarms themselves keep firing while the switch is off (delivery drops them), so
+     * without this a user who turns reminders off for a week and back on would wait for the
+     * next save before anything arrives.
+     */
+    fun setRemindersEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            reminderPreferences.setEnabled(enabled)
+            if (enabled) {
+                runCatching { reminderScheduler.rescheduleAll() }
+            }
+        }
+    }
+
+    fun setReminderLead(minutes: Int) {
+        viewModelScope.launch {
+            reminderPreferences.setLeadMinutes(minutes)
+            // Existing tasks keep the reminder they were saved with: a lead time is applied
+            // when the task is saved, and silently rewriting every open task's reminder from
+            // a settings toggle would be a surprise.
+            _uiState.update {
+                it.copy(
+                    successMessage = if (minutes <= 0) {
+                        "New reminders will arrive at the due time"
+                    } else {
+                        "New reminders will arrive ${ReminderPolicy.describeLead(minutes)} the due time"
+                    }
+                )
+            }
+        }
+    }
+
+    fun setReminderAlertStyle(style: ReminderAlertStyle) {
+        viewModelScope.launch { reminderPreferences.setAlertStyle(style) }
+    }
+
+    fun setReminderSnoozeMinutes(minutes: Int) {
+        viewModelScope.launch { reminderPreferences.setSnoozeMinutes(minutes) }
     }
 
     fun saveGeminiApiKey(rawKey: String) {

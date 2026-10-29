@@ -1,9 +1,12 @@
 package com.sabihon.todo.ui.addedit
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.ManagedActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -76,6 +79,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.dictation.DictationController
 import com.sabihon.todo.core.dictation.DictationTarget
@@ -135,6 +139,12 @@ fun AddEditTaskScreen(
         pendingDictation = null
         if (granted) next?.invoke() else dictation.permissionDenied()
     }
+
+    // Same "ask when it becomes relevant" rule for reminders: the prompt appears when the user
+    // switches a reminder on, not on every launch. Denials are recoverable from Settings.
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
 
     DisposableEffect(dictation) {
         onDispose { dictation.release() }
@@ -555,7 +565,16 @@ fun AddEditTaskScreen(
                 Text("Reminder", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurface)
                 Switch(
                     checked = uiState.reminderEnabled,
-                    onCheckedChange = viewModel::onReminderToggle,
+                    onCheckedChange = { enabled ->
+                        viewModel.onReminderToggle(enabled)
+                        // Asked here, at the moment the user creates a reminder, rather than
+                        // on every cold start: this is the first point where "allow
+                        // notifications" has an obvious reason.
+                        if (enabled && viewModel.shouldAskForNotificationPermission()) {
+                            viewModel.onNotificationPermissionAsked()
+                            askForNotificationPermission(context, notificationPermission)
+                        }
+                    },
                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = AccentBlue)
                 )
             }
@@ -564,6 +583,13 @@ fun AddEditTaskScreen(
                     "Reminder needs due date. Please select date/time.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
+                )
+            }
+            if (uiState.remindersMuted) {
+                Text(
+                    "Reminders are off in Settings, so this one will stay silent.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
@@ -849,6 +875,27 @@ private fun safeFormatTime(millis: Long): String {
     } catch (e: Exception) {
         "Invalid time"
     }
+}
+
+/**
+ * Asks for POST_NOTIFICATIONS only when a reminder is being created, and only on Android 13+.
+ *
+ * Deliberately silent otherwise: Android stops re-prompting after two denials, so spending the
+ * prompt at a moment with no context is how an app loses the ability to ever ask again.
+ */
+private fun askForNotificationPermission(
+    context: Context,
+    launcher: ManagedActivityResultLauncher<String, Boolean>
+) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    if (ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+    ) {
+        return
+    }
+    launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
 }
 
 /**

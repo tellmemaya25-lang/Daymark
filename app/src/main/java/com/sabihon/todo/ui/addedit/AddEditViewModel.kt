@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.sabihon.todo.core.datastore.AiPreferenceStore
+import com.sabihon.todo.core.datastore.ReminderPreferences
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.ai.AiTaskDraft
 import com.sabihon.todo.domain.model.Category
@@ -11,6 +12,7 @@ import com.sabihon.todo.domain.model.Priority
 import com.sabihon.todo.domain.model.RepeatRule
 import com.sabihon.todo.domain.model.SubTask
 import com.sabihon.todo.domain.model.Task
+import com.sabihon.todo.domain.reminder.ReminderSettings
 import com.sabihon.todo.domain.repository.CategoryRepository
 import com.sabihon.todo.domain.repository.TaskRepository
 import com.sabihon.todo.domain.usecase.AddTaskUseCase
@@ -48,7 +50,8 @@ class AddEditViewModel @Inject constructor(
     private val parseQuickAddUseCase: ParseQuickAddUseCase,
     private val suggestSubTasksUseCase: SuggestSubTasksUseCase,
     private val aiPreferences: AiPreferenceStore,
-    private val auth: FirebaseAuth
+    private val auth: FirebaseAuth,
+    private val reminderPreferences: ReminderPreferences
 ) : ViewModel() {
 
     private companion object {
@@ -103,9 +106,48 @@ class AddEditViewModel @Inject constructor(
      */
     private var originalTask: Task? = null
 
+    /**
+     * The user's default lead time, kept in a field so the (synchronous) date and reminder
+     * handlers can use it. Observed rather than read on demand because those handlers run
+     * inside `_uiState.update`, where suspending would deadlock the form.
+     */
+    private var defaultLeadMinutes: Int = ReminderSettings.DEFAULT.leadMinutes
+
+    /**
+     * True once the POST_NOTIFICATIONS prompt has been spent.
+     *
+     * Read from disk rather than held as state: the form only needs the answer at the instant
+     * the reminder switch flips, and re-asking after a user said no is the fastest way to get
+     * the app muted permanently by the system.
+     */
+    private var permissionAsked: Boolean = false
+
     init {
         observeCategories()
+        viewModelScope.launch {
+            permissionAsked = reminderPreferences.hasAskedForPermission()
+        }
+        viewModelScope.launch {
+            reminderPreferences.settings.collectLatest { settings ->
+                defaultLeadMinutes = settings.leadMinutes
+                _uiState.update { it.copy(remindersMuted = !settings.enabled) }
+            }
+        }
     }
+
+    /** Whether the notification prompt is still worth showing on this screen. */
+    fun shouldAskForNotificationPermission(): Boolean = !permissionAsked
+
+    /** Records that the prompt was shown, so no later screen spends it again. */
+    fun onNotificationPermissionAsked() {
+        if (permissionAsked) return
+        permissionAsked = true
+        viewModelScope.launch { reminderPreferences.markPermissionAsked() }
+    }
+
+    /** The moment the user asked to be told about a task due at [dueAt]. */
+    private fun reminderFor(dueAt: Long?): Long? =
+        dueAt?.let { due -> due - defaultLeadMinutes * 60_000L }
 
     private fun observeCategories() {
         viewModelScope.launch {
@@ -245,7 +287,14 @@ class AddEditViewModel @Inject constructor(
         _uiState.update { current ->
             try {
                 val newDueAt = combineDateAndTime(millis, current.dueTimeMillis ?: current.dueAt)
-                current.copy(dueDateMillis = millis, dueAt = newDueAt, errorMessage = null)
+                current.copy(
+                    dueDateMillis = millis,
+                    dueAt = newDueAt,
+                    // A reminder is attached to the moment it warns about: moving the due date
+                    // must move the reminder too, or the user is told about yesterday.
+                    reminderAt = if (current.reminderEnabled) reminderFor(newDueAt) else current.reminderAt,
+                    errorMessage = null
+                )
             } catch (e: Exception) {
                 current.copy(errorMessage = "Invalid date: ${e.message}")
             }
@@ -265,7 +314,13 @@ class AddEditViewModel @Inject constructor(
                 }
                 val timeMillis = cal.timeInMillis
                 val combined = combineDateAndTime(current.dueDateMillis ?: System.currentTimeMillis(), timeMillis)
-                current.copy(dueTimeMillis = timeMillis, dueAt = combined, dueDateMillis = current.dueDateMillis ?: combined, errorMessage = null)
+                current.copy(
+                    dueTimeMillis = timeMillis,
+                    dueAt = combined,
+                    dueDateMillis = current.dueDateMillis ?: combined,
+                    reminderAt = if (current.reminderEnabled) reminderFor(combined) else current.reminderAt,
+                    errorMessage = null
+                )
             } catch (e: Exception) {
                 current.copy(errorMessage = "Invalid time: ${e.message}")
             }
@@ -305,7 +360,13 @@ class AddEditViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 reminderEnabled = enabled,
-                reminderAt = if (enabled) it.dueAt ?: it.dueDateMillis ?: System.currentTimeMillis() + 3600000 else null
+                // The saved default lead time decides the moment, so "reminder on" means
+                // "10 minutes before" for a user who chose that, not "at the due time".
+                reminderAt = if (enabled) {
+                    reminderFor(it.dueAt ?: it.dueDateMillis) ?: System.currentTimeMillis() + 3600000
+                } else {
+                    null
+                }
             )
         }
     }
@@ -581,7 +642,7 @@ class AddEditViewModel @Inject constructor(
                 reminderEnabled = draft.reminder ?: current.reminderEnabled,
                 reminderAt = when (draft.reminder) {
                     true -> (dueMillis ?: current.dueAt)?.let { due ->
-                        due - (draft.reminderLeadMinutes ?: 0) * 60_000L
+                        due - (draft.reminderLeadMinutes ?: defaultLeadMinutes) * 60_000L
                     } ?: current.reminderAt
                     false -> null
                     null -> current.reminderAt
@@ -713,7 +774,11 @@ class AddEditViewModel @Inject constructor(
                     categoryId = state.categoryId,
                     priority = state.priority,
                     dueAt = dueAt,
-                    reminderAt = if (state.reminderEnabled) state.reminderAt ?: dueAt else null,
+                    reminderAt = if (state.reminderEnabled) {
+                        state.reminderAt ?: reminderFor(dueAt)
+                    } else {
+                        null
+                    },
                     subTasks = state.subTasks,
                     // Carried over from the stored task: this object is rebuilt from the
                     // form on every save, so anything without a field on the form is lost

@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -16,12 +17,18 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.lifecycleScope
+import com.sabihon.todo.core.datastore.ReminderPreferences
 import com.sabihon.todo.core.datastore.ThemePref
 import com.sabihon.todo.core.ui.theme.AppThemeViewModel
 import com.sabihon.todo.core.ui.theme.LocalIsDarkTheme
 import com.sabihon.todo.core.ui.theme.SabihonTheme
+import com.sabihon.todo.notifications.ReminderEvents
 import com.sabihon.todo.ui.navigation.SabihonNavHost
+import com.sabihon.todo.ui.reminder.InAppReminderHost
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 /**
  * Main launcher activity – hosts Compose NavHost.
@@ -29,6 +36,12 @@ import dagger.hilt.android.AndroidEntryPoint
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject
+    lateinit var reminderEvents: ReminderEvents
+
+    @Inject
+    lateinit var reminderPreferences: ReminderPreferences
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -45,16 +58,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Request notification permission on Android 13+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
+        maybeAskForNotificationPermission()
 
         setContent {
             val themeViewModel: AppThemeViewModel = hiltViewModel()
@@ -88,8 +92,38 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                SabihonNavHost()
+                Box {
+                    SabihonNavHost()
+                    // Above the NavHost so a reminder that comes due mid-navigation is not
+                    // swallowed by a screen change.
+                    InAppReminderHost(events = reminderEvents)
+                }
             }
+        }
+    }
+
+    /**
+     * Asks for POST_NOTIFICATIONS at most once, and only when reminders are actually on.
+     *
+     * The previous behaviour asked on every cold start, before the user had seen a reminder or
+     * a settings row - and Android stops re-prompting after two denials, so that spent both
+     * chances before there was any context. After this first ask, the Settings > Reminders row
+     * is the way to grant it.
+     */
+    private fun maybeAskForNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        lifecycleScope.launch {
+            if (!reminderPreferences.current().enabled) return@launch
+            if (reminderPreferences.hasAskedForPermission()) return@launch
+            reminderPreferences.markPermissionAsked()
+            requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }
