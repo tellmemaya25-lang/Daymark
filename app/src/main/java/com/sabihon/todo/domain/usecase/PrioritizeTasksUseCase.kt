@@ -233,6 +233,10 @@ class PrioritizeTasksUseCase internal constructor(
     private fun isTransientUnavailable(error: Throwable?): Boolean {
         val msg = error?.message.orEmpty().lowercase()
         if ("429" in msg || "403" in msg || "quota" in msg || "app check" in msg) return false
+        // Unreadable JSON is worth one immediate retry: a model that dropped a quote usually
+        // gets it right the second time, and the alternative is dropping to heuristics for
+        // the whole plan.
+        if ("json" in msg) return true
         return "503" in msg || "unavailable" in msg || "overloaded" in msg
     }
 
@@ -355,6 +359,14 @@ class PrioritizeTasksUseCase internal constructor(
             // user to a Firebase console page they cannot fix from a phone.
             "disabled by administrator" in lower ->
                 "Smart AI is paused for everyone by the administrator."
+            // A model that answers in broken JSON is not something the user can debug, and
+            // quoting the parser ("Expected beginning of the string at $.items[2]") only
+            // makes the app look broken. Say what happened and offer the one useful action.
+            "invalid json" in lower ||
+                "json token" in lower ||
+                "jsondecodingexception" in lower ||
+                "expected beginning" in lower ->
+                "Smart AI sent an answer it couldn't read — tap ↻ to retry."
             "vertex ai in firebase" in lower ||
                 "has not been used" in lower ||
                 "service_disabled" in lower ||
