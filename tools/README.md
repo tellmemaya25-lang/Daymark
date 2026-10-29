@@ -40,6 +40,37 @@ It checks a deliberately small set (the timing/identity fields the Home timeline
 `isDeleted`, `subTasks`). `minimalTaskMap` is *meant* to be a subset — it drops `repeat`,
 `streak` and `seriesId` — so a full diff would be all noise.
 
+## `check_resources.py` — the gate that `installDebug` was
+
+The reminders work shipped with `<string name="reminder">` declared twice in
+`values/strings.xml` — once since the first release, once added by mistake. Nothing in
+this directory looked at `res/`, so it reached a real device build and died at
+`:app:mergeDebugResources`:
+
+```
+D:\MOBILE DEV\daymark\Daymark\app\src\main\res\values\strings.xml: Resource and
+asset merger: Found item String/reminder more than one time
+```
+
+The script rebuilds the resource index the way `aapt2` does — declarations in
+`values*/`, file-based resources in `drawable*/`, `mipmap*/`, `layout*/`, inline
+`@+id/` — and then checks two things:
+
+| Check | Fails on |
+|---|---|
+| Duplicate declarations | the same `type/name` twice in one qualifier bucket (`values`, `values-night`, …) — the `aapt2` error above |
+| Dangling references | `R.string.foo` / `@string/foo` / `@style/foo` / manifest `@style/foo` with no declaration |
+
+```bash
+python3 tools/check_resources.py            # OK: 97 resources, no duplicates, every reference resolves.
+python3 tools/check_resources.py --list     # counts per type
+```
+
+Verified by reintroducing the exact defect: the duplicate is reported with its file, a
+typoed `R.string.snooze_typo` is reported at its line, and a bogus
+`@style/Theme.SabihonMissing` in `AndroidManifest.xml` is reported twice. `android.R.*`
+is excluded, because that is Android's resource table, not ours.
+
 ## `check_compose_modifiers.py` — the gap `typecheck.py` leaves
 
 `typecheck.py` drops every file that needs androidx, so **all of the UI is unchecked**.

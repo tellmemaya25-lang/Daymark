@@ -31,9 +31,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sabihon.todo.R
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
 import com.sabihon.todo.notifications.DueReminder
@@ -104,7 +106,7 @@ fun InAppReminderHost(
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Reminder",
+                        text = stringResource(R.string.reminder),
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold

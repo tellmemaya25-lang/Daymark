@@ -108,7 +108,8 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:launchMode="singleTop"
-            android:theme="@style/Theme.Sabihon" />
+            android:theme="@style/Theme.Sabihon"
+            tools:targetApi="o_mr1" />
 
     </application>
 

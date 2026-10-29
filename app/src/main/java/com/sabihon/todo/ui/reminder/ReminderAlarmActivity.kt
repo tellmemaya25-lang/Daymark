@@ -30,9 +30,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sabihon.todo.R
 import com.sabihon.todo.core.datastore.ReminderPreferences
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.core.ui.theme.SabihonTheme
@@ -140,7 +142,7 @@ private fun AlarmContent(
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "REMINDER",
+            text = stringResource(R.string.reminder).uppercase(),
             style = MaterialTheme.typography.labelMedium.copy(
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 2.sp
