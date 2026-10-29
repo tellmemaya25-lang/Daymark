@@ -71,6 +71,27 @@ typoed `R.string.snooze_typo` at its line, a bogus `@style/Theme.SabihonMissing`
 `AndroidManifest.xml` twice, and an added `mipmap-hdpi/ic_launcher.xml` as the same-bucket
 file collision. `android.R.*` is excluded, because that is Android's resource table, not ours.
 
+## `check_symbols.py` — the missing import that only a device build would find
+
+`typecheck.py` drops every file that needs androidx, so a typo'd or missing import inside a
+Compose file is invisible here and fails on the phone. This is the gate that would have caught
+the `androidx.activity.result.ManagedActivityResultLauncher` import — a class that exists under
+a *different* package (`androidx.activity.compose`), so it failed two screens down from where
+it was written.
+
+It is not a type checker. It collects capitalised identifiers that look like a type or a
+top-level call and reports those that are neither imported, declared in the file, declared
+elsewhere in the same package, nor in the standard implicit set.
+
+```bash
+python3 tools/check_symbols.py            # checked 179 file(s), 0 with suspects
+python3 tools/check_symbols.py ui/home    # one subtree
+```
+
+Known-implicit types (`kotlin.*`, `java.lang.*`, `Regex`, `Math`, …), scope members
+(`ExposedDropdownMenu`) and string-literal contents are excluded — a false alarm costs more
+than a missed one. Verified by renaming `CollapsibleSection` at one call site: reported.
+
 ## `check_compose_modifiers.py` — the gap `typecheck.py` leaves
 
 `typecheck.py` drops every file that needs androidx, so **all of the UI is unchecked**.

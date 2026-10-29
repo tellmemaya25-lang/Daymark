@@ -9,10 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.TaskAlt
@@ -23,11 +21,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
@@ -36,7 +29,10 @@ import androidx.compose.ui.unit.dp
 import com.sabihon.todo.core.ui.theme.AccentBlue
 
 /**
- * Empty state – classic simple + Notely-inspired onboarding for empty tasks.
+ * Empty state for the everyday lists.
+ *
+ * "No tasks yet" is the first-run case and gets the brand surface; anything else keeps the
+ * plain icon-and-caption treatment, because a full illustration under every filter is noise.
  */
 @Composable
 fun EmptyState(
@@ -44,54 +40,60 @@ fun EmptyState(
     description: String,
     modifier: Modifier = Modifier
 ) {
-    // For "No tasks yet" use Notely style
-    if (title.contains("No tasks", ignoreCase = true) || description.contains("Tap +", ignoreCase = true)) {
-        NotelyEmptyState(
-            title = "Get started with daymark .",
-            subtitle = "Add notes, calendar events, tasks, files and more with the action bar",
-            modifier = modifier
+    // Only the no-tasks case is first-run. "No categories" is a filter result, not a first
+    // launch, and giving it the brand illustration would make every empty list look like a
+    // welcome screen.
+    val isFirstRun = title.contains("No tasks", ignoreCase = true)
+
+    if (isFirstRun) {
+        DaymarkEmptyState(modifier = modifier)
+        return
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Filled.TaskAlt,
+            contentDescription = null,
+            modifier = Modifier.size(80.dp),
+            tint = MaterialTheme.colorScheme.surfaceVariant
         )
-    } else {
-        Column(
-            modifier = modifier
-                .fillMaxWidth()
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Icon(
-                imageVector = Icons.Filled.TaskAlt,
-                contentDescription = null,
-                modifier = Modifier.size(80.dp),
-                tint = MaterialTheme.colorScheme.surfaceVariant
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
     }
 }
 
 /**
- * Notely-inspired empty state – stacked notes illustration, title, subtitle, curved arrow to + button.
- * Matches screenshot: dark cards with fold, logo, arrow pointing to action bar.
+ * The first-run state: the daymark mark, one instruction, and an arrow to the + button.
+ *
+ * Two things are deliberate. The mark is the real `ic_daymark_logo` drawable rather than a
+ * hand-drawn imitation, so the first screen someone sees is actually the app's logo. And the
+ * copy only promises what this app does: it used to read "Add notes, calendar events, tasks,
+ * files and more", which describes a different app - here there is exactly one thing to add,
+ * and it is a task.
  */
 @Composable
-fun NotelyEmptyState(
-    title: String = "Get started with Notely",
-    subtitle: String = "Add notes, calendar events, tasks files and more with the action bar",
-    modifier: Modifier = Modifier
+fun DaymarkEmptyState(
+    modifier: Modifier = Modifier,
+    title: String = "Get started with daymark",
+    subtitle: String = "Tap the + button to add your first task."
 ) {
     Column(
         modifier = modifier
@@ -102,84 +104,9 @@ fun NotelyEmptyState(
     ) {
         Spacer(Modifier.height(32.dp))
 
-        // Stacked notes illustration – like screenshot
-        Box(
-            modifier = Modifier
-                .width(180.dp)
-                .height(220.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            // Behind card – slightly rotated, offset
-            Box(
-                modifier = Modifier
-                    .size(width = 140.dp, height = 180.dp)
-                    .offset(x = (-12).dp, y = 8.dp)
-                    .rotate(-8f)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-            )
-
-            // Front card – main
-            Box(
-                modifier = Modifier
-                    .size(width = 140.dp, height = 180.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            ) {
-                // Logo in center – Notely style (two slanted bars)
-                Canvas(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .align(Alignment.Center)
-                ) {
-                    val barWidth = size.width * 0.6f
-                    val barHeight = size.height * 0.18f
-                    val gap = size.height * 0.15f
-
-                    // Draw 3 slanted rectangles (parallelogram) like logo
-                    val path1 = Path().apply {
-                        moveTo(size.width * 0.2f, size.height * 0.3f)
-                        lineTo(size.width * 0.2f + barWidth, size.height * 0.3f - 8f)
-                        lineTo(size.width * 0.2f + barWidth, size.height * 0.3f - 8f + barHeight)
-                        lineTo(size.width * 0.2f, size.height * 0.3f + barHeight)
-                        close()
-                    }
-                    val path2 = Path().apply {
-                        moveTo(size.width * 0.2f, size.height * 0.3f + barHeight + gap)
-                        lineTo(size.width * 0.2f + barWidth, size.height * 0.3f + barHeight + gap - 8f)
-                        lineTo(size.width * 0.2f + barWidth, size.height * 0.3f + barHeight + gap - 8f + barHeight)
-                        lineTo(size.width * 0.2f, size.height * 0.3f + barHeight + gap + barHeight)
-                        close()
-                    }
-
-                    drawPath(path1, color = Color.Gray.copy(alpha = 0.6f))
-                    drawPath(path2, color = Color.Gray.copy(alpha = 0.6f))
-                }
-
-                // Folded corner bottom right – triangle
-                Canvas(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .align(Alignment.BottomEnd)
-                ) {
-                    val foldPath = Path().apply {
-                        moveTo(size.width, size.height - 24f)
-                        lineTo(size.width - 24f, size.height)
-                        lineTo(size.width, size.height)
-                        close()
-                    }
-                    drawPath(foldPath, color = Color.Black.copy(alpha = 0.15f))
-                    // Inner highlight
-                    val innerPath = Path().apply {
-                        moveTo(size.width, size.height - 22f)
-                        lineTo(size.width - 22f, size.height)
-                        lineTo(size.width, size.height)
-                        close()
-                    }
-                    drawPath(innerPath, color = Color.White.copy(alpha = 0.08f))
-                }
-            }
-        }
+        // The brand mark, used as-is: a redrawn approximation inside a fake card was
+        // starting to look like a second, worse logo.
+        DaymarkMark(size = 96.dp)
 
         Spacer(Modifier.height(24.dp))
 
@@ -200,14 +127,13 @@ fun NotelyEmptyState(
 
         Spacer(Modifier.height(24.dp))
 
-        // Curved arrow pointing to + button (center bottom nav)
-        val arrowColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+        // Curved arrow to the + button in the dock.
+        val arrowColor = AccentBlue.copy(alpha = 0.55f)
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(120.dp)
         ) {
-            // Curved path from top center to bottom center-right (where + is)
             val path = Path().apply {
                 moveTo(size.width * 0.5f, 0f)
                 cubicTo(
@@ -216,13 +142,8 @@ fun NotelyEmptyState(
                     size.width * 0.6f, size.height * 0.8f
                 )
             }
-            drawPath(
-                path = path,
-                color = arrowColor,
-                style = Stroke(width = 2f)
-            )
+            drawPath(path = path, color = arrowColor, style = Stroke(width = 2f))
 
-            // Arrow head at end
             val arrowEndX = size.width * 0.6f
             val arrowEndY = size.height * 0.8f
             val arrowPath = Path().apply {
@@ -231,11 +152,7 @@ fun NotelyEmptyState(
                 moveTo(arrowEndX, arrowEndY)
                 lineTo(arrowEndX - 3f, arrowEndY - 12f)
             }
-            drawPath(
-                path = arrowPath,
-                color = arrowColor,
-                style = Stroke(width = 2f)
-            )
+            drawPath(path = arrowPath, color = arrowColor, style = Stroke(width = 2f))
         }
 
         Spacer(Modifier.height(16.dp))
@@ -243,7 +160,7 @@ fun NotelyEmptyState(
 }
 
 /**
- * Simplified version for other filters – keeps title/description but with Notely illustration small.
+ * Empty state for a filter that is not first-run: Today, Completed, Pending, Overdue.
  */
 @Composable
 fun FilterEmptyState(
@@ -283,8 +200,8 @@ fun FilterEmptyState(
             text = when (filterName.lowercase()) {
                 "today" -> "No tasks for today. Tap + to create!"
                 "completed" -> "No completed tasks yet"
-                "pending" -> "No pending tasks – you're all caught up!"
-                "overdue" -> "No overdue tasks – great job!"
+                "pending" -> "No pending tasks - you're all caught up!"
+                "overdue" -> "No overdue tasks - great job!"
                 else -> "Tap + to create your first task"
             },
             style = MaterialTheme.typography.bodyMedium,

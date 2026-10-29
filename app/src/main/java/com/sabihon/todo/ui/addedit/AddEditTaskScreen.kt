@@ -362,7 +362,11 @@ fun AddEditTaskScreen(
                 value = uiState.description,
                 onValueChange = viewModel::onDescriptionChange,
                 label = { Text("Description", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                placeholder = { Text("Add details... Cybersecurity is What type of thing...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                // A hint, not a sample sentence. The old one had someone's example task
+                // baked into it ("Cybersecurity is What type of thing..."), which reads as
+                // leftover text the app forgot to delete, and it wrapped to two lines in a
+                // three-line field.
+                placeholder = { Text("Add details, steps, or links...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                 trailingIcon = {
                     if (recogniserAvailable) {
                         DictationMic(

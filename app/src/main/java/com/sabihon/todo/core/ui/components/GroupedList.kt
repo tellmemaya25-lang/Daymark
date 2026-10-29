@@ -1,5 +1,11 @@
 package com.sabihon.todo.core.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +22,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -56,6 +64,66 @@ fun SectionLabel(
         color = LocalDaymarkSurfaces.current.eyebrow,
         modifier = modifier.padding(start = 4.dp, top = 8.dp, bottom = 10.dp)
     )
+}
+
+/**
+ * A [SectionLabel] heading that folds its card away.
+ *
+ * For groups long enough to push the rest of the page out of sight. Three rules, each of
+ * which is a way the alternative fails:
+ *  - **The whole heading is the toggle**, not just the chevron: a section that collapses
+ *    must collapse from wherever it is poked.
+ *  - **A folded section keeps one line of state** via [summary]. A heading with nothing
+ *    under it is indistinguishable from a section that was deleted, and the user has no way
+ *    to know what they are re-opening.
+ *  - **Nothing irreversible hides in here.** Anything that is a warning or a fix (a denied
+ *    permission, a blocked alarm) belongs outside the fold.
+ */
+@Composable
+fun CollapsibleSection(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    summary: String? = null,
+    content: @Composable () -> Unit
+) {
+    val surfaces = LocalDaymarkSurfaces.current
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(role = Role.Button, onClick = onToggle)
+                .padding(end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SectionLabel(text = title, modifier = Modifier.weight(1f))
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse $title" else "Expand $title",
+                tint = surfaces.eyebrow,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+
+        if (!expanded && summary != null) {
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp)
+            )
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(tween(150)) + expandVertically(tween(180)),
+            exit = fadeOut(tween(120)) + shrinkVertically(tween(160))
+        ) {
+            content()
+        }
+    }
 }
 
 /**

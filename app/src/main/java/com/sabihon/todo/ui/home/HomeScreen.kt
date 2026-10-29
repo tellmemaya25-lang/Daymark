@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
@@ -369,14 +370,19 @@ fun HomeScreen(
                 item(key = MOMENTUM_ITEM_KEY) {
                     if (uiState.announcementBanner.isNotBlank()) {
                         val bannerAccent = if (uiState.maintenanceMode) Color(0xFFF2994A) else AccentBlue
-                        Box(
+                        // An announcement you cannot get rid of is a permanent fixture, and a
+                        // permanent fixture stops being read after a day. Maintenance notices
+                        // keep their place: they expire on their own when the flag flips.
+                        val dismissible = uiState.announcementDismissible
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 20.dp, vertical = 6.dp)
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(bannerAccent.copy(alpha = 0.12f))
                                 .border(1.dp, bannerAccent.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                                .padding(start = 14.dp, end = if (dismissible) 6.dp else 14.dp, top = 10.dp, bottom = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 text = uiState.announcementBanner,
@@ -384,8 +390,22 @@ fun HomeScreen(
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Medium
                                 ),
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
                             )
+                            if (dismissible) {
+                                IconButton(
+                                    onClick = { viewModel.onAction(HomeAction.DismissAnnouncement) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Close,
+                                        contentDescription = "Dismiss announcement",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                     MomentumCard(
