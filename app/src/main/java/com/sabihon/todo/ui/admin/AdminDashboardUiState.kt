@@ -1,5 +1,6 @@
 package com.sabihon.todo.ui.admin
 
+import com.sabihon.todo.domain.ai.AiProviderPreference
 import com.sabihon.todo.domain.admin.AdminAiDailyStats
 import com.sabihon.todo.domain.admin.AdminAuditEntry
 import com.sabihon.todo.domain.admin.AdminExportPayload
@@ -77,6 +78,9 @@ data class AdminDashboardUiState(
     val hasUnsavedConfigChanges: Boolean = false,
     val isSavingConfig: Boolean = false,
     val geminiApiKey: String = "",
+    val claudeApiKey: String = "",
+    val claudeModel: String = "",
+    val providerPreference: AiProviderPreference = AiProviderPreference.AUTO,
 
     // Audit, Export & Security
     val auditLogs: List<AdminAuditEntry> = emptyList(),

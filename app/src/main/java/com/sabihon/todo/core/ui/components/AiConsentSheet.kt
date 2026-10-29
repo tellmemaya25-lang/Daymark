@@ -88,8 +88,9 @@ fun AiConsentSheet(
             Spacer(Modifier.height(12.dp))
 
             Text(
-                text = "Daymark uses Gemini through Firebase to rank task priorities and read quick-add sentences. " +
-                    "On the free tier, Google may process prompts to improve its services.",
+                text = "Daymark sends task text to Gemini through Firebase to rank priorities and read quick-add " +
+                    "sentences. If Gemini cannot answer and an Anthropic (Claude) key is configured, the same " +
+                    "prompt goes to Claude instead. On the free tier, Google may process prompts to improve its services.",
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontSize = 13.sp,
                     lineHeight = 19.sp

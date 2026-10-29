@@ -5,8 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.sabihon.todo.BuildConfig
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
+import com.sabihon.todo.data.ai.AiProviderPolicy
 import com.sabihon.todo.data.ai.AiQuotaGuard
 import com.sabihon.todo.data.ai.AiSnapshotCache
+import com.sabihon.todo.domain.ai.AiProviderPreference
 import com.sabihon.todo.domain.admin.AdminAuditEntry
 import com.sabihon.todo.domain.admin.AdminExportType
 import com.sabihon.todo.domain.admin.AdminRepository
@@ -65,6 +67,7 @@ class AdminDashboardViewModel @Inject constructor(
             observeUsers()
             observeSystemConfig()
             observeGeminiApiKey()
+            observeClaudeSettings()
             observeTodayAiStats()
             observeAuditLogs()
             reloadMetrics()
@@ -77,6 +80,79 @@ class AdminDashboardViewModel @Inject constructor(
             aiPreferences.geminiApiKey.collectLatest { savedKey ->
                 val effective = savedKey.ifBlank { BuildConfig.GEMINI_API_KEY }
                 _uiState.update { it.copy(geminiApiKey = effective) }
+            }
+        }
+    }
+
+    private fun observeClaudeSettings() {
+        viewModelScope.launch {
+            aiPreferences.claudeApiKey.collectLatest { savedKey ->
+                val effective = savedKey.ifBlank { BuildConfig.CLAUDE_API_KEY }
+                _uiState.update { it.copy(claudeApiKey = effective) }
+            }
+        }
+        viewModelScope.launch {
+            aiPreferences.aiProviderPreference.collectLatest { preference ->
+                _uiState.update { it.copy(providerPreference = preference) }
+            }
+        }
+        viewModelScope.launch {
+            // Read before updating: StateFlow.update takes a non-suspending lambda.
+            val savedModel = aiPreferences.getClaudeModelNow()
+            _uiState.update { it.copy(claudeModel = savedModel) }
+        }
+    }
+
+    /** Blank clears the fallback; the built-in model list then applies again. */
+    fun saveClaudeApiKey(rawKey: String) {
+        viewModelScope.launch {
+            val cleaned = AiProviderPolicy.normalizeApiKey(rawKey)
+            aiPreferences.setClaudeApiKey(cleaned)
+            aiSnapshotCache.clearAll()
+            aiQuotaGuard.resetRuntimeState()
+            _uiState.update {
+                it.copy(
+                    snackbarMessage = if (cleaned.isNotEmpty()) {
+                        "Claude key saved — used when Gemini is unavailable"
+                    } else {
+                        "Claude key cleared"
+                    }
+                )
+            }
+        }
+    }
+
+    fun saveClaudeModel(rawModel: String) {
+        viewModelScope.launch {
+            val cleaned = rawModel.trim()
+            aiPreferences.setClaudeModel(cleaned)
+            aiSnapshotCache.clearAll()
+            _uiState.update {
+                it.copy(
+                    claudeModel = cleaned,
+                    snackbarMessage = if (cleaned.isNotEmpty()) {
+                        "Claude model set to $cleaned"
+                    } else {
+                        "Claude model reset to the default list"
+                    }
+                )
+            }
+        }
+    }
+
+    fun setProviderPreference(preference: AiProviderPreference) {
+        viewModelScope.launch {
+            aiPreferences.setAiProviderPreference(preference)
+            aiSnapshotCache.clearAll()
+            aiQuotaGuard.resetRuntimeState()
+            _uiState.update {
+                it.copy(
+                    providerPreference = preference,
+                    snackbarMessage = AiProviderPolicy.describe(
+                        preference = preference,
+                        hasClaudeKey = _uiState.value.claudeApiKey.isNotBlank()
+                    )
+                )
             }
         }
     }

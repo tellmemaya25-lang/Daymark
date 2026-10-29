@@ -609,3 +609,14 @@ internal data class NextTaskWireItem(
 | **ADR-2: AI Metadata Storage** | **Local `DataStore` + In-Memory `AiSnapshotCache`** | *Storing `aiScore` / `aiReason` on Firestore `TaskDto`*: Every batch re-rank of 20 tasks would cost 20 Firestore writes, trigger snapshot echo loops, and clutter `ActivityLog`. |
 | **ADR-3: Primary LLM Tier** | **Cloud `gemini-3.5-flash-lite` + Offline `LocalPriorityScorer`** | *On-device ML Kit Gemini Nano primary*: Only supported on flagship Pixel 9/10 & Galaxy S25/S26 hardware (`docs/ai-integration-plan.md` §3), leaving 90%+ of `minSdk 24` Android devices unsupported. |
 | **ADR-4: Timestamp Representation in Prompts** | **Signed Relative Hours (`dueHrs: Int`)** | *Raw Epoch Milliseconds (`dueAt: Long`)*: Eliminates LLM 13-digit arithmetic and timezone conversion bugs while saving ~60% of date tokens. |
+
+### 12.3 Provider Fallback (Added)
+
+Gemini is still the primary provider and the rung ladder above is unchanged. When Gemini cannot
+answer - no key on the free tier, a `429`, a retired model id, an expired credential - the same
+prompt is offered to Anthropic's Claude before the request drops to `Rung 0` heuristics, provided
+a Claude key is configured in Admin or `local.properties`. Quotas, PII redaction, the circuit
+breaker, the admin kill switch and every human-in-the-loop review sit above the provider choice
+and are untouched. See `06-daymark-claude-fallback.md` for the chain rules, model candidates and
+parsing differences.
+

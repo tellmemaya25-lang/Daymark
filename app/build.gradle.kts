@@ -42,6 +42,25 @@ val localGeminiApiKey = rawLocalGeminiKey
     .replace("\\", "\\\\")
     .replace("\"", "\\\"")
 
+// Optional Anthropic key from gitignored `local.properties` (`CLAUDE_API_KEY=...`), used as
+// the fallback when Gemini is not configured or fails. Kept out of the APK's resources on
+// purpose: BuildConfig fields are stripped by R8 in release builds that do not reference
+// them, and a key pasted in Admin is stored per-device in DataStore instead.
+val rawLocalClaudeKey = if (localPropFile.exists()) {
+    localPropFile.readLines()
+        .map { it.trim() }
+        .firstOrNull { !it.startsWith("#") && it.startsWith("CLAUDE_API_KEY=") }
+        ?.substringAfter("CLAUDE_API_KEY=")
+        .orEmpty()
+} else {
+    ""
+}
+val localClaudeApiKey = rawLocalClaudeKey
+    .trim()
+    .removeSurrounding("\"")
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+
 android {
     namespace = "com.sabihon.todo"
     compileSdk = 35
@@ -54,6 +73,7 @@ android {
         versionName = "1.0"
 
         buildConfigField("String", "GEMINI_API_KEY", "\"$localGeminiApiKey\"")
+        buildConfigField("String", "CLAUDE_API_KEY", "\"$localClaudeApiKey\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

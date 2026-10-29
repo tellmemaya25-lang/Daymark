@@ -70,6 +70,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -111,7 +112,10 @@ import com.sabihon.todo.core.ui.components.SectionLabel
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.core.ui.theme.DaymarkSheetShape
 import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
+import com.sabihon.todo.data.ai.AiProviderPolicy
+import com.sabihon.todo.data.ai.ClaudeMessages
 import com.sabihon.todo.domain.admin.AdminAccessPolicy
+import com.sabihon.todo.domain.ai.AiProviderPreference
 import com.sabihon.todo.domain.admin.AdminAiDailyStats
 import com.sabihon.todo.domain.admin.AdminAuditEntry
 import com.sabihon.todo.domain.admin.AdminExportPayload
@@ -241,7 +245,13 @@ fun AdminDashboardScreen(
                         hasUnsavedChanges = uiState.hasUnsavedConfigChanges,
                         isSaving = uiState.isSavingConfig,
                         geminiApiKey = uiState.geminiApiKey,
+                        claudeApiKey = uiState.claudeApiKey,
+                        claudeModel = uiState.claudeModel,
+                        providerPreference = uiState.providerPreference,
                         onSaveGeminiApiKey = viewModel::saveGeminiApiKey,
+                        onSaveClaudeApiKey = viewModel::saveClaudeApiKey,
+                        onSaveClaudeModel = viewModel::saveClaudeModel,
+                        onSetProviderPreference = viewModel::setProviderPreference,
                         onShowMessage = viewModel::setError,
                         onUpdateDraft = viewModel::updateConfigDraft,
                         onResetDraft = viewModel::resetConfigDraft,
@@ -1495,7 +1505,13 @@ private fun AdminAiConfigTab(
     hasUnsavedChanges: Boolean,
     isSaving: Boolean,
     geminiApiKey: String,
+    claudeApiKey: String,
+    claudeModel: String,
+    providerPreference: AiProviderPreference,
     onSaveGeminiApiKey: (String) -> Unit,
+    onSaveClaudeApiKey: (String) -> Unit,
+    onSaveClaudeModel: (String) -> Unit,
+    onSetProviderPreference: (AiProviderPreference) -> Unit,
     onShowMessage: (String) -> Unit,
     onUpdateDraft: ((AdminSystemConfig) -> AdminSystemConfig) -> Unit,
     onResetDraft: () -> Unit,
@@ -1507,6 +1523,7 @@ private fun AdminAiConfigTab(
     var showApiKeySheet by remember { mutableStateOf(false) }
     var apiKeyDraft by remember { mutableStateOf("") }
     var apiKeyVisible by remember { mutableStateOf(false) }
+    var showClaudeSheet by remember { mutableStateOf(false) }
 
     val isDebugBuild = remember(context) {
         (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
@@ -1548,6 +1565,19 @@ private fun AdminAiConfigTab(
                             showApiKeySheet = true
                         }
                     )
+                    GroupedDivider()
+                    val claudeKey = claudeApiKey.trim()
+                    val claudeStatus = when {
+                        claudeKey.length > 8 -> "${claudeKey.take(7)}…${claudeKey.takeLast(4)}"
+                        claudeKey.isNotEmpty() -> "Saved"
+                        else -> "Set key"
+                    }
+                    GroupedRow(
+                        label = "Claude API key",
+                        supporting = "Fallback when Gemini is unavailable — console.anthropic.com",
+                        value = claudeStatus,
+                        onClick = { showClaudeSheet = true }
+                    )
                     if (isDebugBuild) {
                         GroupedDivider()
                         val shortToken = debugAppCheckToken?.let { token ->
@@ -1587,6 +1617,31 @@ private fun AdminAiConfigTab(
                         )
                     }
                 }
+            }
+        }
+
+        item {
+            Column {
+                SectionLabel("AI PROVIDER ORDER")
+                GroupedCard {
+                    val hasClaudeKey = claudeApiKey.isNotBlank()
+                    AiProviderPreference.entries.forEachIndexed { index, option ->
+                        if (index > 0) GroupedDivider()
+                        ProviderChoiceRow(
+                            title = option.label,
+                            subtitle = AiProviderPolicy.describe(option, hasClaudeKey),
+                            selected = providerPreference == option,
+                            onClick = { onSetProviderPreference(option) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "One choice, always exclusive. A Claude key is never used unless you set one here or in local.properties.",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
             }
         }
 
@@ -1817,6 +1872,18 @@ private fun AdminAiConfigTab(
         }
     }
 
+    if (showClaudeSheet) {
+        ClaudeKeySheet(
+            initialKey = claudeApiKey,
+            initialModel = claudeModel,
+            onDismiss = { showClaudeSheet = false },
+            onSave = { key, model ->
+                onSaveClaudeApiKey(key)
+                onSaveClaudeModel(model)
+            }
+        )
+    }
+
     if (showApiKeySheet) {
         ModalBottomSheet(
             onDismissRequest = { showApiKeySheet = false },
@@ -1912,6 +1979,121 @@ private fun AdminAiConfigTab(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ClaudeKeySheet(
+    initialKey: String,
+    initialModel: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit
+) {
+    val surfaces = LocalDaymarkSurfaces.current
+    var keyDraft by remember { mutableStateOf(initialKey) }
+    var modelDraft by remember { mutableStateOf(initialModel) }
+    var keyVisible by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = DaymarkSheetShape,
+        containerColor = surfaces.card,
+        tonalElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
+        ) {
+            Text(
+                "Claude API key",
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Optional backup for Smart AI. Create a key at console.anthropic.com and paste it below. Stored locally on this device, never uploaded, and only used when Gemini cannot answer.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = keyDraft,
+                onValueChange = { keyDraft = it },
+                placeholder = { Text("sk-ant-...") },
+                singleLine = true,
+                visualTransformation = if (keyVisible) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { keyVisible = !keyVisible }) {
+                        Icon(
+                            imageVector = if (keyVisible) {
+                                Icons.Filled.VisibilityOff
+                            } else {
+                                Icons.Filled.Visibility
+                            },
+                            contentDescription = if (keyVisible) "Hide API key" else "Show API key",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = modelDraft,
+                onValueChange = { modelDraft = it.take(64) },
+                placeholder = { Text(ClaudeMessages.DEFAULT_MODEL) },
+                label = { Text("Model id (optional)") },
+                supportingText = { Text("Leave blank to try Haiku, then Sonnet") },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            Button(
+                onClick = {
+                    onSave(keyDraft, modelDraft)
+                    onDismiss()
+                },
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AccentBlue,
+                    contentColor = Color.White
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+            ) {
+                Text(
+                    text = if (keyDraft.isBlank()) "Clear Claude key" else "Save Claude key",
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 44.dp)
+            ) {
+                Text("Cancel")
+            }
+        }
+    }
+}
+
 @Composable
 private fun PresetChip(label: String, onClick: () -> Unit) {
     val surfaces = LocalDaymarkSurfaces.current
@@ -1928,6 +2110,47 @@ private fun PresetChip(label: String, onClick: () -> Unit) {
             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
             color = surfaces.onAccentSurface
         )
+    }
+}
+
+/**
+ * One exclusive provider choice.
+ *
+ * A [RadioButton] rather than the switch used elsewhere: a switch can be turned off, and
+ * "no provider" is not a state this setting has - one of the three is always in force.
+ */
+@Composable
+private fun ProviderChoiceRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onClick
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
