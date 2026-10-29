@@ -130,7 +130,16 @@ fun CalendarScreen(
             DayTitleBlock(uiState)
 
             if (extra != null) {
-                Box(modifier = Modifier.padding(start = 20.dp, end = 20.dp, vertical = 14.dp)) {
+                // Four explicit sides: `padding(start, end, vertical)` matches no overload,
+                // because the axis shorthand and the per-side form cannot be mixed.
+                Box(
+                    modifier = Modifier.padding(
+                        start = 20.dp,
+                        end = 20.dp,
+                        top = 14.dp,
+                        bottom = 14.dp
+                    )
+                ) {
                     extra()
                 }
             }

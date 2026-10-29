@@ -40,6 +40,51 @@ It checks a deliberately small set (the timing/identity fields the Home timeline
 `isDeleted`, `subTasks`). `minimalTaskMap` is *meant* to be a subset — it drops `repeat`,
 `streak` and `seriesId` — so a full diff would be all noise.
 
+## `check_compose_modifiers.py` — the gap `typecheck.py` leaves
+
+`typecheck.py` drops every file that needs androidx, so **all of the UI is unchecked**.
+This is where that gap bit:
+
+```
+app/src/main/java/com/sabihon/todo/ui/activity/CalendarScreen.kt:133:41
+e: None of the following candidates is applicable:
+fun Modifier.padding(start: Dp = ..., top: Dp = ..., end: Dp = ..., bottom: Dp = ...)
+fun Modifier.padding(horizontal: Dp = ..., vertical: Dp = ...)
+fun Modifier.padding(all: Dp): Modifier
+fun Modifier.padding(paddingValues: PaddingValues): Modifier
+
+    Modifier.padding(start = 20.dp, end = 20.dp, vertical = 14.dp)
+```
+
+Neither half is wrong on its own — the axis shorthand is fine, the per-side form is fine,
+only the mixture matches nothing. Reading the line does not reveal it, and no existing
+check compiled it, so it survived two PRs and only failed on a real `assembleDebug`.
+
+The script parses every `padding(...)` / `absolutePadding(...)` call in `app/src`, splits
+the arguments (string- and paren-aware, so a comma inside a nested call does not confuse
+it), and checks the named arguments fit one declared overload:
+
+| Form | Verdict |
+|---|---|
+| `.padding(16.dp)` | ok — binds to `all` |
+| `.padding(padding)` from a `Scaffold` | ok — binds to `paddingValues` |
+| `.padding(horizontal = 8.dp, vertical = 4.dp)` | ok |
+| `.padding(start = 8.dp, top = 4.dp)` | ok |
+| `.padding(start = 20.dp, end = 20.dp, vertical = 14.dp)` | **fails** — mixed forms |
+| `.padding(start = 8.dp, 4.dp)` | **fails** — positional plus named |
+
+```bash
+python3 tools/check_compose_modifiers.py          # 240 calls, exit 0
+python3 tools/check_compose_modifiers.py --list   # print the count it checked
+```
+
+Verified by reintroducing the exact defect above: the tool reports it at the same line the
+Kotlin compiler did, and passes once fixed. It deliberately knows only these two functions
+and their four overloads — a checker that guesses about the rest of Compose would be worse
+than none.
+
+---
+
 ## `typecheck.py` — the one that catches real compile errors
 
 ```bash
@@ -52,7 +97,7 @@ Bootstraps a JDK (`jdk4py`, PyPI) and `kotlinc` (`kotlin-compiler`, npm) into
 type-checks the app iteratively: files whose unresolved symbols come from absent
 libraries (androidx, firebase SDK, hilt) are dropped, and whatever is left must compile.
 
-That currently covers **50 files** — the validator, every domain model and DTO, the
+That currently covers **53 files** — the validator, every domain model and DTO, the
 mappers, the admin policy/export logic and the AI guards. It is the check that catches
 the class of bug a syntax scan cannot see:
 
