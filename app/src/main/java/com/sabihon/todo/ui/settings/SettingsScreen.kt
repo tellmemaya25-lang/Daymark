@@ -46,7 +46,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,7 +62,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.sabihon.todo.core.datastore.ThemePref
-import com.sabihon.todo.core.ui.components.CollapsibleSection
 import com.sabihon.todo.core.ui.components.GroupedCard
 import com.sabihon.todo.core.ui.components.GroupedDivider
 import com.sabihon.todo.core.ui.components.GroupedRow
@@ -429,10 +427,9 @@ private fun ThemeOptionRow(
 /**
  * Settings > REMINDERS.
  *
- * Four choices, each showing its current value on the row, plus two rows that only appear when
- * Android is standing in the way (notifications denied, exact alarms not granted). The system
- * rows are deliberately not switches inside the app: neither permission can be granted here, so
- * pretending otherwise would produce a toggle that quietly does nothing.
+ * The page keeps a compact Profile-style row; tapping it opens a bottom sheet for the
+ * reminder controls. Permission warnings remain on the page because they need fixing, not
+ * hiding in a preference sheet.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -453,14 +450,9 @@ private fun ReminderSettingsSection(
     }
     var exactAlarmsAllowed by remember { mutableStateOf(canScheduleExactAlarms(context)) }
     var openSheet by remember { mutableStateOf(ReminderSheet.NONE) }
-    // Folded by default: four rows plus two system notices is the tallest block in Settings,
-    // and everything folded here is a preference, not a task - the summary line on the
-    // heading still reports the current state.
-    var expanded by rememberSaveable { mutableStateOf(false) }
 
     // Both answers live in Android, not in this app, so they can only change while the user is
-    // away in system settings. Re-reading on resume is what makes the row disappear once the
-    // permission is actually granted, instead of leaving a stale "Allow" behind.
+    // away in system settings. Re-reading on resume removes a stale "Allow" after permission.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -474,98 +466,22 @@ private fun ReminderSettingsSection(
     }
 
     Column {
-        CollapsibleSection(
-            title = "REMINDERS",
-            expanded = expanded,
-            onToggle = { expanded = !expanded },
-            summary = if (enabled) {
-                "On · ${ReminderPolicy.describeLead(leadMinutes)} · ${alertStyle.label}"
-            } else {
-                "Off - nothing is scheduled"
-            }
-        ) {
-            GroupedCard {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Reminders",
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = if (enabled) {
-                                "Tasks you set a reminder on will notify you"
-                            } else {
-                                "Off - nothing is scheduled, existing reminders stay silent"
-                            },
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontSize = 12.sp,
-                                lineHeight = 17.sp
-                            ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Switch(
-                        checked = enabled,
-                        onCheckedChange = { onToggleEnabled(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = AccentBlue
-                        )
-                    )
-                }
-
-                GroupedDivider()
-                GroupedRow(
-                    label = "Default reminder",
-                    supporting = "Applied to new and edited reminders",
-                    value = ReminderPolicy.describeLead(leadMinutes),
-                    onClick = { openSheet = ReminderSheet.LEAD }
-                )
-
-                GroupedDivider()
-                GroupedRow(
-                    label = "Alert style",
-                    supporting = ReminderPolicy.describeStyle(alertStyle),
-                    value = alertStyle.label,
-                    onClick = { openSheet = ReminderSheet.STYLE }
-                )
-
-                GroupedDivider()
-                GroupedRow(
-                    label = "Snooze length",
-                    supporting = "How long the Snooze button waits",
-                    value = "$snoozeMinutes min",
-                    onClick = { openSheet = ReminderSheet.SNOOZE }
-                )
-            }
-
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = if (alertStyle == ReminderAlertStyle.ALARM) {
-                    "Alarm wakes the screen and shows the reminder over the lock screen."
+        SectionLabel("REMINDERS")
+        GroupedCard {
+            GroupedRow(
+                label = "Reminders",
+                supporting = if (enabled) {
+                    "${ReminderPolicy.describeLead(leadMinutes)} · ${alertStyle.label} · Snooze $snoozeMinutes min"
                 } else {
-                    "Sound and vibration are managed by Android once the channel is created."
+                    "Off - nothing is scheduled"
                 },
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 15.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp)
+                value = if (enabled) "On" else "Off",
+                onClick = { openSheet = ReminderSheet.OPTIONS }
             )
         }
 
-        // Outside the fold on purpose: these two are not preferences, they are things
-        // Android is currently blocking. Hiding a fix behind a chevron is how it stays
-        // broken - and the reason someone opens this screen in the first place.
+        // Outside the sheet on purpose: these are system blocks, not preferences. Hiding a fix
+        // behind another tap is how a reminder stays broken.
         if (!notificationsAllowed || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !exactAlarmsAllowed)) {
             Spacer(Modifier.height(10.dp))
             GroupedCard {
@@ -590,58 +506,42 @@ private fun ReminderSettingsSection(
         }
     }
 
-    when (openSheet) {
-        ReminderSheet.NONE -> Unit
-        ReminderSheet.LEAD -> OptionSheet(
-            title = "Default reminder",
-            options = ReminderSettings.LEAD_OPTIONS.map { ReminderPolicy.describeLead(it) },
-            selectedIndex = ReminderSettings.LEAD_OPTIONS.indexOf(leadMinutes)
-                .coerceAtLeast(0),
-            onSelect = { index ->
-                onLeadChange(ReminderSettings.LEAD_OPTIONS[index])
-                openSheet = ReminderSheet.NONE
-            },
-            onDismiss = { openSheet = ReminderSheet.NONE }
-        )
-        ReminderSheet.STYLE -> OptionSheet(
-            title = "Alert style",
-            options = ReminderAlertStyle.entries.map { "${it.label} - ${it.summary}" },
-            selectedIndex = ReminderAlertStyle.entries.indexOf(alertStyle).coerceAtLeast(0),
-            onSelect = { index ->
-                onStyleChange(ReminderAlertStyle.entries[index])
-                openSheet = ReminderSheet.NONE
-            },
-            onDismiss = { openSheet = ReminderSheet.NONE }
-        )
-        ReminderSheet.SNOOZE -> OptionSheet(
-            title = "Snooze length",
-            options = ReminderSettings.SNOOZE_OPTIONS.map { "$it minutes" },
-            selectedIndex = ReminderSettings.SNOOZE_OPTIONS.indexOf(snoozeMinutes)
-                .coerceAtLeast(0),
-            onSelect = { index ->
-                onSnoozeChange(ReminderSettings.SNOOZE_OPTIONS[index])
-                openSheet = ReminderSheet.NONE
-            },
-            onDismiss = { openSheet = ReminderSheet.NONE }
+    if (openSheet != ReminderSheet.NONE) {
+        ReminderSettingsSheet(
+            sheet = openSheet,
+            enabled = enabled,
+            leadMinutes = leadMinutes,
+            alertStyle = alertStyle,
+            snoozeMinutes = snoozeMinutes,
+            onSheetChange = { openSheet = it },
+            onToggleEnabled = onToggleEnabled,
+            onLeadChange = onLeadChange,
+            onStyleChange = onStyleChange,
+            onSnoozeChange = onSnoozeChange
         )
     }
 }
 
-private enum class ReminderSheet { NONE, LEAD, STYLE, SNOOZE }
+private enum class ReminderSheet { NONE, OPTIONS, LEAD, STYLE, SNOOZE }
 
-/** A plain radio list in a sheet: one choice, always exactly one selected. */
+/** One sheet shell, with compact rows and one-choice subviews inside it. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OptionSheet(
-    title: String,
-    options: List<String>,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit,
-    onDismiss: () -> Unit
+private fun ReminderSettingsSheet(
+    sheet: ReminderSheet,
+    enabled: Boolean,
+    leadMinutes: Int,
+    alertStyle: ReminderAlertStyle,
+    snoozeMinutes: Int,
+    onSheetChange: (ReminderSheet) -> Unit,
+    onToggleEnabled: (Boolean) -> Unit,
+    onLeadChange: (Int) -> Unit,
+    onStyleChange: (ReminderAlertStyle) -> Unit,
+    onSnoozeChange: (Int) -> Unit
 ) {
     val surfaces = LocalDaymarkSurfaces.current
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { onSheetChange(ReminderSheet.NONE) },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = DaymarkSheetShape,
         containerColor = surfaces.card,
@@ -652,40 +552,175 @@ private fun OptionSheet(
                 .fillMaxWidth()
                 .padding(start = 24.dp, end = 24.dp, bottom = 28.dp)
         ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(Modifier.height(12.dp))
-            options.forEachIndexed { index, label ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .selectable(
-                            selected = index == selectedIndex,
-                            role = Role.RadioButton,
-                            onClick = { onSelect(index) }
-                        )
-                        .padding(horizontal = 12.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            when (sheet) {
+                ReminderSheet.OPTIONS -> {
                     Text(
-                        text = label,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
+                        "Reminders",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface
                     )
-                    if (index == selectedIndex) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = null,
-                            tint = AccentBlue,
-                            modifier = Modifier.size(18.dp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Set defaults for new and edited reminders.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    GroupedCard {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Reminders",
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    text = if (enabled) {
+                                        "Tasks you set a reminder on will notify you"
+                                    } else {
+                                        "Off - nothing is scheduled; existing reminders stay silent"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 12.sp,
+                                        lineHeight = 17.sp
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Switch(
+                                checked = enabled,
+                                onCheckedChange = onToggleEnabled,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = AccentBlue
+                                )
+                            )
+                        }
+                        GroupedDivider()
+                        GroupedRow(
+                            label = "Default reminder",
+                            supporting = "Applied to new and edited reminders",
+                            value = ReminderPolicy.describeLead(leadMinutes),
+                            onClick = { onSheetChange(ReminderSheet.LEAD) }
+                        )
+                        GroupedDivider()
+                        GroupedRow(
+                            label = "Alert style",
+                            supporting = ReminderPolicy.describeStyle(alertStyle),
+                            value = alertStyle.label,
+                            onClick = { onSheetChange(ReminderSheet.STYLE) }
+                        )
+                        GroupedDivider()
+                        GroupedRow(
+                            label = "Snooze length",
+                            supporting = "How long the Snooze button waits",
+                            value = "$snoozeMinutes min",
+                            onClick = { onSheetChange(ReminderSheet.SNOOZE) }
                         )
                     }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = if (alertStyle == ReminderAlertStyle.ALARM) {
+                            "Alarm wakes the screen and shows the reminder over the lock screen."
+                        } else {
+                            "Sound and vibration are managed by Android once the channel is created."
+                        },
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 15.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
                 }
+                ReminderSheet.LEAD -> ReminderOptionContent(
+                    title = "Default reminder",
+                    options = ReminderSettings.LEAD_OPTIONS.map { ReminderPolicy.describeLead(it) },
+                    selectedIndex = ReminderSettings.LEAD_OPTIONS.indexOf(leadMinutes).coerceAtLeast(0),
+                    onBack = { onSheetChange(ReminderSheet.OPTIONS) },
+                    onSelect = { index ->
+                        onLeadChange(ReminderSettings.LEAD_OPTIONS[index])
+                        onSheetChange(ReminderSheet.OPTIONS)
+                    }
+                )
+                ReminderSheet.STYLE -> ReminderOptionContent(
+                    title = "Alert style",
+                    options = ReminderAlertStyle.entries.map { "${it.label} - ${it.summary}" },
+                    selectedIndex = ReminderAlertStyle.entries.indexOf(alertStyle).coerceAtLeast(0),
+                    onBack = { onSheetChange(ReminderSheet.OPTIONS) },
+                    onSelect = { index ->
+                        onStyleChange(ReminderAlertStyle.entries[index])
+                        onSheetChange(ReminderSheet.OPTIONS)
+                    }
+                )
+                ReminderSheet.SNOOZE -> ReminderOptionContent(
+                    title = "Snooze length",
+                    options = ReminderSettings.SNOOZE_OPTIONS.map { "$it minutes" },
+                    selectedIndex = ReminderSettings.SNOOZE_OPTIONS.indexOf(snoozeMinutes).coerceAtLeast(0),
+                    onBack = { onSheetChange(ReminderSheet.OPTIONS) },
+                    onSelect = { index ->
+                        onSnoozeChange(ReminderSettings.SNOOZE_OPTIONS[index])
+                        onSheetChange(ReminderSheet.OPTIONS)
+                    }
+                )
+                ReminderSheet.NONE -> Unit
+            }
+        }
+    }
+}
+
+/** A one-choice page inside the reminder sheet. */
+@Composable
+private fun ReminderOptionContent(
+    title: String,
+    options: List<String>,
+    selectedIndex: Int,
+    onBack: () -> Unit,
+    onSelect: (Int) -> Unit
+) {
+    val surfaces = LocalDaymarkSurfaces.current
+    TextButton(onClick = onBack) {
+        Text("‹ Reminders", color = surfaces.eyebrow)
+    }
+    Text(
+        title,
+        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Spacer(Modifier.height(12.dp))
+    options.forEachIndexed { index, label ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .selectable(
+                    selected = index == selectedIndex,
+                    role = Role.RadioButton,
+                    onClick = { onSelect(index) }
+                )
+                .padding(horizontal = 12.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            if (index == selectedIndex) {
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = AccentBlue,
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }
