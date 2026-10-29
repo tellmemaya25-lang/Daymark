@@ -86,7 +86,21 @@ consent prompt answered, exactly like the Gemini key does.
 The Admin sheet also accepts an optional **model id** override. Blank means "use the built-in
 list".
 
-## 5. Models
+## 5. Naming in the product
+
+User-facing copy says **Smart AI** and never names a provider. Settings, the consent sheet, the
+focus-plan sheet and the step suggestions all read "Smart AI" / "cloud AI service", because a
+person ranking their evening tasks does not care which company's GPU answered, and a name in the
+copy becomes a promise the app cannot keep when the order changes.
+
+Vendor names survive in exactly two places:
+
+1. **Admin → AI & Config**, where labels like "Claude API key" and the provider-order radios are
+   meaningless without them, and where an admin is pasting a key that the vendor issued.
+2. **Troubleshooting notes** that would be unfixable otherwise — `Google Cloud Console >
+   Credentials`, `Firebase Console > Build > AI Logic`, `aistudio.google.com/apikey`.
+
+## 6. Models
 
 `ClaudeMessages.modelCandidates(preferred)` yields, in order:
 
@@ -109,7 +123,7 @@ No `thinking`, `effort` or sampling parameters are sent. Current models use adap
 and some reject an explicit `{"type":"disabled"}`, so disabling it is not portable; the reply is
 filtered instead.
 
-## 6. Wire format and parsing
+## 7. Wire format and parsing
 
 `POST https://api.anthropic.com/v1/messages` with `x-api-key` and
 `anthropic-version: 2023-06-01`. `max_tokens` is required; Daymark sends 1024, which is ample
@@ -129,7 +143,7 @@ The Messages API has no JSON response mode, unlike Gemini. Three consequences, a
   nothing and would have looked like "the model returned garbage" rather than "we did not give
   it room". It fails over instead.
 
-## 7. Files
+## 8. Files
 
 | File | Role |
 |---|---|
@@ -141,7 +155,7 @@ The Messages API has no JSON response mode, unlike Gemini. Three consequences, a
 | `data/ai/FirebaseAiTaskService.kt` | `generateJsonText` walks the chain and records usage per provider |
 | `ui/admin/AdminDashboardScreen.kt` | `AI PROVIDER ORDER` card + Claude key sheet |
 
-## 8. Tests
+## 9. Tests
 
 `ClaudeMessagesTest` (17) and `AiProviderPolicyTest` (19) run on the JVM with no Android
 emulator. The policy tests include the exact regression above: a spent Gemini day with a Claude
@@ -152,7 +166,7 @@ undo the fix. `ClaudeMessagesTest` carries a small strict JSON reader that parse
 request body, so a bug in `escape()` — an unescaped control character, a broken surrogate pair —
 fails the build rather than the user's Prioritize tap.
 
-## 9. Deliberately out of scope
+## 10. Deliberately out of scope
 
 - **Streaming.** All four features await one complete JSON object; partial output has nothing to
   show and would complicate the review sheet.

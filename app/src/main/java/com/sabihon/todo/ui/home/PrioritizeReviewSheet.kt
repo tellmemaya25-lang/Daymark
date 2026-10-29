@@ -145,14 +145,14 @@ fun PrioritizeReviewSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Smart Cloud AI is turned off.",
+                        text = "Smart AI is turned off.",
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                         color = surfaces.onAccentSurface,
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(onClick = onEnableCloudAi) {
                         Text(
-                            text = "Turn on Gemini",
+                            text = "Turn on Smart AI",
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold

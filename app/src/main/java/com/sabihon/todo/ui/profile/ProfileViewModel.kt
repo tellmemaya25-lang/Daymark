@@ -241,9 +241,9 @@ class ProfileViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     successMessage = if (cleaned.isNotEmpty()) {
-                        "Gemini API key saved — Smart AI ready"
+                        "AI key saved — Smart AI ready"
                     } else {
-                        "Gemini API key cleared"
+                        "AI key cleared"
                     }
                 )
             }
