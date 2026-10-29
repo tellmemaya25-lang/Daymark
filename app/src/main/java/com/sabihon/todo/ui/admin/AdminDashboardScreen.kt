@@ -1771,7 +1771,7 @@ private fun AdminAiConfigTab(
                         onUpdateDraft {
                             it.copy(
                                 maintenanceMode = false,
-                                announcementBanner = "Smart Gemini 2.5 prioritization & step suggestions are now live."
+                                announcementBanner = "Smart AI prioritization & step suggestions are now live."
                             )
                         }
                     }

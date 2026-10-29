@@ -6,6 +6,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.sabihon.todo.core.datastore.AiPreferenceStore
+import com.sabihon.todo.core.datastore.AnnouncementPreferences
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.data.ai.AiSnapshotCache
 import com.sabihon.todo.data.ai.LocalPriorityScorer
@@ -68,11 +69,17 @@ class HomeViewModel @Inject constructor(
     private val addTaskUseCase: AddTaskUseCase,
     private val telemetry: AiTelemetry,
     private val avatarStore: AvatarStore,
+    private val announcementPreferences: AnnouncementPreferences,
     private val auth: FirebaseAuth
 ) : ViewModel() {
 
     /** Guards the single automatic suggestion load per screen lifetime. */
     private var nextSuggestionsRequested = false
+
+    // Announcement state, kept outside the UI state so both sources can re-resolve it.
+    private var liveBanner: String = ""
+    private var dismissedBanner: String = ""
+    private var maintenanceModeNow: Boolean = false
 
     private sealed interface PendingAiIntent {
         data object Prioritize : PendingAiIntent
@@ -116,19 +123,56 @@ class HomeViewModel @Inject constructor(
         observeSystemAnnouncement()
     }
 
+    /**
+     * The banner slot, resolved in one place.
+     *
+     * Two independent sources decide what it shows: the admin's current text (Firestore) and
+     * whether this device has dismissed that exact text (DataStore). Keeping both in fields
+     * and re-resolving on every change is what stops a dismissal from being undone by the
+     * next snapshot - which fires on every reconnect, not only when something changes.
+     */
     private fun observeSystemAnnouncement() {
         runCatching {
             systemBannerReg = FirebaseFirestore.getInstance()
                 .collection("system_config")
                 .document("global")
                 .addSnapshotListener { snap, _ ->
-                    val banner = snap?.getString("announcementBanner").orEmpty()
-                    val maint = snap?.getBoolean("maintenanceMode") ?: false
-                    _uiState.update {
-                        it.copy(announcementBanner = banner, maintenanceMode = maint)
-                    }
+                    liveBanner = snap?.getString("announcementBanner").orEmpty()
+                    maintenanceModeNow = snap?.getBoolean("maintenanceMode") ?: false
+                    publishAnnouncement()
                 }
         }
+        viewModelScope.launch {
+            announcementPreferences.dismissed.collectLatest { dismissed ->
+                dismissedBanner = dismissed
+                publishAnnouncement()
+            }
+        }
+    }
+
+    private fun publishAnnouncement() {
+        val text = liveBanner.trim()
+        // Maintenance is a status about the service, so it cannot be dismissed; a broadcast
+        // is about the app, and one dismissal should silence only that message.
+        val dismissible = !maintenanceModeNow
+        val suppressed = dismissible && text.isNotEmpty() && text == dismissedBanner.trim()
+        _uiState.update {
+            it.copy(
+                announcementBanner = if (suppressed) "" else liveBanner,
+                maintenanceMode = maintenanceModeNow,
+                announcementDismissible = dismissible
+            )
+        }
+    }
+
+    private fun dismissAnnouncement() {
+        val text = _uiState.value.announcementBanner
+        if (text.isBlank()) return
+        // Mirror the write locally first: the Firestore listener will fire again on the next
+        // reconnect, and it must not resurrect the banner while DataStore catches up.
+        dismissedBanner = text.trim()
+        _uiState.update { it.copy(announcementBanner = "") }
+        viewModelScope.launch { announcementPreferences.dismiss(text) }
     }
 
     override fun onCleared() {
@@ -390,6 +434,7 @@ class HomeViewModel @Inject constructor(
             HomeAction.ToggleSuggestionsExpanded -> _uiState.update {
                 it.copy(suggestionsExpanded = !it.suggestionsExpanded)
             }
+            HomeAction.DismissAnnouncement -> dismissAnnouncement()
             is HomeAction.ToggleSubTask -> toggleSubTask(action.taskId, action.subTaskId, action.isDone)
             is HomeAction.SetFilter -> {
                 _uiState.update { current ->

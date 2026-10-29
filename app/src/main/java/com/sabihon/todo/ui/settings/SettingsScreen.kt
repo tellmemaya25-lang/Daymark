@@ -46,6 +46,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +63,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.sabihon.todo.core.datastore.ThemePref
+import com.sabihon.todo.core.ui.components.CollapsibleSection
 import com.sabihon.todo.core.ui.components.GroupedCard
 import com.sabihon.todo.core.ui.components.GroupedDivider
 import com.sabihon.todo.core.ui.components.GroupedRow
@@ -451,6 +453,10 @@ private fun ReminderSettingsSection(
     }
     var exactAlarmsAllowed by remember { mutableStateOf(canScheduleExactAlarms(context)) }
     var openSheet by remember { mutableStateOf(ReminderSheet.NONE) }
+    // Folded by default: four rows plus two system notices is the tallest block in Settings,
+    // and everything folded here is a preference, not a task - the summary line on the
+    // heading still reports the current state.
+    var expanded by rememberSaveable { mutableStateOf(false) }
 
     // Both answers live in Android, not in this app, so they can only change while the user is
     // away in system settings. Re-reading on resume is what makes the row disappear once the
@@ -468,103 +474,120 @@ private fun ReminderSettingsSection(
     }
 
     Column {
-        SectionLabel("REMINDERS")
-        GroupedCard {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Reminders",
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        text = if (enabled) {
-                            "Tasks you set a reminder on will notify you"
-                        } else {
-                            "Off - nothing is scheduled, existing reminders stay silent"
-                        },
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp
-                        ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+        CollapsibleSection(
+            title = "REMINDERS",
+            expanded = expanded,
+            onToggle = { expanded = !expanded },
+            summary = if (enabled) {
+                "On · ${ReminderPolicy.describeLead(leadMinutes)} · ${alertStyle.label}"
+            } else {
+                "Off - nothing is scheduled"
+            }
+        ) {
+            GroupedCard {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Reminders",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = if (enabled) {
+                                "Tasks you set a reminder on will notify you"
+                            } else {
+                                "Off - nothing is scheduled, existing reminders stay silent"
+                            },
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(
+                        checked = enabled,
+                        onCheckedChange = { onToggleEnabled(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = AccentBlue
+                        )
                     )
                 }
-                Spacer(Modifier.width(12.dp))
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = { onToggleEnabled(it) },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = AccentBlue
+
+                GroupedDivider()
+                GroupedRow(
+                    label = "Default reminder",
+                    supporting = "Applied to new and edited reminders",
+                    value = ReminderPolicy.describeLead(leadMinutes),
+                    onClick = { openSheet = ReminderSheet.LEAD }
+                )
+
+                GroupedDivider()
+                GroupedRow(
+                    label = "Alert style",
+                    supporting = ReminderPolicy.describeStyle(alertStyle),
+                    value = alertStyle.label,
+                    onClick = { openSheet = ReminderSheet.STYLE }
+                )
+
+                GroupedDivider()
+                GroupedRow(
+                    label = "Snooze length",
+                    supporting = "How long the Snooze button waits",
+                    value = "$snoozeMinutes min",
+                    onClick = { openSheet = ReminderSheet.SNOOZE }
+                )
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = if (alertStyle == ReminderAlertStyle.ALARM) {
+                    "Alarm wakes the screen and shows the reminder over the lock screen."
+                } else {
+                    "Sound and vibration are managed by Android once the channel is created."
+                },
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 15.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+        }
+
+        // Outside the fold on purpose: these two are not preferences, they are things
+        // Android is currently blocking. Hiding a fix behind a chevron is how it stays
+        // broken - and the reason someone opens this screen in the first place.
+        if (!notificationsAllowed || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !exactAlarmsAllowed)) {
+            Spacer(Modifier.height(10.dp))
+            GroupedCard {
+                if (!notificationsAllowed) {
+                    GroupedRow(
+                        label = "Notifications are off",
+                        supporting = "Reminders cannot be shown until Android allows them",
+                        value = "Allow",
+                        onClick = { openNotificationSettings(context) }
                     )
-                )
-            }
-
-            GroupedDivider()
-            GroupedRow(
-                label = "Default reminder",
-                supporting = "Applied to new and edited reminders",
-                value = ReminderPolicy.describeLead(leadMinutes),
-                onClick = { openSheet = ReminderSheet.LEAD }
-            )
-
-            GroupedDivider()
-            GroupedRow(
-                label = "Alert style",
-                supporting = ReminderPolicy.describeStyle(alertStyle),
-                value = alertStyle.label,
-                onClick = { openSheet = ReminderSheet.STYLE }
-            )
-
-            GroupedDivider()
-            GroupedRow(
-                label = "Snooze length",
-                supporting = "How long the Snooze button waits",
-                value = "$snoozeMinutes min",
-                onClick = { openSheet = ReminderSheet.SNOOZE }
-            )
-
-            if (!notificationsAllowed) {
-                GroupedDivider()
-                GroupedRow(
-                    label = "Notifications are off",
-                    supporting = "Reminders cannot be shown until Android allows them",
-                    value = "Allow",
-                    onClick = { openNotificationSettings(context) }
-                )
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !exactAlarmsAllowed) {
-                GroupedDivider()
-                GroupedRow(
-                    label = "Exact alarms not allowed",
-                    supporting = "Reminders may arrive a few minutes late",
-                    value = "Allow",
-                    onClick = { requestExactAlarms(context) }
-                )
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !exactAlarmsAllowed) {
+                    if (!notificationsAllowed) GroupedDivider()
+                    GroupedRow(
+                        label = "Exact alarms not allowed",
+                        supporting = "Reminders may arrive a few minutes late",
+                        value = "Allow",
+                        onClick = { requestExactAlarms(context) }
+                    )
+                }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = if (alertStyle == ReminderAlertStyle.ALARM) {
-                "Alarm wakes the screen and shows the reminder over the lock screen."
-            } else {
-                "Sound and vibration are managed by Android once the channel is created."
-            },
-            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 15.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp)
-        )
     }
 
     when (openSheet) {

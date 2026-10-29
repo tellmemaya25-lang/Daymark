@@ -127,8 +127,17 @@ data class HomeUiState(
     val suggestionsExpanded: Boolean = true,
 
     // ---- live global system notice (Admin Dashboard) ----
+    /**
+     * What to show, already resolved against the dismissal below - the UI never has to
+     * decide twice whether the banner belongs on screen.
+     */
     val announcementBanner: String = "",
-    val maintenanceMode: Boolean = false
+    val maintenanceMode: Boolean = false,
+    /**
+     * False for the banner a user has dismissed. Maintenance mode is never dismissible:
+     * that one is a status about the service, not an announcement about the app.
+     */
+    val announcementDismissible: Boolean = true
 )
 
 sealed interface HomeAction {
@@ -175,4 +184,7 @@ sealed interface HomeAction {
     data class TogglePriorityProposal(val taskId: String, val checked: Boolean) : HomeAction
     data object ApplyPriorityPlan : HomeAction
     data object UndoPriorityPlan : HomeAction
+
+    /** Hides the current broadcast on this device until the text changes. */
+    data object DismissAnnouncement : HomeAction
 }

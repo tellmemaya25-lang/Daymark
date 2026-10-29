@@ -137,6 +137,12 @@ app, not about the account, and above the AI block that most people never open:
 Defaults are chosen to match the behaviour that shipped, so nobody's existing reminders change
 until they change them.
 
+The section **folds away** (`CollapsibleSection`, folded by default) because six rows in the
+middle of Settings push AI and Account off the first screen. Two rules keep the fold honest:
+the folded heading carries the current state (`On · 10 minutes before · Notification`), so a
+collapsed section never looks like a missing one; and the two system rows stay **outside** the
+fold, because a permission that is blocking reminders is a fix, not a preference.
+
 ## 7. In-app popup
 
 The receiver always fires. If an activity is in the foreground (`AppForegroundTracker`, driven
