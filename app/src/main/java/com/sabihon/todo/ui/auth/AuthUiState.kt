@@ -10,7 +10,11 @@ data class AuthUiState(
     val confirmPassword: String = "",
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
-    val successMessage: String? = null,
+    /**
+     * Set once a reset request has been accepted by Firebase. Holds the address it was
+     * sent to, and swaps the form for the "check your inbox" panel.
+     */
+    val resetSentTo: String? = null,
     val emailError: String? = null,
     val passwordError: String? = null,
     val displayNameError: String? = null,
