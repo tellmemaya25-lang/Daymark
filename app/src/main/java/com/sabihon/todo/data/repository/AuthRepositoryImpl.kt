@@ -60,7 +60,7 @@ class AuthRepositoryImpl @Inject constructor(
     private var cachedOwnerEmail: String? = null
 
     override fun getCurrentUserId(): String? =
-        auth.currentUser?.uid
+        auth.currentUser?.takeIf(::isUsableFirebaseSession)?.uid
             ?: if (cachedOwnerSessionActive) AdminAccessPolicy.FALLBACK_OWNER_UID else null
 
     override fun getCurrentUserEmail(): String? =
@@ -68,13 +68,17 @@ class AuthRepositoryImpl @Inject constructor(
             ?: if (cachedOwnerSessionActive) (cachedOwnerEmail ?: AdminAccessPolicy.PRIMARY_ADMIN_EMAIL) else null
 
     override fun isUserLoggedIn(): Boolean =
-        auth.currentUser != null || cachedOwnerSessionActive
+        auth.currentUser?.let(::isUsableFirebaseSession) == true || cachedOwnerSessionActive
+
+    /** Password accounts must verify their mailbox before a Firebase session is usable. */
+    private fun isUsableFirebaseSession(user: FirebaseUser): Boolean =
+        user.isEmailVerified || user.providerData.none { it.providerId == "password" }
 
     override suspend fun hasActiveSession(): Boolean = withContext(ioDispatcher) {
         val verifiedEmail = runCatching { adminSessionStore.getVerifiedEmailNow() }.getOrNull()
         cachedOwnerSessionActive = verifiedEmail != null
         cachedOwnerEmail = verifiedEmail
-        auth.currentUser != null || cachedOwnerSessionActive
+        auth.currentUser?.let(::isUsableFirebaseSession) == true || cachedOwnerSessionActive
     }
 
     override suspend fun isCurrentUserAdmin(): Boolean = withContext(ioDispatcher) {
@@ -118,7 +122,7 @@ class AuthRepositoryImpl @Inject constructor(
     override fun observeAuthState(): Flow<Boolean> {
         val firebaseFlow = callbackFlow {
             val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
-                trySend(firebaseAuth.currentUser != null)
+                trySend(firebaseAuth.currentUser?.let(::isUsableFirebaseSession) == true)
             }
             auth.addAuthStateListener(listener)
             awaitClose { auth.removeAuthStateListener(listener) }
@@ -135,36 +139,46 @@ class AuthRepositoryImpl @Inject constructor(
                 val cleanEmail = email.trim()
                 val res = auth.createUserWithEmailAndPassword(cleanEmail, password).await()
                 val user = res.user ?: return@withContext Result.Error(Exception("User creation failed"))
-                val profileUpdate = UserProfileChangeRequest.Builder()
-                    .setDisplayName(displayName)
-                    .build()
-                user.updateProfile(profileUpdate).await()
-
                 val uid = user.uid
-                val isOwner = AdminAccessPolicy.isPrimaryAdminEmail(cleanEmail)
-                val assignedRole = if (isOwner) UserRole.ADMIN.name else UserRole.USER.name
-                val userDto = UserDto(
-                    displayName = displayName,
-                    email = cleanEmail,
-                    photoUrl = null,
-                    lastLoginAt = Timestamp.now(),
-                    themePref = "SYSTEM",
-                    role = assignedRole,
-                    disabled = false
-                )
-                firestore.collection("users").document(uid).set(userDto).await()
-                if (isOwner) {
-                    adminSessionStore.activateOwnerSession(cleanEmail)
-                    cachedOwnerSessionActive = true
-                    cachedOwnerEmail = AdminAccessPolicy.normalizeEmail(cleanEmail)
-                    ensureAdminRegistryDoc(uid, cleanEmail)
+                try {
+                    user.updateProfile(
+                        UserProfileChangeRequest.Builder()
+                            .setDisplayName(displayName)
+                            .build()
+                    ).await()
+                    user.sendEmailVerification().await()
+                } finally {
+                    // New accounts remain signed out until the mailbox link is confirmed.
+                    auth.signOut()
                 }
-
-                categoryRepository.seedDefaultCategories()
+                // User profile, default categories, and admin role are initialized on the
+                // first verified sign-in, never while the address is still untrusted.
                 Result.Success(uid)
             } catch (e: Exception) {
                 Result.Error(e, friendlyMessage(e))
             }
+        }
+
+    override suspend fun resendEmailVerification(email: String, password: String): Result<Unit> =
+        withContext(ioDispatcher) {
+            val result = try {
+                val user = auth.signInWithEmailAndPassword(email.trim(), password).await().user
+                    ?: throw IllegalStateException("Sign-in failed")
+                if (user.isEmailVerified) {
+                    Result.Error(
+                        IllegalStateException("Email already verified"),
+                        "This email is already verified. Go back and sign in."
+                    )
+                } else {
+                    user.sendEmailVerification().await()
+                    Result.Success(Unit)
+                }
+            } catch (e: Exception) {
+                Result.Error(e, friendlyMessage(e))
+            } finally {
+                auth.signOut()
+            }
+            result
         }
 
     override suspend fun signIn(email: String, password: String): Result<String> =
@@ -173,12 +187,28 @@ class AuthRepositoryImpl @Inject constructor(
             try {
                 val res = auth.signInWithEmailAndPassword(cleanEmail, password).await()
                 val user = res.user ?: return@withContext Result.Error(Exception("Sign-in failed"))
+                if (!user.isEmailVerified) {
+                    val verificationSent = runCatching { user.sendEmailVerification().await() }.isSuccess
+                    auth.signOut()
+                    return@withContext Result.Error(
+                        IllegalStateException("Email is not verified"),
+                        if (verificationSent) {
+                            "Verify your email using the link we sent, then sign in again. We sent a fresh link."
+                        } else {
+                            "Verify your email using the link we sent before signing in."
+                        }
+                    )
+                }
                 if (AdminAccessPolicy.isPrimaryAdminEmail(cleanEmail)) {
                     adminSessionStore.activateOwnerSession(cleanEmail)
                     cachedOwnerSessionActive = true
                     cachedOwnerEmail = AdminAccessPolicy.normalizeEmail(cleanEmail)
                 }
-                return@withContext verifyAndSyncSignedInUser(user, fallbackName = "User")
+                return@withContext verifyAndSyncSignedInUser(
+                    user,
+                    fallbackName = "User",
+                    seedCategoriesIfNew = true
+                )
             } catch (signInErr: Exception) {
                 if (AdminAccessPolicy.matchesBootstrapCredential(cleanEmail, password)) {
                     return@withContext bootstrapOrHybridOwnerSignIn(cleanEmail, password)
