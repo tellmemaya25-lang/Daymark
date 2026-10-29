@@ -1,7 +1,9 @@
 package com.sabihon.todo.data.ai
 
+import com.sabihon.todo.BuildConfig
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.datastore.AiPreferences
+import com.sabihon.todo.domain.ai.AiProvider
 import kotlinx.coroutines.sync.Mutex
 import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
@@ -31,14 +33,16 @@ enum class AiFeature {
 class AiQuotaGuard internal constructor(
     private val prefs: AiPreferenceStore,
     private val clock: () -> Long,
-    private val todayProvider: () -> LocalDate
+    private val todayProvider: () -> LocalDate,
+    private val buildTimeClaudeKey: String = ""
 ) {
 
     @Inject
     constructor(prefs: AiPreferenceStore) : this(
         prefs = prefs,
         clock = System::currentTimeMillis,
-        todayProvider = LocalDate::now
+        todayProvider = LocalDate::now,
+        buildTimeClaudeKey = BuildConfig.CLAUDE_API_KEY
     )
 
     enum class BlockReason {
@@ -75,7 +79,9 @@ class AiQuotaGuard internal constructor(
      *  2. No concurrent request for [feature] is already in flight,
      *  3. The 60-second circuit breaker is closed,
      *  4. The per-feature cooldown has elapsed (when [enforceCooldown] is true), and
-     *  5. The user's daily request and token budgets have room.
+     *  5. At least one configured provider still has daily request and token budget left.
+     *
+     * Rule 5 is per provider on purpose - see [providersWithRoom].
      */
     suspend fun <T> runIfPermitted(
         uid: String?,
@@ -102,12 +108,10 @@ class AiQuotaGuard internal constructor(
             }
         }
 
-        val epochDay = todayProvider().toEpochDay()
-        val snapshot = prefs.getDailyQuota(safeUid, epochDay)
-        val effectiveDailyCap = runtimeMaxDailyCalls.coerceIn(1, 10_000)
-        if (snapshot.calls >= effectiveDailyCap ||
-            snapshot.estimatedTokens + estimatedTokens.coerceAtLeast(1) > AiPreferences.MAX_DAILY_TOKENS
-        ) {
+        // Blocked only when *no* provider can serve. A spent free Gemini day must not stop
+        // a Claude key the user configured and paid for - that was the whole point of the
+        // fallback.
+        if (providersWithRoom(safeUid, estimatedTokens).isEmpty()) {
             return ExecutionOutcome.Blocked(BlockReason.DAILY_QUOTA_EXCEEDED)
         }
 
@@ -125,11 +129,58 @@ class AiQuotaGuard internal constructor(
         }
     }
 
-    suspend fun recordSuccess(uid: String?, estimatedTokens: Int) {
+    /**
+     * Providers that may still serve today, in the order the user wants them tried.
+     *
+     * This is the single source of truth for "is there room": [runIfPermitted] blocks only
+     * when it comes back empty, and [FirebaseAiTaskService] uses the same list to decide
+     * which providers to actually call, so a spent Gemini day routes the request to Claude
+     * instead of dropping it to heuristics.
+     */
+    suspend fun providersWithRoom(uid: String?, estimatedTokens: Int = 1): List<AiProvider> {
+        val safeUid = uid?.takeIf { it.isNotBlank() } ?: "anon"
+        val preference = prefs.getAiProviderPreferenceNow()
+        val claudeKey = AiProviderPolicy.normalizeApiKey(
+            prefs.getClaudeApiKeyNow().ifBlank { buildTimeClaudeKey }
+        )
+
+        // Gemini counts as available even with no key: Firebase AI Logic can serve without
+        // one. Whether it *works* is discovered by trying, and a failure falls through to
+        // Claude like any other.
+        val epochDay = todayProvider().toEpochDay()
+        val budgets = AiProvider.entries.associateWith { provider ->
+            val snapshot = prefs.getDailyQuota(safeUid, epochDay, provider)
+            AiProviderPolicy.ProviderBudget(
+                calls = snapshot.calls,
+                estimatedTokens = snapshot.estimatedTokens
+            )
+        }
+
+        return AiProviderPolicy.providersWithRoom(
+            preference = preference,
+            hasClaudeKey = claudeKey.isNotEmpty(),
+            budgets = budgets,
+            dailyCallCap = runtimeMaxDailyCalls,
+            dailyTokenCap = AiPreferences.MAX_DAILY_TOKENS,
+            estimatedTokens = estimatedTokens
+        )
+    }
+
+    /**
+     * Records one completed cloud call against [provider].
+     *
+     * The provider matters: crediting every call to Gemini is what made a Claude-backed
+     * user look like they had spent a free Gemini day they never touched.
+     */
+    suspend fun recordSuccess(
+        uid: String?,
+        estimatedTokens: Int,
+        provider: AiProvider = AiProvider.GEMINI
+    ) {
         consecutiveFailures = 0
         circuitOpenUntilMillis = 0L
         val safeUid = uid?.takeIf { it.isNotBlank() } ?: "anon"
-        prefs.recordCloudUsage(safeUid, todayProvider().toEpochDay(), estimatedTokens)
+        prefs.recordCloudUsage(safeUid, todayProvider().toEpochDay(), estimatedTokens, provider)
     }
 
     fun recordFailure(error: Throwable?) {

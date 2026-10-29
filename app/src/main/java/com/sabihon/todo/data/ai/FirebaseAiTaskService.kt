@@ -66,6 +66,9 @@ class FirebaseAiTaskService @Inject constructor(
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Typical JSON answer size, used for the per-call token estimate recorded per provider. */
+    private val EXPECTED_OUTPUT_CHARS = 700
+
     /**
      * Built on first use, not at construction: this class is injected into ViewModels
      * that also run in previews and unit tests, where there is no Firebase to talk to.
@@ -146,10 +149,21 @@ class FirebaseAiTaskService @Inject constructor(
      * provider fails, the last exception propagates and the caller falls back to on-device
      * heuristics, which is the same path a total Gemini outage already took.
      */
-    private suspend fun generateJsonText(prompt: String, tier: AiModelTier): String? {
+    private suspend fun generateJsonText(prompt: String, tier: AiModelTier, uid: String?): String? {
         if (!isGlobalCloudAiEnabled()) {
             throw IllegalStateException("Cloud AI temporarily disabled by administrator.")
         }
+
+        val estimatedTokens = aiInputGuard.estimateTokens(
+            promptChars = prompt.length,
+            expectedOutputChars = EXPECTED_OUTPUT_CHARS
+        )
+
+        // The guard owns the budget decision so the pre-call gate and this chain can never
+        // disagree: a provider that is out of daily room is skipped here, not attempted and
+        // allowed to fail.
+        val withRoom = aiQuotaGuard.providersWithRoom(uid, estimatedTokens)
+        val preference = aiPreferences.getAiProviderPreferenceNow()
 
         // Trimmed here as well as on save: a key typed straight into local.properties has
         // been through no normalisation at all.
@@ -158,18 +172,28 @@ class FirebaseAiTaskService @Inject constructor(
         )
 
         val chain = AiProviderPolicy.chain(
-            preference = aiPreferences.getAiProviderPreferenceNow(),
-            geminiUsable = true,
-            hasClaudeKey = claudeKey.isNotEmpty()
+            preference = preference,
+            geminiUsable = AiProvider.GEMINI in withRoom,
+            hasClaudeKey = claudeKey.isNotEmpty() && AiProvider.CLAUDE in withRoom
         )
+
+        if (chain.isEmpty()) {
+            // Reached only when the gate was bypassed or the day rolled over mid-flight.
+            throw IllegalStateException("Daily AI limit reached for every configured provider")
+        }
 
         var lastError: Exception? = null
         for (provider in chain) {
             try {
-                return when (provider) {
+                val text = when (provider) {
                     AiProvider.GEMINI -> generateWithGemini(prompt, tier)
                     AiProvider.CLAUDE -> generateWithClaude(claudeKey, prompt)
                 }
+                // Recorded here because only this layer knows which provider actually
+                // answered. Crediting every call to Gemini is what made a Claude-backed
+                // day look like a spent free tier.
+                aiQuotaGuard.recordSuccess(uid, estimatedTokens, provider)
+                return text
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 lastError = e
@@ -389,12 +413,13 @@ class FirebaseAiTaskService @Inject constructor(
 
     override suspend fun parseQuickAdd(
         input: String,
-        categories: List<Category>
+        categories: List<Category>,
+        uid: String?
     ): Result<AiTaskDraft> {
         if (input.isBlank()) return Result.Error(IllegalArgumentException("Nothing to read"))
 
         return try {
-            val text: String? = generateJsonText(quickAddPrompt(input, categories), AiModelTier.FLASH_LITE)
+            val text: String? = generateJsonText(quickAddPrompt(input, categories), AiModelTier.FLASH_LITE, uid)
             val payload = text?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned nothing usable"))
@@ -408,7 +433,8 @@ class FirebaseAiTaskService @Inject constructor(
 
     override suspend fun prioritizeTasks(
         tasks: List<PromptTaskItem>,
-        modelTier: AiModelTier
+        modelTier: AiModelTier,
+        uid: String?
     ): Result<CloudPrioritizationDraft> {
         if (tasks.isEmpty()) return Result.Error(IllegalArgumentException("No open tasks to prioritize"))
         refreshRuntimeAiConfig()
@@ -417,7 +443,7 @@ class FirebaseAiTaskService @Inject constructor(
         }
 
         return try {
-            val rawText = generateJsonText(prioritizePrompt(tasks), modelTier)
+            val rawText = generateJsonText(prioritizePrompt(tasks), modelTier, uid)
             val payload = rawText?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned no prioritization JSON"))
@@ -432,7 +458,8 @@ class FirebaseAiTaskService @Inject constructor(
     override suspend fun suggestSubTasks(
         title: String,
         description: String?,
-        existingSubTasks: List<String>
+        existingSubTasks: List<String>,
+        uid: String?
     ): Result<List<String>> {
         if (title.isBlank()) return Result.Error(IllegalArgumentException("Nothing to break down"))
         refreshRuntimeAiConfig()
@@ -443,7 +470,8 @@ class FirebaseAiTaskService @Inject constructor(
         return try {
             val rawText = generateJsonText(
                 subTaskPrompt(title, description, existingSubTasks),
-                AiModelTier.FLASH_LITE
+                AiModelTier.FLASH_LITE,
+                uid
             )
             val payload = rawText?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
@@ -462,7 +490,8 @@ class FirebaseAiTaskService @Inject constructor(
     }
 
     override suspend fun suggestNextTasks(
-        context: SuggestionContext
+        context: SuggestionContext,
+        uid: String?
     ): Result<List<SuggestedTaskCandidate>> {
         if (context.openTitles.isEmpty() && context.recentCompletedTitles.isEmpty()) {
             return Result.Error(IllegalArgumentException("Nothing to suggest from yet"))
@@ -473,7 +502,7 @@ class FirebaseAiTaskService @Inject constructor(
         }
 
         return try {
-            val rawText = generateJsonText(nextTaskPrompt(context), AiModelTier.FLASH_LITE)
+            val rawText = generateJsonText(nextTaskPrompt(context), AiModelTier.FLASH_LITE, uid)
             val payload = rawText?.let(::jsonObject)
             if (payload.isNullOrBlank()) {
                 Result.Error(IllegalStateException("The model returned no suggestions"))

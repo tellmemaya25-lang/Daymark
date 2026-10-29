@@ -148,7 +148,7 @@ class PrioritizeTasksUseCase internal constructor(
             estimatedTokens = estimatedTokens,
             enforceCooldown = !forceRefresh
         ) {
-            callCloudWithSingleTransientRetry(promptItems, tier)
+            callCloudWithSingleTransientRetry(promptItems, tier, uid)
         }
 
         return when (execution) {
@@ -161,13 +161,13 @@ class PrioritizeTasksUseCase internal constructor(
                 )
                 val blockedNote = when (execution.reason) {
                     AiQuotaGuard.BlockReason.DAILY_QUOTA_EXCEEDED ->
-                        "Daily Gemini limit reached (25/day) — using offline smart rules until tomorrow."
+                        "Daily AI limit reached on every provider — using offline smart rules until tomorrow."
                     AiQuotaGuard.BlockReason.CLOUD_DISABLED ->
                         "Smart Cloud AI is turned off in Settings."
                     AiQuotaGuard.BlockReason.COOLDOWN,
                     AiQuotaGuard.BlockReason.IN_FLIGHT,
                     AiQuotaGuard.BlockReason.CIRCUIT_OPEN ->
-                        "Gemini is cooling down briefly — tap ↻ to retry now."
+                        "AI is cooling down briefly — tap ↻ to retry now."
                 }
                 localPlan.copy(fallbackNote = blockedNote)
             }
@@ -186,7 +186,8 @@ class PrioritizeTasksUseCase internal constructor(
                     }
 
                 if (sanitized != null) {
-                    quotaGuard.recordSuccess(uid, estimatedTokens)
+                    // Counting is the service's job: it alone knows whether Gemini or Claude
+                    // answered, and the daily budget is per provider.
                     snapshotCache.put(uid, today, activeTasks, sanitized)
                     telemetry.logCall(
                         feature = FirebaseAiTelemetry.FEATURE_PRIORITIZE,
@@ -217,12 +218,13 @@ class PrioritizeTasksUseCase internal constructor(
      */
     private suspend fun callCloudWithSingleTransientRetry(
         items: List<PromptTaskItem>,
-        tier: AiModelTier
+        tier: AiModelTier,
+        uid: String?
     ): Result<CloudPrioritizationDraft>? = withTimeoutOrNull(TIMEOUT_MS) {
-        val first = aiTaskService.prioritizeTasks(items, tier)
+        val first = aiTaskService.prioritizeTasks(items, tier, uid)
         if (first is Result.Error && isTransientUnavailable(first.exception)) {
             delay(RETRY_DELAY_MS)
-            aiTaskService.prioritizeTasks(items, tier)
+            aiTaskService.prioritizeTasks(items, tier, uid)
         } else {
             first
         }

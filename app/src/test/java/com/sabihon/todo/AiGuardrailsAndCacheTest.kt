@@ -10,6 +10,8 @@ import com.sabihon.todo.data.ai.AiRouter
 import com.sabihon.todo.data.ai.AiSnapshotCache
 import com.sabihon.todo.data.ai.LocalPriorityScorer
 import com.sabihon.todo.domain.ai.AiModelTier
+import com.sabihon.todo.domain.ai.AiProvider
+import com.sabihon.todo.domain.ai.AiProviderPreference
 import com.sabihon.todo.domain.ai.AiSource
 import com.sabihon.todo.domain.ai.PrioritizationPlan
 import com.sabihon.todo.domain.ai.TaskPriorityRecommendation
@@ -85,6 +87,60 @@ class AiGuardrailsAndCacheTest {
     }
 
     // ---- AiQuotaGuard ----
+
+    /**
+     * The 2026-10-29 bug report: a Claude key was saved, the free Gemini day was spent, and
+     * Smart AI still dropped to offline rules. One bucket was shared by both providers, so
+     * running out of the free one switched off the paid one.
+     */
+    @Test
+    fun `a spent gemini day is served by claude instead of blocked`() = runTest {
+        val fakePrefs = FakeAiPreferenceStore(cloudEnabledInitial = true, savedClaudeKey = "sk-ant-test-key")
+        var currentDay = today
+        val quotaGuard = AiQuotaGuard(
+            prefs = fakePrefs,
+            clock = { 1_000_000L },
+            todayProvider = { currentDay }
+        )
+
+        repeat(AiPreferences.MAX_DAILY_CLOUD_CALLS) {
+            fakePrefs.recordCloudUsage("uid-1", currentDay.toEpochDay(), 200)
+        }
+
+        assertEquals(
+            listOf(AiProvider.CLAUDE),
+            quotaGuard.providersWithRoom("uid-1", estimatedTokens = 500)
+        )
+
+        val outcome = quotaGuard.runIfPermitted("uid-1", AiFeature.PRIORITIZE, estimatedTokens = 500) {
+            "served by claude"
+        }
+        assertEquals(
+            AiQuotaGuard.ExecutionOutcome.Executed("served by claude"),
+            outcome
+        )
+    }
+
+    @Test
+    fun `a spent gemini day still blocks when no claude key is saved`() = runTest {
+        val fakePrefs = FakeAiPreferenceStore(cloudEnabledInitial = true, savedClaudeKey = "")
+        val currentDay = today
+        val quotaGuard = AiQuotaGuard(
+            prefs = fakePrefs,
+            clock = { 1_000_000L },
+            todayProvider = { currentDay }
+        )
+
+        repeat(AiPreferences.MAX_DAILY_CLOUD_CALLS) {
+            fakePrefs.recordCloudUsage("uid-1", currentDay.toEpochDay(), 200)
+        }
+
+        assertEquals(
+            AiQuotaGuard.ExecutionOutcome.Blocked(AiQuotaGuard.BlockReason.DAILY_QUOTA_EXCEEDED),
+            quotaGuard.runIfPermitted("uid-1", AiFeature.PRIORITIZE, estimatedTokens = 500) { "never" }
+        )
+    }
+
 
     @Test
     fun `quota guard enforces cooldown, daily cap, and 60s circuit breaker on 429`() = runTest {
@@ -232,8 +288,13 @@ class AiGuardrailsAndCacheTest {
 
 internal class FakeAiPreferenceStore(
     cloudEnabledInitial: Boolean = true,
-    consentPromptedInitial: Boolean = true
+    consentPromptedInitial: Boolean = true,
+    private val savedClaudeKey: String = "",
+    private var preference: AiProviderPreference = AiProviderPreference.AUTO
 ) : AiPreferenceStore {
+
+    override suspend fun getClaudeApiKeyNow(): String = savedClaudeKey
+    override suspend fun getAiProviderPreferenceNow(): AiProviderPreference = preference
 
     private val cloudFlow = MutableStateFlow(cloudEnabledInitial)
     private val consentFlow = MutableStateFlow(consentPromptedInitial)
@@ -250,11 +311,18 @@ internal class FakeAiPreferenceStore(
         consentFlow.value = true
     }
 
-    override fun observeDailyCalls(uid: String?, epochDay: Long): Flow<Int> =
-        MutableStateFlow(quotas["${uid ?: "anon"}:$epochDay"]?.calls ?: 0)
+    override fun observeDailyCalls(
+        uid: String?,
+        epochDay: Long,
+        provider: AiProvider
+    ): Flow<Int> = MutableStateFlow(quotas["${uid ?: "anon"}:${provider.name}:$epochDay"]?.calls ?: 0)
 
-    override suspend fun getDailyQuota(uid: String, epochDay: Long): DailyAiQuotaSnapshot =
-        quotas["$uid:$epochDay"] ?: DailyAiQuotaSnapshot(epochDay = epochDay, calls = 0, estimatedTokens = 0)
+    override suspend fun getDailyQuota(
+        uid: String,
+        epochDay: Long,
+        provider: AiProvider
+    ): DailyAiQuotaSnapshot = quotas["$uid:${provider.name}:$epochDay"]
+        ?: DailyAiQuotaSnapshot(epochDay = epochDay, calls = 0, estimatedTokens = 0)
 
     private val dismissed = linkedSetOf<String>()
 
@@ -268,9 +336,14 @@ internal class FakeAiPreferenceStore(
         dismissed.clear()
     }
 
-    override suspend fun recordCloudUsage(uid: String, epochDay: Long, estimatedTokens: Int) {
-        val key = "$uid:$epochDay"
-        val prev = getDailyQuota(uid, epochDay)
+    override suspend fun recordCloudUsage(
+        uid: String,
+        epochDay: Long,
+        estimatedTokens: Int,
+        provider: AiProvider
+    ) {
+        val key = "$uid:${provider.name}:$epochDay"
+        val prev = getDailyQuota(uid, epochDay, provider)
         quotas[key] = prev.copy(
             calls = prev.calls + 1,
             estimatedTokens = prev.estimatedTokens + estimatedTokens

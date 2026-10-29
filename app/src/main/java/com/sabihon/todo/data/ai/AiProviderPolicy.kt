@@ -37,6 +37,49 @@ object AiProviderPolicy {
         }
     }
 
+    /** How much of today's allowance one provider has already spent. */
+    data class ProviderBudget(val calls: Int, val estimatedTokens: Int) {
+        companion object {
+            val EMPTY = ProviderBudget(calls = 0, estimatedTokens = 0)
+        }
+    }
+
+    /**
+     * The providers that may still serve today, in the user's preferred order.
+     *
+     * [chain] answers "what is configured"; this answers "what is configured *and* still has
+     * budget". They are separate because the failure the user hits is one spent day on one
+     * provider: a free Gemini cap must route the request to a paid Claude key rather than
+     * switch Smart AI off for the rest of the day.
+     *
+     * @param budgets today's usage per provider. Missing entries mean untouched.
+     */
+    fun providersWithRoom(
+        preference: AiProviderPreference,
+        hasClaudeKey: Boolean,
+        budgets: Map<AiProvider, ProviderBudget>,
+        dailyCallCap: Int,
+        dailyTokenCap: Int,
+        estimatedTokens: Int
+    ): List<AiProvider> {
+        val callCap = dailyCallCap.coerceIn(1, MAX_DAILY_CALLS)
+        val callsNeeded = estimatedTokens.coerceAtLeast(1)
+
+        fun hasRoom(provider: AiProvider): Boolean {
+            val used = budgets[provider] ?: ProviderBudget.EMPTY
+            return used.calls < callCap && used.estimatedTokens + callsNeeded <= dailyTokenCap
+        }
+
+        return chain(
+            preference = preference,
+            geminiUsable = true,
+            hasClaudeKey = hasClaudeKey
+        ).filter(::hasRoom)
+    }
+
+    /** Matches the ceiling the admin config is clamped to. */
+    const val MAX_DAILY_CALLS = 10_000
+
     /**
      * Cleans a pasted key.
      *

@@ -125,7 +125,7 @@ Because Daymark is a **serverless mobile architecture** talking directly to Fire
 ```mermaid
 flowchart LR
     Tap["User Taps ✨"] --> ID["1. Identity & Consent Gate<br/>FirebaseAuth.uid != null<br/>&& AiPreferences.cloudEnabled"]
-    ID --> QG["2. On-Device AiQuotaGuard<br/>• Per-feature Mutex (single-flight)<br/>• 15s manual tap cooldown<br/>• 25 calls & 40k tok / uid / day"]
+    ID --> QG["2. On-Device AiQuotaGuard<br/>• Per-feature Mutex (single-flight)<br/>• 15s manual tap cooldown<br/>• 25 calls & 40k tok / uid / day<br/>• Per provider, so Gemini and Claude never share a bucket"]
     QG --> AC["3. Firebase App Check<br/>• Play Integrity (Release APK)<br/>• Registered Debug Token (Dev)<br/>Blocks cloned APKs & scripts"]
     AC --> FGW["4. Firebase AI Logic Gateway<br/>• Zero Gemini API key in APK<br/>• Server-enforced 10 RPM / user<br/>• Project daily quota ceiling"]
     FGW --> LLM["Gemini 3.5 Flash-Lite / Flash"]
@@ -591,7 +591,7 @@ internal data class NextTaskWireItem(
 | # | `breakdown.md` Scenario | Production Component | Daymark Implementation |
 |---|---|---|---|
 | **1** | Same query, different users | **Auth & Tenant Isolation** | `FirebaseAuth.uid` + `firestore.rules` + `uid`-prefixed `AiSnapshotCache`, wiped on `signOut()` |
-| **2** | Bot spam / essay freeloader | **Gateway, Rate & Token Budgets** | Firebase App Check (Play Integrity) + AI Logic 10 RPM cap + `AiQuotaGuard` (`Mutex`, 15 s cooldown, 25 calls & 40k tok/day, 120-char note cap) |
+| **2** | Bot spam / essay freeloader | **Gateway, Rate & Token Budgets** | Firebase App Check (Play Integrity) + AI Logic 10 RPM cap + `AiQuotaGuard` (`Mutex`, 15 s cooldown, 25 calls & 40k tok/day **per provider**, 120-char note cap) |
 | **3** | "$1 car" prompt injection & PII | **Input + Output Guardrails** | `AiInputGuard` (regex PII redaction + `<untrusted_tasks_json>`) + `AiOutputSanitizer` (closed-set `taskId`/`categoryId` whitelist, max 3 Top Focus) |
 | **4** | Repeated identical requests | **Snapshot & Semantic Cache** | `AiSnapshotCache`: SHA-256 canonical task-set hash (30m TTL) + Token Jaccard $\ge 0.85$ sub-task cache (24h TTL) |
 | **5** | Stale answers after edits | **Real-Time CDC Invalidation** | Firestore `addSnapshotListener` in `TaskRepositoryImpl` triggers surgical delta removal on completion/deletion + `HomeTaskSorter` overdue fix |

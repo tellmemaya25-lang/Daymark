@@ -19,6 +19,7 @@ import com.sabihon.todo.data.ai.AiQuotaGuard
 import com.sabihon.todo.data.ai.AiSnapshotCache
 import com.sabihon.todo.data.local.AvatarStore
 import com.sabihon.todo.core.datastore.ThemePref
+import com.sabihon.todo.domain.ai.AiProvider
 import com.sabihon.todo.domain.repository.AuthRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -59,6 +60,7 @@ data class ProfileUiState(
     val passwordError: String? = null,
     val aiCloudEnabled: Boolean = false,
     val aiDailyCalls: Int = 0,
+    val aiClaudeDailyCalls: Int = 0,
     val geminiApiKey: String = "",
     val isAdmin: Boolean = false
 )
@@ -210,6 +212,16 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             aiPreferences.observeDailyCalls(auth.currentUser?.uid).collectLatest { calls ->
                 _uiState.update { it.copy(aiDailyCalls = calls) }
+            }
+        }
+        // Separate counter because the budgets are separate: Gemini running out must not
+        // look like Claude running out.
+        viewModelScope.launch {
+            aiPreferences.observeDailyCalls(
+                uid = auth.currentUser?.uid,
+                provider = AiProvider.CLAUDE
+            ).collectLatest { calls ->
+                _uiState.update { it.copy(aiClaudeDailyCalls = calls) }
             }
         }
         viewModelScope.launch {

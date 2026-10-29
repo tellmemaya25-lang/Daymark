@@ -16,8 +16,14 @@ interface AiTaskService {
     /**
      * @param input the raw (or PII-scrubbed) sentence the user typed.
      * @param categories the user's own lists - the only ids this may return.
+     * @param uid whose cloud budget this call spends, so the per-provider daily counters
+     *   land on the right account and the right wallet. A null uid is billed as "anon".
      */
-    suspend fun parseQuickAdd(input: String, categories: List<Category>): Result<AiTaskDraft>
+    suspend fun parseQuickAdd(
+        input: String,
+        categories: List<Category>,
+        uid: String? = null
+    ): Result<AiTaskDraft>
 
     /**
      * Audits up to 25 scrubbed open tasks and returns candidate focus ranks and
@@ -25,7 +31,8 @@ interface AiTaskService {
      */
     suspend fun prioritizeTasks(
         tasks: List<PromptTaskItem>,
-        modelTier: AiModelTier = AiModelTier.FLASH_LITE
+        modelTier: AiModelTier = AiModelTier.FLASH_LITE,
+        uid: String? = null
     ): Result<CloudPrioritizationDraft> =
         Result.Error(UnsupportedOperationException("Prioritization not supported by this service"))
 
@@ -42,7 +49,8 @@ interface AiTaskService {
     suspend fun suggestSubTasks(
         title: String,
         description: String?,
-        existingSubTasks: List<String>
+        existingSubTasks: List<String>,
+        uid: String? = null
     ): Result<List<String>> =
         Result.Error(UnsupportedOperationException("Step suggestions not supported by this service"))
 
@@ -55,7 +63,8 @@ interface AiTaskService {
      *   the local heuristics and the cloud answer are judged by identical rules.
      */
     suspend fun suggestNextTasks(
-        context: SuggestionContext
+        context: SuggestionContext,
+        uid: String? = null
     ): Result<List<SuggestedTaskCandidate>> =
         Result.Error(UnsupportedOperationException("Next-task suggestions not supported by this service"))
 }

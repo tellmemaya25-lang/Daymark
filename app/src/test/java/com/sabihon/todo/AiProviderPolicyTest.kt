@@ -133,4 +133,151 @@ class AiProviderPolicyTest {
         val wantsClaudeButHasNone = AiProviderPolicy.describe(AiProviderPreference.CLAUDE, hasClaudeKey = false)
         assertTrue(wantsClaudeButHasNone.contains("Gemini"))
     }
+
+    // ---- who may serve today (the "AI not working" bug, 2026-10-29) ------------------
+
+    private fun budgets(vararg spent: Pair<AiProvider, Int>): Map<AiProvider, AiProviderPolicy.ProviderBudget> =
+        spent.associate { (provider, calls) ->
+            provider to AiProviderPolicy.ProviderBudget(calls = calls, estimatedTokens = calls * 100)
+        }
+
+    @Test
+    fun `a spent gemini day hands the request to claude instead of switching ai off`() {
+        val available = AiProviderPolicy.providersWithRoom(
+            preference = AiProviderPreference.AUTO,
+            hasClaudeKey = true,
+            budgets = budgets(AiProvider.GEMINI to 25),
+            dailyCallCap = 25,
+            dailyTokenCap = 40_000,
+            estimatedTokens = 500
+        )
+
+        assertEquals(listOf(AiProvider.CLAUDE), available)
+    }
+
+    @Test
+    fun `a spent gemini day still blocks when no claude key is configured`() {
+        val available = AiProviderPolicy.providersWithRoom(
+            preference = AiProviderPreference.AUTO,
+            hasClaudeKey = false,
+            budgets = budgets(AiProvider.GEMINI to 25),
+            dailyCallCap = 25,
+            dailyTokenCap = 40_000,
+            estimatedTokens = 500
+        )
+
+        assertTrue(available.isEmpty())
+    }
+
+    @Test
+    fun `gemini only means exactly that, even with a claude key waiting`() {
+        val available = AiProviderPolicy.providersWithRoom(
+            preference = AiProviderPreference.GEMINI,
+            hasClaudeKey = true,
+            budgets = budgets(AiProvider.GEMINI to 25),
+            dailyCallCap = 25,
+            dailyTokenCap = 40_000,
+            estimatedTokens = 500
+        )
+
+        assertTrue(available.isEmpty())
+    }
+
+    @Test
+    fun `claude first spends claude before touching the free gemini allowance`() {
+        val available = AiProviderPolicy.providersWithRoom(
+            preference = AiProviderPreference.CLAUDE,
+            hasClaudeKey = true,
+            budgets = budgets(AiProvider.GEMINI to 25),
+            dailyCallCap = 25,
+            dailyTokenCap = 40_000,
+            estimatedTokens = 500
+        )
+
+        assertEquals(listOf(AiProvider.CLAUDE), available)
+    }
+
+    @Test
+    fun `claude spending its own budget leaves gemini untouched`() {
+        val available = AiProviderPolicy.providersWithRoom(
+            preference = AiProviderPreference.AUTO,
+            hasClaudeKey = true,
+            budgets = budgets(AiProvider.CLAUDE to 25),
+            dailyCallCap = 25,
+            dailyTokenCap = 40_000,
+            estimatedTokens = 500
+        )
+
+        assertEquals(listOf(AiProvider.GEMINI), available)
+    }
+
+    @Test
+    fun `both providers spent means nothing can serve`() {
+        val available = AiProviderPolicy.providersWithRoom(
+            preference = AiProviderPreference.CLAUDE,
+            hasClaudeKey = true,
+            budgets = budgets(AiProvider.GEMINI to 25, AiProvider.CLAUDE to 25),
+            dailyCallCap = 25,
+            dailyTokenCap = 40_000,
+            estimatedTokens = 500
+        )
+
+        assertTrue(available.isEmpty())
+    }
+
+    @Test
+    fun `an untouched day offers both providers in preference order`() {
+        assertEquals(
+            listOf(AiProvider.GEMINI, AiProvider.CLAUDE),
+            AiProviderPolicy.providersWithRoom(
+                preference = AiProviderPreference.AUTO,
+                hasClaudeKey = true,
+                budgets = emptyMap(),
+                dailyCallCap = 25,
+                dailyTokenCap = 40_000,
+                estimatedTokens = 500
+            )
+        )
+        assertEquals(
+            listOf(AiProvider.CLAUDE, AiProvider.GEMINI),
+            AiProviderPolicy.providersWithRoom(
+                preference = AiProviderPreference.CLAUDE,
+                hasClaudeKey = true,
+                budgets = emptyMap(),
+                dailyCallCap = 25,
+                dailyTokenCap = 40_000,
+                estimatedTokens = 500
+            )
+        )
+    }
+
+    @Test
+    fun `the token budget closes a provider before its call count does`() {
+        val available = AiProviderPolicy.providersWithRoom(
+            preference = AiProviderPreference.AUTO,
+            hasClaudeKey = false,
+            budgets = mapOf(
+                AiProvider.GEMINI to AiProviderPolicy.ProviderBudget(calls = 2, estimatedTokens = 39_800)
+            ),
+            dailyCallCap = 25,
+            dailyTokenCap = 40_000,
+            estimatedTokens = 500
+        )
+
+        assertTrue(available.isEmpty())
+    }
+
+    @Test
+    fun `an admin cap of zero is treated as one, never as unlimited`() {
+        val available = AiProviderPolicy.providersWithRoom(
+            preference = AiProviderPreference.AUTO,
+            hasClaudeKey = false,
+            budgets = budgets(AiProvider.GEMINI to 1),
+            dailyCallCap = 0,
+            dailyTokenCap = 40_000,
+            estimatedTokens = 500
+        )
+
+        assertTrue(available.isEmpty())
+    }
 }
