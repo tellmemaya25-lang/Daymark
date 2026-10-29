@@ -14,6 +14,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import com.sabihon.todo.core.datastore.AiPreferenceStore
 import com.sabihon.todo.core.util.Result
 import com.sabihon.todo.domain.ai.AiModelTier
+import com.sabihon.todo.domain.ai.AiProvider
 import com.sabihon.todo.domain.ai.AiTaskDraft
 import com.sabihon.todo.domain.ai.AiTaskService
 import com.sabihon.todo.domain.ai.CloudPrioritizationDraft
@@ -41,21 +42,26 @@ import javax.inject.Singleton
 import javax.net.ssl.HttpsURLConnection
 
 /**
- * The only file that talks to Gemini.
+ * The only file that talks to a cloud model.
  *
- * Supports two zero-cost transports transparently:
+ * Supports two zero-cost Gemini transports transparently:
  *  1. Direct Google AI Studio Gemini API (`aistudio.google.com/apikey`) when a free key is
  *     configured in `Settings > AI` or gitignored `local.properties` (`GEMINI_API_KEY=...`) —
  *     works on Firebase Spark without upgrading to the Blaze billing plan.
  *  2. Firebase AI Logic (`Firebase.ai`), with automatic fallback to the project's
  *     `Gemini Developer API` endpoint if debug App Check blocks the first SDK call.
+ *
+ * And one paid-optional one: when Gemini cannot answer and a Claude key is configured
+ * (Admin > AI & Config or `CLAUDE_API_KEY=` in `local.properties`), the same prompt is sent
+ * to Anthropic before giving up. The order is the user's choice - see [AiProviderPolicy].
  */
 @Singleton
 class FirebaseAiTaskService @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val aiPreferences: AiPreferenceStore,
     private val aiQuotaGuard: AiQuotaGuard,
-    private val aiInputGuard: AiInputGuard
+    private val aiInputGuard: AiInputGuard,
+    private val claudeTransport: ClaudeAiTransport
 ) : AiTaskService {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -128,10 +134,73 @@ class FirebaseAiTaskService @Inject constructor(
             )
         }
 
+    /**
+     * Asks the configured providers, in order, for a JSON answer.
+     *
+     * The chain comes from [AiProviderPolicy]: Gemini first unless the user chose
+     * "Claude first", and **Claude is only ever attempted when a key is present** — with no
+     * key the chain is just Gemini and the behaviour is exactly what it was before the
+     * fallback existed.
+     *
+     * A provider that fails does not stop the chain; the first success wins. If every
+     * provider fails, the last exception propagates and the caller falls back to on-device
+     * heuristics, which is the same path a total Gemini outage already took.
+     */
     private suspend fun generateJsonText(prompt: String, tier: AiModelTier): String? {
         if (!isGlobalCloudAiEnabled()) {
             throw IllegalStateException("Cloud AI temporarily disabled by administrator.")
         }
+
+        // Trimmed here as well as on save: a key typed straight into local.properties has
+        // been through no normalisation at all.
+        val claudeKey = AiProviderPolicy.normalizeApiKey(
+            aiPreferences.getClaudeApiKeyNow().ifBlank { BuildConfig.CLAUDE_API_KEY }
+        )
+
+        val chain = AiProviderPolicy.chain(
+            preference = aiPreferences.getAiProviderPreferenceNow(),
+            geminiUsable = true,
+            hasClaudeKey = claudeKey.isNotEmpty()
+        )
+
+        var lastError: Exception? = null
+        for (provider in chain) {
+            try {
+                return when (provider) {
+                    AiProvider.GEMINI -> generateWithGemini(prompt, tier)
+                    AiProvider.CLAUDE -> generateWithClaude(claudeKey, prompt)
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                lastError = e
+                android.util.Log.w(
+                    "FirebaseAiTaskService",
+                    "${provider.label} failed: ${e.message.orEmpty().take(180)}"
+                )
+            }
+        }
+
+        throw lastError ?: IllegalStateException("No AI provider is configured")
+    }
+
+    /**
+     * One Claude call, returned as the JSON object the four features already parse.
+     *
+     * Claude has no JSON response mode, so the text is pre-flattened here with the same
+     * brace-counting extractor the Gemini path uses — a fenced or chatty reply becomes a
+     * clean object or a clear failure, never a half-parsed one.
+     */
+    private suspend fun generateWithClaude(apiKey: String, prompt: String): String {
+        val text = claudeTransport.generate(
+            apiKey = apiKey,
+            prompt = prompt,
+            preferredModel = aiPreferences.getClaudeModelNow()
+        )
+        return ClaudeMessages.extractJsonObject(text)
+            ?: throw IllegalStateException("Claude returned no JSON object")
+    }
+
+    private suspend fun generateWithGemini(prompt: String, tier: AiModelTier): String? {
         val candidates = when (tier) {
             AiModelTier.FLASH -> listOf(
                 resolvedFlashModelId,
@@ -649,12 +718,15 @@ class FirebaseAiTaskService @Inject constructor(
         """.trimIndent()
     }
 
-    /** Tolerates a stray code fence or a sentence around the object. */
-    private fun jsonObject(raw: String): String? {
-        val start = raw.indexOf('{')
-        val end = raw.lastIndexOf('}')
-        return if (start >= 0 && end > start) raw.substring(start, end + 1) else null
-    }
+    /**
+     * Finds the answer object in a model reply.
+     *
+     * Delegates to [ClaudeMessages.extractJsonObject], which brace-counts instead of taking
+     * everything between the first `{` and the last `}`. The old slice returned a
+     * syntactically broken string when a reply was truncated by `max_tokens`, so the failure
+     * surfaced as "the model returned nonsense" rather than "we cut it off".
+     */
+    private fun jsonObject(raw: String): String? = ClaudeMessages.extractJsonObject(raw)
 
     /** Quick-add wire shape. Every field is optional: a partial answer is still usable. */
     @Serializable

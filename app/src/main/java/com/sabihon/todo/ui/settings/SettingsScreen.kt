@@ -165,7 +165,7 @@ fun SettingsScreen(
                                 )
                                 Spacer(Modifier.height(3.dp))
                                 Text(
-                                    text = "Prioritize tasks and smart-fill with Gemini. Free-tier prompts may be processed by Google; offline smart rules always stay on-device.",
+                                    text = "Prioritize tasks and smart-fill with Gemini, falling back to Claude when a key is configured. Free-tier prompts may be processed by Google; offline smart rules always stay on-device.",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         fontSize = 12.sp,
                                         lineHeight = 17.sp
@@ -196,7 +196,7 @@ fun SettingsScreen(
                             GroupedDivider()
                             GroupedRow(
                                 label = "AI credentials & App Check",
-                                supporting = "Gemini key and debug token now live in Admin",
+                                supporting = "Gemini and Claude keys now live in Admin",
                                 value = "Admin",
                                 onClick = onNavigateToAdmin
                             )

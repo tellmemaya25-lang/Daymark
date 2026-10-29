@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.sabihon.todo.domain.ai.AiProviderPreference
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -76,6 +77,33 @@ interface AiPreferenceStore {
     suspend fun getGeminiApiKeyNow(): String = ""
 
     suspend fun setGeminiApiKey(key: String) = Unit
+
+    /**
+     * Optional Anthropic API key (`console.anthropic.com`), used when Gemini cannot answer.
+     *
+     * Defaults are provided on every member so existing in-memory fakes keep compiling: a
+     * store that cannot remember a key simply never offers the fallback, which is the safe
+     * direction to fail.
+     */
+    val claudeApiKey: Flow<String>
+        get() = kotlinx.coroutines.flow.flowOf("")
+
+    suspend fun getClaudeApiKeyNow(): String = ""
+
+    suspend fun setClaudeApiKey(key: String) = Unit
+
+    /** Admin override for the Claude model id; blank means "use the built-in list". */
+    suspend fun getClaudeModelNow(): String = ""
+
+    suspend fun setClaudeModel(model: String) = Unit
+
+    /** Which provider leads a request. See [com.sabihon.todo.domain.ai.AiProviderPreference]. */
+    val aiProviderPreference: Flow<AiProviderPreference>
+        get() = kotlinx.coroutines.flow.flowOf(AiProviderPreference.AUTO)
+
+    suspend fun getAiProviderPreferenceNow(): AiProviderPreference = AiProviderPreference.AUTO
+
+    suspend fun setAiProviderPreference(preference: AiProviderPreference) = Unit
 }
 
 @Singleton
@@ -87,6 +115,9 @@ class AiPreferences @Inject constructor(
     private val consentPromptedKey = booleanPreferencesKey("ai_consent_prompted")
     private val dismissedSuggestionsKey = stringSetPreferencesKey("ai_dismissed_suggestions")
     private val geminiApiKeyPref = stringPreferencesKey("ai_gemini_api_key")
+    private val claudeApiKeyPref = stringPreferencesKey("ai_claude_api_key")
+    private val claudeModelPref = stringPreferencesKey("ai_claude_model")
+    private val providerPreferencePref = stringPreferencesKey("ai_provider_preference")
 
     private fun dayKey(uid: String) = longPreferencesKey("ai_quota_${sanitizeKey(uid)}_day")
     private fun callsKey(uid: String) = intPreferencesKey("ai_quota_${sanitizeKey(uid)}_calls")
@@ -189,6 +220,49 @@ class AiPreferences @Inject constructor(
                 prefs[consentPromptedKey] = true
             }
         }
+    }
+
+    override val claudeApiKey: Flow<String> = context.aiDataStore.data.map { prefs ->
+        prefs[claudeApiKeyPref].orEmpty()
+    }
+
+    override suspend fun getClaudeApiKeyNow(): String = claudeApiKey.first()
+
+    override suspend fun setClaudeApiKey(key: String) {
+        // Same cleaning as Gemini: blank clears the key, and a saved key implies the user
+        // wants cloud AI on, so it answers the consent prompt too.
+        val cleaned = key.trim().removeSurrounding("\"").trim()
+        context.aiDataStore.edit { prefs ->
+            if (cleaned.isEmpty()) {
+                prefs.remove(claudeApiKeyPref)
+            } else {
+                prefs[claudeApiKeyPref] = cleaned
+                prefs[cloudEnabledKey] = true
+                prefs[consentPromptedKey] = true
+            }
+        }
+    }
+
+    override suspend fun getClaudeModelNow(): String = context.aiDataStore.data
+        .first()[claudeModelPref]
+        .orEmpty()
+
+    override suspend fun setClaudeModel(model: String) {
+        val cleaned = model.trim().take(64)
+        context.aiDataStore.edit { prefs ->
+            if (cleaned.isEmpty()) prefs.remove(claudeModelPref) else prefs[claudeModelPref] = cleaned
+        }
+    }
+
+    override val aiProviderPreference: Flow<AiProviderPreference> = context.aiDataStore.data.map { prefs ->
+        AiProviderPreference.fromName(prefs[providerPreferencePref])
+    }
+
+    override suspend fun getAiProviderPreferenceNow(): AiProviderPreference =
+        aiProviderPreference.first()
+
+    override suspend fun setAiProviderPreference(preference: AiProviderPreference) {
+        context.aiDataStore.edit { prefs -> prefs[providerPreferencePref] = preference.name }
     }
 
     private fun sanitizeKey(uid: String): String =
