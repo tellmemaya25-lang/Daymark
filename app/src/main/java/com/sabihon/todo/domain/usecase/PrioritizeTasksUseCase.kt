@@ -127,7 +127,7 @@ class PrioritizeTasksUseCase internal constructor(
             val note = if (!cloudEnabled) {
                 "Smart Cloud AI is turned off in Settings."
             } else {
-                "Add at least 2 open tasks for Gemini trade-off ranking."
+                "Add at least 2 open tasks for Smart AI trade-off ranking."
             }
             return localPlan.copy(fallbackNote = note)
         }
@@ -346,7 +346,7 @@ class PrioritizeTasksUseCase internal constructor(
         error: Throwable
     ): String {
         if (cloudResult == null) {
-            return "Gemini took too long to respond — tap ↻ to retry."
+            return "Smart AI took too long to respond — tap ↻ to retry."
         }
         val raw = error.message.orEmpty()
         val lower = raw.lowercase()
@@ -357,24 +357,24 @@ class PrioritizeTasksUseCase internal constructor(
                 "api_not_activated" in lower ||
                 "is disabled" in lower ||
                 "not been enabled" in lower ->
-                "Paste a free Gemini key from aistudio.google.com/apikey in Settings > AI > Gemini API key (or enable 'Vertex AI in Firebase API' in Google Cloud Console for sabihon-todo), then tap ↻."
+                "Add an AI key in Admin > AI & Config (free key: aistudio.google.com/apikey) or enable 'Vertex AI in Firebase API' in Google Cloud Console for sabihon-todo, then tap ↻."
             "app check" in lower || "appcheck" in lower || "attestation" in lower ->
                 "App Check debug token needed — go to Settings > AI > tap 'App Check debug token' to copy it, add it in Firebase Console > App Check > Apps > Manage debug tokens, then tap ↻."
             "api_key_service_blocked" in lower ||
                 "api_key_android_app_blocked" in lower ||
                 "requests to this api" in lower ||
                 "are blocked" in lower ->
-                "API key restriction blocked Gemini — allow 'Firebase AI Logic API' & 'Generative Language API' (and your debug SHA-1) in Google Cloud Console > Credentials."
+                "API key restriction blocked Smart AI — allow 'Firebase AI Logic API' & 'Generative Language API' (and your debug SHA-1) in Google Cloud Console > Credentials."
             "429" in lower || "quota" in lower || "resource_exhausted" in lower ->
-                "Gemini free-tier rate limit reached — wait a moment, then tap ↻."
+                "Free-tier AI rate limit reached — wait a moment, then tap ↻."
             "unable to resolve host" in lower || "network" in lower || "offline" in lower || "socket" in lower ->
-                "Couldn't reach Gemini (check internet connection), then tap ↻."
+                "Couldn't reach Smart AI (check internet connection), then tap ↻."
             else -> {
                 val brief = sanitizeLine(
                     raw.lineSequence().firstOrNull { it.isNotBlank() },
                     120
                 ) ?: "request failed"
-                "Gemini error ($brief) — check Firebase Console > Build > AI Logic, then tap ↻."
+                "Smart AI error ($brief) — check Firebase Console > Build > AI Logic, then tap ↻."
             }
         }
     }

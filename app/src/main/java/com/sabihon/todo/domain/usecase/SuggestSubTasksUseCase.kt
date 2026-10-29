@@ -125,7 +125,7 @@ class SuggestSubTasksUseCase private constructor(
                 description = description,
                 existing = existing,
                 messageWhenEmpty = "Smart AI is off - turn it on in Settings for suggested steps",
-                noteWhenFallback = "Suggested offline (enable Smart AI in Settings for Gemini steps)"
+                noteWhenFallback = "Suggested offline (turn on Smart AI in Settings for suggested steps)"
             )
         }
 
@@ -154,7 +154,7 @@ class SuggestSubTasksUseCase private constructor(
                         AiQuotaGuard.BlockReason.CIRCUIT_OPEN ->
                             "Suggested offline while Cloud AI reconnects"
                         AiQuotaGuard.BlockReason.CLOUD_DISABLED ->
-                            "Suggested offline (enable Smart AI in Settings for Gemini steps)"
+                            "Suggested offline (turn on Smart AI in Settings for suggested steps)"
                     }
                     return offline(
                         title = cleanTitle,
@@ -193,7 +193,7 @@ class SuggestSubTasksUseCase private constructor(
                     "api_not_activated" in errMsg ||
                     "is disabled" in errMsg ||
                     "not been enabled" in errMsg ->
-                    "Suggested offline — paste a free key from aistudio.google.com/apikey in Settings > AI > Gemini API key"
+                    "Suggested offline — add an AI key in Admin > AI & Config (free key: aistudio.google.com/apikey)"
                 "app check" in errMsg || "appcheck" in errMsg || "attestation" in errMsg ->
                     "Suggested offline — copy 'App Check debug token' from Settings > AI into Firebase Console > App Check"
                 "api_key_service_blocked" in errMsg ||
@@ -201,7 +201,7 @@ class SuggestSubTasksUseCase private constructor(
                     "are blocked" in errMsg ->
                     "Suggested offline — allow Firebase AI Logic API on your Google Cloud API key"
                 "429" in errMsg || "quota" in errMsg || "resource_exhausted" in errMsg ->
-                    "Suggested offline — Gemini rate limit reached, try again shortly"
+                    "Suggested offline — AI rate limit reached, try again shortly"
                 else ->
                     "Suggested offline (Cloud AI unavailable right now)"
             }

@@ -49,7 +49,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.sabihon.todo.core.datastore.AiPreferences
 import com.sabihon.todo.core.datastore.ThemePref
 import com.sabihon.todo.core.ui.components.GroupedCard
 import com.sabihon.todo.core.ui.components.GroupedDivider
@@ -165,7 +164,7 @@ fun SettingsScreen(
                                 )
                                 Spacer(Modifier.height(3.dp))
                                 Text(
-                                    text = "Prioritize tasks and smart-fill with Gemini, falling back to Claude when a key is configured. Free-tier prompts may be processed by Google; offline smart rules always stay on-device.",
+                                    text = "Prioritize tasks and smart-fill with Smart AI. Prompts go to a cloud AI service while this is on; offline smart rules always stay on-device.",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         fontSize = 12.sp,
                                         lineHeight = 17.sp
@@ -186,10 +185,10 @@ fun SettingsScreen(
                         GroupedDivider()
                         GroupedRow(
                             label = "Today's cloud requests",
-                            // Two numbers because there are two budgets: a spent Gemini day
-                            // no longer means Smart AI is done for the day.
-                            supporting = "${AiPreferences.MAX_DAILY_CLOUD_CALLS}/day each · tap to clear cached plan",
-                            value = "${uiState.aiDailyCalls} Gemini · ${uiState.aiClaudeDailyCalls} Claude",
+                            // One number, no vendor names: how many calls today, and the
+                            // budget behind it stays a detail of Admin.
+                            supporting = "Tap to clear the cached focus plan",
+                            value = "${uiState.aiDailyCalls + uiState.aiClaudeDailyCalls} today",
                             onClick = { viewModel.clearAiCache() }
                         )
                         if (uiState.isAdmin) {
@@ -198,7 +197,7 @@ fun SettingsScreen(
                             GroupedDivider()
                             GroupedRow(
                                 label = "AI credentials & App Check",
-                                supporting = "Gemini and Claude keys now live in Admin",
+                                supporting = "API keys now live in Admin",
                                 value = "Admin",
                                 onClick = onNavigateToAdmin
                             )
