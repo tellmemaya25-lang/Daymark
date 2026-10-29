@@ -130,7 +130,7 @@ Admin enters email + password on LoginScreen
 ### 4.2 `/system_config/global`
 | Field | Type | Default | Live Enforcement Target |
 | :--- | :--- | :--- | :--- |
-| `cloudAiGlobalEnabled` | `Boolean` | `true` | `FirebaseAiTaskService` master kill-switch (forces Rung-0 local fallback when `false`) |
+| `cloudAiGlobalEnabled` | `Boolean` | `true` | `FirebaseAiTaskService` master kill-switch - covers **every** provider, not just the first one (forces Rung-0 local fallback when `false`) |
 | `prioritizeEnabled` | `Boolean` | `true` | `FirebaseAiTaskService.prioritizeTasks` gate |
 | `suggestionsEnabled` | `Boolean` | `true` | `FirebaseAiTaskService.suggestNextTasks` & `suggestSubTasks` gate |
 | `dailyAiQuotaPerUser` | `Int` | `50` | `AiQuotaGuard.runtimeMaxDailyCalls` dynamic cap |
@@ -164,7 +164,7 @@ Aggregated via atomic `FieldValue.increment(...)` inside `FirebaseAiTelemetry`:
   8. **AI Suggestion Acceptance** (`Accepted` vs. `Dismissed` ratio)
 - **Visual Charts**:
   - **7-Day Task Velocity Chart** (Created vs. Completed daily dual bars).
-  - **7-Day AI Usage Trend** (Cloud Gemini vs. Local Rung-0 fallback volume over the past 7 days).
+  - **7-Day AI Usage Trend** (cloud AI vs. Local Rung-0 fallback volume over the past 7 days).
   - **Open Task Priority Breakdown** (`Urgent`, `High`, `Medium`, `Low` horizontal bars).
   - **User Theme & Top Categories Breakdown** (`System / Light / Dark` adoption + busiest category names).
 
@@ -187,7 +187,7 @@ Aggregated via atomic `FieldValue.increment(...)` inside `FirebaseAiTelemetry`:
   - **Delete Task**: Removes `/users/{ownerUid}/tasks/{taskId}` and logs `ADMIN_DELETE_TASK`.
 
 ### Tab 4: AI & Runtime Config
-- Live toggles for **Cloud Gemini AI (Master Switch)**, **Task Prioritization**, and **Contextual Suggestions** — all enforced in `FirebaseAiTaskService`.
+- Live toggles for **Cloud AI (Master Switch)**, **Task Prioritization**, and **Contextual Suggestions** — all enforced in `FirebaseAiTaskService`. The master switch stops Gemini and Claude together; provider choice lives under **AI PROVIDER ORDER**.
 - **Daily Cloud AI Quota per User** selector (`15`, `25`, `50`, `100`, `250`) dynamically synced into `AiQuotaGuard.runtimeMaxDailyCalls`.
 - **Broadcast System Banner**: Maintenance mode switch, 1-tap quick templates (*Scheduled Maintenance*, *AI Upgrade Live*, *Clear*), and a **Live Home Banner Preview** before saving.
 

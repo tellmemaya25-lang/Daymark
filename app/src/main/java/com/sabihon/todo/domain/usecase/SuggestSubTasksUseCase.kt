@@ -188,6 +188,8 @@ class SuggestSubTasksUseCase private constructor(
             Log.i(TAG, "steps: nothing usable came back, falling back to the offline splitter")
             val errMsg = (cloudResult as? Result.Error)?.exception?.message.orEmpty().lowercase()
             val fallbackHint = when {
+                "disabled by administrator" in errMsg ->
+                    "Suggested offline — Smart AI is paused for everyone by the administrator"
                 "has not been used" in errMsg ||
                     "service_disabled" in errMsg ||
                     "api_not_activated" in errMsg ||

@@ -877,7 +877,7 @@ private fun AdminOverviewTab(
                     val light = metrics.themeBreakdown["LIGHT"] ?: 0
                     val dark = metrics.themeBreakdown["DARK"] ?: 0
                     StatLine("Theme split (System / Light / Dark)", "$sys / $light / $dark")
-                    StatLine("Cloud Gemini 2.5 responses today", "${aiStats.cloudSuccessCount}")
+                    StatLine("Cloud AI responses today", "${aiStats.cloudSuccessCount}")
                     StatLine("Rung-0 deterministic fallbacks today", "${aiStats.localFallbackCount}")
                     StatLine("AI errors / timeouts today", "${aiStats.errorCount}")
                 }
@@ -1648,8 +1648,12 @@ private fun AdminAiConfigTab(
         item {
             GroupedCard {
                 ConfigToggleRow(
-                    title = "Cloud Gemini AI (Master Switch)",
-                    subtitle = "Disable to force instant offline Rung-0 heuristics for all users",
+                    // One switch for every provider, not just the first one: turning this
+                    // off stops Gemini and Claude alike, and the request never leaves the
+                    // device. Named "Cloud AI" so nobody reads it as a per-provider control -
+                    // Admin > AI & Config > Provider Order is where you choose between them.
+                    title = "Cloud AI (Master Switch)",
+                    subtitle = "One switch for every provider: off stops Gemini and Claude for all users and forces the offline engine. Pick between them under AI PROVIDER ORDER.",
                     checked = draft.cloudAiGlobalEnabled,
                     onCheckedChange = { enabled ->
                         onUpdateDraft { it.copy(cloudAiGlobalEnabled = enabled) }

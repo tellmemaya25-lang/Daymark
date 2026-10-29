@@ -351,6 +351,10 @@ class PrioritizeTasksUseCase internal constructor(
         val raw = error.message.orEmpty()
         val lower = raw.lowercase()
         return when {
+            // The admin master switch stops every provider, so say so instead of sending the
+            // user to a Firebase console page they cannot fix from a phone.
+            "disabled by administrator" in lower ->
+                "Smart AI is paused for everyone by the administrator."
             "vertex ai in firebase" in lower ||
                 "has not been used" in lower ||
                 "service_disabled" in lower ||
