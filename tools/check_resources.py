@@ -141,6 +141,9 @@ def collect(res_dir: Path):
             if path.parent.name == prefix or path.parent.name.startswith(prefix + "-"):
                 name = path.stem if path.suffix == ".xml" or rtype != "raw" else path.name
                 declared[rtype].add(name)
+                # Two files with one name in one bucket (`drawable/ic.xml` next to
+                # `drawable/ic.png`) is the same aapt2 error as a doubled <string>.
+                declarations[(bucket, rtype, name)].append(path)
 
     # A name may only be declared once per (bucket, type). Two declarations in the same
     # bucket - same file or two files in the same qualifier folder - is what aapt2 rejects.
