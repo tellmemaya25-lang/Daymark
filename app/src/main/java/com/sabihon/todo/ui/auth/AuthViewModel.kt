@@ -136,20 +136,45 @@ class AuthViewModel @Inject constructor(
     }
 
     fun sendPasswordReset() {
-        if (_uiState.value.email.isBlank()) {
-            _uiState.update { it.copy(emailError = "Enter your email") }
+        // Trimmed once and reused for the request, the field and the confirmation, so the
+        // message can never quote a different string from the one Firebase was given.
+        val email = PasswordResetPolicy.normalize(_uiState.value.email)
+        val problem = PasswordResetPolicy.validate(email)
+        if (problem != null) {
+            _uiState.update { it.copy(email = email, emailError = problem, isLoading = false) }
             return
         }
+
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null, successMessage = null) }
-            when (val result = authRepository.sendPasswordReset(_uiState.value.email.trim())) {
+            _uiState.update {
+                it.copy(
+                    email = email,
+                    isLoading = true,
+                    emailError = null,
+                    errorMessage = null,
+                    successMessage = null
+                )
+            }
+            when (val result = authRepository.sendPasswordReset(email)) {
                 is Result.Success -> {
-                    _uiState.update { it.copy(isLoading = false, successMessage = "Reset link sent to ${_uiState.value.email}") }
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            successMessage = PasswordResetPolicy.successMessage(email)
+                        )
+                    }
                 }
                 is Result.Error -> {
-                    _uiState.update { it.copy(isLoading = false, errorMessage = result.message ?: "Failed to send reset email") }
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            errorMessage = result.message ?: PasswordResetPolicy.FAILURE
+                        )
+                    }
                 }
-                else -> {}
+                // Not produced by this call, but leaving isLoading true would strand the
+                // button in a spinner forever if it ever were.
+                else -> _uiState.update { it.copy(isLoading = false) }
             }
         }
     }

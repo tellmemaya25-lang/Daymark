@@ -68,8 +68,8 @@ fun ForgotPasswordScreen(
         Spacer(Modifier.height(20.dp))
 
         AuthNote(
-            text = "The link signs you in once, then you can set a new password from " +
-                "Profile. Check your spam folder if it does not arrive in a minute."
+            text = "The link opens a page where you set a new password, then you can sign " +
+                "in here with it. Check your spam folder if it does not arrive in a minute."
         )
 
         Spacer(Modifier.height(6.dp))
