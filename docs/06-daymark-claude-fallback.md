@@ -42,6 +42,11 @@ Two rules are worth stating because they are decisions, not accidents:
 An empty chain means no cloud provider is usable, and the caller goes straight to the
 on-device heuristics — the same path a total Gemini outage already took.
 
+The admin **Cloud AI (Master Switch)** sits above all of this. It is checked before the chain is
+built, so turning it off stops Gemini *and* Claude for every user; it is named "Cloud AI" rather
+than after a provider precisely because it is not a per-provider control. Choosing between
+providers is what **Admin → AI PROVIDER ORDER** is for.
+
 ## 3. Budgets are per provider
 
 This is the part that turned "fallback implemented" into "fallback actually used".
