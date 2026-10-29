@@ -15,29 +15,27 @@ import org.junit.Test
 class TimelineLabelsTest {
 
     @Test
-    fun `gutter labels are zero padded to a constant width`() {
-        assertEquals("00:00", TimelineLabels.hourLabel(0))
-        assertEquals("09:00", TimelineLabels.hourLabel(9))
-        assertEquals("23:00", TimelineLabels.hourLabel(23))
+    fun `gutter labels use 12-hour time and include meridiem`() {
+        assertEquals("12:00 AM", TimelineLabels.hourLabel(0))
+        assertEquals("9:00 AM", TimelineLabels.hourLabel(9))
+        assertEquals("12:00 PM", TimelineLabels.hourLabel(12))
+        assertEquals("11:00 PM", TimelineLabels.hourLabel(23))
     }
 
     @Test
-    fun `minutes are printed as a clock time`() {
-        assertEquals("00:00", TimelineLabels.minuteLabel(0))
-        assertEquals("01:05", TimelineLabels.minuteLabel(65))
-        assertEquals("09:30", TimelineLabels.minuteLabel(570))
-        assertEquals("23:59", TimelineLabels.minuteLabel(1439))
+    fun `minute labels include the correct meridiem`() {
+        assertEquals("12:00 AM", TimelineLabels.minuteLabel(0))
+        assertEquals("1:05 AM", TimelineLabels.minuteLabel(65))
+        assertEquals("9:30 AM", TimelineLabels.minuteLabel(570))
+        assertEquals("12:00 PM", TimelineLabels.minuteLabel(720))
+        assertEquals("11:59 PM", TimelineLabels.minuteLabel(1439))
     }
 
     @Test
-    fun `the end of the day is 24 00 not 00 00`() {
-        assertEquals("24:00", TimelineLabels.minuteLabel(1440))
-        assertEquals(
-            "a block clamped to end-of-day must not look like it starts at midnight",
-            "24:00",
-            TimelineLabels.minuteLabel(1500)
-        )
-        assertEquals("00:00", TimelineLabels.minuteLabel(-30))
+    fun `end of day is shown as midnight while values are clamped`() {
+        assertEquals("12:00 AM", TimelineLabels.minuteLabel(1440))
+        assertEquals("12:00 AM", TimelineLabels.minuteLabel(1500))
+        assertEquals("12:00 AM", TimelineLabels.minuteLabel(-30))
     }
 
     @Test
@@ -53,8 +51,9 @@ class TimelineLabelsTest {
 
     @Test
     fun `a block prints its range`() {
-        assertEquals("09:00 - 10:00", TimelineLabels.timeRangeLabel(540, 600))
-        assertEquals("23:30 - 24:00", TimelineLabels.timeRangeLabel(1410, 1440))
+        assertEquals("9:00 AM - 10:00 AM", TimelineLabels.timeRangeLabel(540, 600))
+        assertEquals("11:30 PM - 12:00 AM", TimelineLabels.timeRangeLabel(1410, 1440))
+        assertEquals("11:30 AM - 12:30 PM", TimelineLabels.timeRangeLabel(690, 750))
     }
 
     @Test

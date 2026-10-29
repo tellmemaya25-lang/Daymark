@@ -19,5 +19,7 @@ data class AuthUiState(
     val passwordError: String? = null,
     val displayNameError: String? = null,
     val confirmPasswordError: String? = null,
-    val isLoggedIn: Boolean = false
+    val isLoggedIn: Boolean = false,
+    /** Non-null after Firebase sends the signup verification link. */
+    val verificationEmailSentTo: String? = null
 )

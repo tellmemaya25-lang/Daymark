@@ -6,29 +6,30 @@ package com.sabihon.todo.ui.activity
  * Split out of `CalendarScreen` because it is the part of the drawing code that can be
  * *wrong* rather than merely ugly, and it is the only part that can be tested without a
  * device: a block labelled "1h" that is really 90 minutes, or a block ending at midnight
- * printed as "00:00", is a lie in the same way a missing task is.
+ * printed as an ambiguous start time, is a lie in the same way a missing task is.
  *
- * 24-hour throughout so every gutter label is the same width and nothing shifts when the
- * clock passes 12.
+ * All timeline times use a 12-hour clock with an explicit meridiem so morning and evening
+ * blocks cannot be confused.
  */
 object TimelineLabels {
 
     private const val MINUTES_PER_HOUR = 60
-    private const val MIDNIGHT = 24 * MINUTES_PER_HOUR
+    private const val MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR
 
-    /** "08:00". */
-    fun hourLabel(hour: Int): String = "${pad2(hour)}:00"
+    /** "9:00 AM", "12:00 PM". */
+    fun hourLabel(hour: Int): String = minuteLabel(hour.coerceIn(0, 23) * MINUTES_PER_HOUR)
 
-    /**
-     * "09:30" for a minute from midnight.
-     *
-     * 1440 maps to "24:00", not "00:00": a block that runs to the end of its day must not
-     * look like it starts at midnight on its own card.
-     */
+    /** "9:30 AM" for a minute from midnight. */
     fun minuteLabel(minute: Int): String {
-        val clamped = minute.coerceIn(0, MIDNIGHT)
-        if (clamped == MIDNIGHT) return "24:00"
-        return "${pad2(clamped / MINUTES_PER_HOUR)}:${pad2(clamped % MINUTES_PER_HOUR)}"
+        val clamped = minute.coerceIn(0, MINUTES_PER_DAY)
+        val hourOfDay = (clamped / MINUTES_PER_HOUR) % 24
+        val minutes = clamped % MINUTES_PER_HOUR
+        val hourOnClock = when (val twelveHour = hourOfDay % 12) {
+            0 -> 12
+            else -> twelveHour
+        }
+        val meridiem = if (hourOfDay < 12) "AM" else "PM"
+        return "$hourOnClock:${pad2(minutes)} $meridiem"
     }
 
     /** 30 -> "30m", 60 -> "1h", 90 -> "1h 30m". */
@@ -39,7 +40,7 @@ object TimelineLabels {
         return if (rest == 0) "${hours}h" else "${hours}h ${rest}m"
     }
 
-    /** "09:00 - 09:30" — the range drawn on a block. */
+    /** "9:00 AM - 10:00 AM" — both endpoints carry their meridiem. */
     fun timeRangeLabel(startMinute: Int, endMinute: Int): String =
         "${minuteLabel(startMinute)} - ${minuteLabel(endMinute)}"
 

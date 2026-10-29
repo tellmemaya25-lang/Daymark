@@ -23,6 +23,9 @@ class AuthViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(AuthUiState())
     val uiState: StateFlow<AuthUiState> = _uiState.asStateFlow()
 
+    // Kept only in memory while the verification panel is open, for the resend action.
+    private var pendingVerificationPassword: String? = null
+
     fun onEmailChange(email: String) {
         _uiState.update { it.copy(email = email, emailError = null, errorMessage = null) }
     }
@@ -96,24 +99,50 @@ class AuthViewModel @Inject constructor(
         }
     }
 
-    fun signUp(onSuccess: () -> Unit, onAdminSuccess: () -> Unit = onSuccess) {
+    fun signUp() {
         if (!validateSignUp()) return
+        val email = _uiState.value.email.trim()
+        val password = _uiState.value.password
+        val displayName = _uiState.value.displayName.trim()
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            when (val result = authRepository.signUp(
-                email = _uiState.value.email.trim(),
-                password = _uiState.value.password,
-                displayName = _uiState.value.displayName.trim()
-            )) {
+            when (val result = authRepository.signUp(email, password, displayName)) {
                 is Result.Success -> {
-                    val isAdmin = authRepository.isCurrentUserAdmin()
-                    _uiState.update { it.copy(isLoading = false, isLoggedIn = true) }
-                    if (isAdmin) onAdminSuccess() else onSuccess()
+                    pendingVerificationPassword = password
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            isLoggedIn = false,
+                            password = "",
+                            verificationEmailSentTo = email
+                        )
+                    }
                 }
                 is Result.Error -> {
                     _uiState.update { it.copy(isLoading = false, errorMessage = result.message ?: "Sign up failed") }
                 }
-                else -> {}
+                else -> _uiState.update { it.copy(isLoading = false) }
+            }
+        }
+    }
+
+    fun resendVerificationEmail() {
+        val email = _uiState.value.verificationEmailSentTo ?: return
+        val password = pendingVerificationPassword
+        if (password == null) {
+            _uiState.update { it.copy(errorMessage = "Please return to sign up and create the account again.") }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            when (val result = authRepository.resendEmailVerification(email, password)) {
+                is Result.Success -> _uiState.update {
+                    it.copy(isLoading = false, errorMessage = "A new verification email was sent to $email.")
+                }
+                is Result.Error -> _uiState.update {
+                    it.copy(isLoading = false, errorMessage = result.message ?: "Could not resend verification email")
+                }
+                else -> _uiState.update { it.copy(isLoading = false) }
             }
         }
     }
