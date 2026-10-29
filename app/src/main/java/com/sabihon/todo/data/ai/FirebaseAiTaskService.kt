@@ -64,10 +64,31 @@ class FirebaseAiTaskService @Inject constructor(
     private val claudeTransport: ClaudeAiTransport
 ) : AiTaskService {
 
-    private val json = Json { ignoreUnknownKeys = true }
+    /**
+     * Lenient on purpose.
+     *
+     * A model is not a compiler: it will happily answer `{taskId: dinner}`, `"focusRank": "1"`
+     * or `"isTopFocus": "true"`. Strict parsing turns one such slip into "Smart AI isn't
+     * working", because the whole plan is rejected over a missing pair of quotes. Lenient
+     * mode reads the value that was obviously meant; anything genuinely broken is caught by
+     * [isJsonObject] and failed over to the next provider.
+     */
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        coerceInputValues = true
+    }
 
     /** Typical JSON answer size, used for the per-call token estimate recorded per provider. */
     private val EXPECTED_OUTPUT_CHARS = 700
+
+    /**
+     * Message thrown when a provider answers with something that is not a JSON object.
+     *
+     * The use cases match on the lowercased substring "invalid json" to show a readable note
+     * instead of raw parser output, so the two must stay in step.
+     */
+    private val INVALID_JSON_MESSAGE = "The model returned invalid JSON"
 
     /**
      * Built on first use, not at construction: this class is injected into ViewModels
@@ -185,15 +206,21 @@ class FirebaseAiTaskService @Inject constructor(
         var lastError: Exception? = null
         for (provider in chain) {
             try {
+                // A provider that returns nothing usable is a provider failure, exactly like
+                // a network error: the next one in the chain gets the prompt.
                 val text = when (provider) {
                     AiProvider.GEMINI -> generateWithGemini(prompt, tier)
                     AiProvider.CLAUDE -> generateWithClaude(claudeKey, prompt)
-                }
-                // Recorded here because only this layer knows which provider actually
-                // answered. Crediting every call to Gemini is what made a Claude-backed
-                // day look like a spent free tier.
+                } ?: throw IllegalStateException(INVALID_JSON_MESSAGE)
+                // Recorded before validation: the tokens were spent whether or not the
+                // answer was usable, and crediting every call to Gemini is what once made a
+                // Claude-backed day look like a spent free tier.
                 aiQuotaGuard.recordSuccess(uid, estimatedTokens, provider)
-                return text
+
+                val payload = ClaudeMessages.extractJsonObject(text)
+                    ?: throw IllegalStateException(INVALID_JSON_MESSAGE)
+                if (!isJsonObject(payload)) throw IllegalStateException(INVALID_JSON_MESSAGE)
+                return payload
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 lastError = e
@@ -206,6 +233,17 @@ class FirebaseAiTaskService @Inject constructor(
 
         throw lastError ?: IllegalStateException("No AI provider is configured")
     }
+
+    /**
+     * True when [text] parses as a JSON object.
+     *
+     * Done at the chain level rather than per feature so a provider that answers with prose,
+     * a truncated fragment or invalid JSON is failed over to the next provider - instead of
+     * being handed to a parser that can only reject it and drop the user to heuristics.
+     */
+    private fun isJsonObject(text: String): Boolean =
+        runCatching { json.parseToJsonElement(text) is kotlinx.serialization.json.JsonObject }
+            .getOrDefault(false)
 
     /**
      * One Claude call, returned as the JSON object the four features already parse.

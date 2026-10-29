@@ -160,7 +160,7 @@ Runs synchronously on-device **before** any text touches `FirebaseAiTaskService`
 
 #### 3.2 Output Guardrails (`AiOutputSanitizer`)
 Follows Daymark's existing `ParseQuickAddUseCase.sanitize()` philosophy — **never trust raw LLM output**:
-1. **Strict Wire Parsing**: `responseMimeType = "application/json"` + `Json { ignoreUnknownKeys = true; isLenient = false }`. Malformed JSON is rejected as a whole and triggers deterministic fallback.
+1. **Readable Wire Parsing**: `responseMimeType = "application/json"` + `Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }`. Strict parsing was the wrong call: one missing quote (`"taskId": dinner`) rejected an entire plan and surfaced `Expected beginning of the string at $.items[2]` to the user. Lenient mode reads what the model obviously meant. Anything that is not a JSON **object at all** is rejected at the chain level (`isJsonObject`) and failed over to the next provider; if every provider fails, the deterministic fallback runs as before.
 2. **Closed-World ID Whitelisting**:
    - Every `taskId` in `PrioritizationResponse` **must** exist in `openTasks.associateBy { it.id }`. Unknown IDs are dropped.
    - Every `categoryId` in `NextTaskSuggestions` **must** exist in `categories.map { it.id }.toSet()`; otherwise coerced to `null` (*Uncategorized*), never detaching a task onto a phantom list.

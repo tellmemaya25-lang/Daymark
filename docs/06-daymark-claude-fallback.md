@@ -147,6 +147,13 @@ The Messages API has no JSON response mode, unlike Gemini. Three consequences, a
 - **`stop_reason == "max_tokens"` is a failure, not a short answer.** Truncated JSON parses to
   nothing and would have looked like "the model returned garbage" rather than "we did not give
   it room". It fails over instead.
+- **A reply that is not a JSON object fails the provider, not the request.** Since Claude has no
+  JSON mode, one missing quote used to reject the whole focus plan and print
+  `Expected beginning of the string at $.items[2]` at the user. The chain now validates the
+  object and hands the prompt to the next provider, the decoder is lenient about the slips a
+  model actually makes (`taskId: dinner`, `"focusRank": "1"`, `null` for a missing field), and
+  the fallback note - when everything really did fail - reads "Smart AI sent an answer it
+  couldn't read — tap ↻ to retry" instead of quoting the parser.
 
 ## 8. Files
 

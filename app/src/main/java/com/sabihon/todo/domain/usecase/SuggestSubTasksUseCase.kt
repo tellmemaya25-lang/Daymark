@@ -190,6 +190,8 @@ class SuggestSubTasksUseCase private constructor(
             val fallbackHint = when {
                 "disabled by administrator" in errMsg ->
                     "Suggested offline — Smart AI is paused for everyone by the administrator"
+                "invalid json" in errMsg || "json token" in errMsg ->
+                    "Suggested offline — Smart AI sent an unreadable answer, try again"
                 "has not been used" in errMsg ||
                     "service_disabled" in errMsg ||
                     "api_not_activated" in errMsg ||
