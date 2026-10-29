@@ -40,6 +40,7 @@ import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.core.ui.theme.SabihonTheme
 import com.sabihon.todo.domain.reminder.ReminderSettings
 import com.sabihon.todo.domain.security.InputSecurityValidator
+import com.sabihon.todo.notifications.AlarmSignalPlayer
 import com.sabihon.todo.notifications.ReminderActionReceiver
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -60,6 +61,8 @@ class ReminderAlarmActivity : ComponentActivity() {
     @Inject
     lateinit var preferences: ReminderPreferences
 
+    private var alarmSignals: AlarmSignalPlayer? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -76,6 +79,8 @@ class ReminderAlarmActivity : ComponentActivity() {
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
             )
         }
+
+        alarmSignals = AlarmSignalPlayer(this).also { it.start() }
 
         val rawTaskId = intent.getStringExtra(EXTRA_TASK_ID).orEmpty()
         val taskId = rawTaskId.takeIf { InputSecurityValidator.isValidFirestoreDocId(it) }.orEmpty()
@@ -102,6 +107,12 @@ class ReminderAlarmActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onDestroy() {
+        alarmSignals?.stop()
+        alarmSignals = null
+        super.onDestroy()
     }
 
     private fun sendAction(action: String, taskId: String, title: String, description: String) {

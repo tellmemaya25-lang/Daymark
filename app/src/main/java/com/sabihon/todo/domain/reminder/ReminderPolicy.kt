@@ -19,9 +19,9 @@ enum class ReminderAlertStyle(
     /** Full-screen over the lock screen, with sound and vibration. */
     ALARM(
         label = "Alarm",
-        // v2 intentionally creates a fresh channel: Android freezes sound/vibration from
-        // channel creation, and the previous channel had no explicit alarm sound.
-        channelId = "task_reminders_alarm_v2",
+        // v3 resets the alarm channel after reports of devices retaining a non-alerting
+        // prior channel. Android freezes sound/vibration at first creation.
+        channelId = "task_reminders_alarm_v3",
         summary = "Full-screen alarm with sound and vibration"
     ),
 
