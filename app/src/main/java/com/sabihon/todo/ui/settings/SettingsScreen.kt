@@ -186,8 +186,10 @@ fun SettingsScreen(
                         GroupedDivider()
                         GroupedRow(
                             label = "Today's cloud requests",
-                            supporting = "Tap to clear cached focus plan",
-                            value = "${uiState.aiDailyCalls} / ${AiPreferences.MAX_DAILY_CLOUD_CALLS}",
+                            // Two numbers because there are two budgets: a spent Gemini day
+                            // no longer means Smart AI is done for the day.
+                            supporting = "${AiPreferences.MAX_DAILY_CLOUD_CALLS}/day each · tap to clear cached plan",
+                            value = "${uiState.aiDailyCalls} Gemini · ${uiState.aiClaudeDailyCalls} Claude",
                             onClick = { viewModel.clearAiCache() }
                         )
                         if (uiState.isAdmin) {

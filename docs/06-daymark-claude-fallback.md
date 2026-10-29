@@ -42,7 +42,37 @@ Two rules are worth stating because they are decisions, not accidents:
 An empty chain means no cloud provider is usable, and the caller goes straight to the
 on-device heuristics — the same path a total Gemini outage already took.
 
-## 3. Where the key lives
+## 3. Budgets are per provider
+
+This is the part that turned "fallback implemented" into "fallback actually used".
+
+`AiQuotaGuard` used to hold one 25-call, 40k-token bucket per user and to gate the request
+*before* the provider chain ran. So a spent free Gemini day blocked everything, and the user
+saw:
+
+> Daily Gemini limit reached (25/day) — using offline smart rules until tomorrow
+
+…with a working Claude key sitting in Admin, unused. The bucket was the bug: two providers were
+sharing one wallet, and the free one emptied it.
+
+Now:
+
+- each provider has its own daily call and token budget (`AiProviderPolicy.providersWithRoom`);
+- the gate blocks only when **no** provider has room;
+- the chain attempts only the providers that do, so a spent Gemini day is skipped, not tried and
+  failed over;
+- usage is recorded against the provider that answered, by `FirebaseAiTaskService` — the only
+  layer that knows.
+
+The consequence worth stating plainly: the admin "daily quota per user" now means *per provider
+per user*, so a user with both providers configured can make up to 2x that number of calls a day,
+half of them on a key they supplied and pay for themselves.
+
+The counters are keyed by provider, so the day this ships starts everyone from zero for both -
+including a Gemini bucket that had already been emptied under the old shared key. Nothing is lost
+that mattered: the old numbers were a single day's total and are meaningless the next morning.
+
+## 4. Where the key lives
 
 | Source | Precedence | Notes |
 |---|---|---|
@@ -56,7 +86,7 @@ consent prompt answered, exactly like the Gemini key does.
 The Admin sheet also accepts an optional **model id** override. Blank means "use the built-in
 list".
 
-## 4. Models
+## 5. Models
 
 `ClaudeMessages.modelCandidates(preferred)` yields, in order:
 
@@ -79,7 +109,7 @@ No `thinking`, `effort` or sampling parameters are sent. Current models use adap
 and some reject an explicit `{"type":"disabled"}`, so disabling it is not portable; the reply is
 filtered instead.
 
-## 5. Wire format and parsing
+## 6. Wire format and parsing
 
 `POST https://api.anthropic.com/v1/messages` with `x-api-key` and
 `anthropic-version: 2023-06-01`. `max_tokens` is required; Daymark sends 1024, which is ample
@@ -99,26 +129,30 @@ The Messages API has no JSON response mode, unlike Gemini. Three consequences, a
   nothing and would have looked like "the model returned garbage" rather than "we did not give
   it room". It fails over instead.
 
-## 6. Files
+## 7. Files
 
 | File | Role |
 |---|---|
 | `domain/ai/AiProvider.kt` | `AiProvider`, `AiProviderPreference` (persisted, so it lives in `domain`) |
-| `data/ai/AiProviderPolicy.kt` | Chain ordering, key normalization, user-facing summary |
+| `data/ai/AiProviderPolicy.kt` | Chain ordering, per-provider budget check, key normalization, user-facing summary |
 | `data/ai/ClaudeMessages.kt` | Request body, escaping, parsing, model candidates, error text — pure Kotlin, no Android imports |
 | `data/ai/ClaudeAiTransport.kt` | The one HTTPS call; mirrors `callGoogleAiStudioRest` |
 | `core/datastore/AiPreferences.kt` | Key, model override and preference stored in `DataStore` |
-| `data/ai/FirebaseAiTaskService.kt` | `generateJsonText` walks the chain |
+| `data/ai/FirebaseAiTaskService.kt` | `generateJsonText` walks the chain and records usage per provider |
 | `ui/admin/AdminDashboardScreen.kt` | `AI PROVIDER ORDER` card + Claude key sheet |
 
-## 7. Tests
+## 8. Tests
 
-`ClaudeMessagesTest` (17) and `AiProviderPolicyTest` (10) run on the JVM with no Android
-emulator. `ClaudeMessagesTest` carries a small strict JSON reader that parses every generated
+`ClaudeMessagesTest` (17) and `AiProviderPolicyTest` (19) run on the JVM with no Android
+emulator. The policy tests include the exact regression above: a spent Gemini day with a Claude
+key must leave `[CLAUDE]` available, and must leave nothing available without one.
+`AiGuardrailsAndCacheTest` repeats it at the guard level - spent Gemini plus a saved key must
+execute, spent Gemini without one must block - so a future refactor of the gate cannot quietly
+undo the fix. `ClaudeMessagesTest` carries a small strict JSON reader that parses every generated
 request body, so a bug in `escape()` — an unescaped control character, a broken surrogate pair —
 fails the build rather than the user's Prioritize tap.
 
-## 8. Deliberately out of scope
+## 9. Deliberately out of scope
 
 - **Streaming.** All four features await one complete JSON object; partial output has nothing to
   show and would complicate the review sheet.

@@ -1687,12 +1687,12 @@ private fun AdminAiConfigTab(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "Daily Cloud AI Quota per User",
+                    text = "Daily Cloud AI Quota per User, per Provider",
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Dynamically enforced by AiQuotaGuard before switching accounts to local heuristics.",
+                    text = "Gemini and Claude each get this many calls a day, so a spent free Gemini day fails over to Claude instead of switching Smart AI off.",
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

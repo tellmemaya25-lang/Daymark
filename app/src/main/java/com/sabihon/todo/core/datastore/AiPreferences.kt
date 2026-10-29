@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.sabihon.todo.domain.ai.AiProvider
 import com.sabihon.todo.domain.ai.AiProviderPreference
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -44,15 +45,32 @@ interface AiPreferenceStore {
     /** Updates the cloud AI switch and marks the one-time consent prompt as answered. */
     suspend fun setCloudEnabled(enabled: Boolean)
 
-    /** Live count of cloud AI calls made by [uid] on [epochDay]. */
+    /**
+     * Live count of cloud AI calls made by [uid] on [epochDay] against [provider].
+     *
+     * Budgets are per provider, not per user: a free Gemini day and a paid Claude key are
+     * different wallets, and letting one hit its cap must not switch the other off. That
+     * was the bug behind "Daily Gemini limit reached - using offline smart rules" while a
+     * Claude key sat configured and unused.
+     */
     fun observeDailyCalls(
         uid: String?,
-        epochDay: Long = LocalDate.now().toEpochDay()
+        epochDay: Long = LocalDate.now().toEpochDay(),
+        provider: AiProvider = AiProvider.GEMINI
     ): Flow<Int>
 
-    suspend fun getDailyQuota(uid: String, epochDay: Long): DailyAiQuotaSnapshot
+    suspend fun getDailyQuota(
+        uid: String,
+        epochDay: Long,
+        provider: AiProvider = AiProvider.GEMINI
+    ): DailyAiQuotaSnapshot
 
-    suspend fun recordCloudUsage(uid: String, epochDay: Long, estimatedTokens: Int)
+    suspend fun recordCloudUsage(
+        uid: String,
+        epochDay: Long,
+        estimatedTokens: Int,
+        provider: AiProvider = AiProvider.GEMINI
+    )
 
     /**
      * Ids of suggestions the user has muted with `×`.
@@ -119,9 +137,18 @@ class AiPreferences @Inject constructor(
     private val claudeModelPref = stringPreferencesKey("ai_claude_model")
     private val providerPreferencePref = stringPreferencesKey("ai_provider_preference")
 
-    private fun dayKey(uid: String) = longPreferencesKey("ai_quota_${sanitizeKey(uid)}_day")
-    private fun callsKey(uid: String) = intPreferencesKey("ai_quota_${sanitizeKey(uid)}_calls")
-    private fun tokensKey(uid: String) = intPreferencesKey("ai_quota_${sanitizeKey(uid)}_tokens")
+    // The provider is part of the key. Counters written before this change used
+    // "ai_quota_<uid>_*"; they are left behind rather than migrated, because they are
+    // day-scoped totals that stop mattering within a day and any guess about which
+    // provider spent them would be wrong half the time.
+    private fun dayKey(uid: String, provider: AiProvider) =
+        longPreferencesKey("ai_quota_${provider.name.lowercase()}_${sanitizeKey(uid)}_day")
+
+    private fun callsKey(uid: String, provider: AiProvider) =
+        intPreferencesKey("ai_quota_${provider.name.lowercase()}_${sanitizeKey(uid)}_calls")
+
+    private fun tokensKey(uid: String, provider: AiProvider) =
+        intPreferencesKey("ai_quota_${provider.name.lowercase()}_${sanitizeKey(uid)}_tokens")
 
     override val cloudEnabled: Flow<Boolean> = context.aiDataStore.data.map { prefs ->
         prefs[cloudEnabledKey] ?: false
@@ -142,36 +169,49 @@ class AiPreferences @Inject constructor(
         }
     }
 
-    override fun observeDailyCalls(uid: String?, epochDay: Long): Flow<Int> {
+    override fun observeDailyCalls(
+        uid: String?,
+        epochDay: Long,
+        provider: AiProvider
+    ): Flow<Int> {
         val safeUid = uid?.takeIf { it.isNotBlank() } ?: return kotlinx.coroutines.flow.flowOf(0)
         return context.aiDataStore.data.map { prefs ->
-            val storedDay = prefs[dayKey(safeUid)]
-            if (storedDay == epochDay) prefs[callsKey(safeUid)] ?: 0 else 0
+            val storedDay = prefs[dayKey(safeUid, provider)]
+            if (storedDay == epochDay) prefs[callsKey(safeUid, provider)] ?: 0 else 0
         }
     }
 
-    override suspend fun getDailyQuota(uid: String, epochDay: Long): DailyAiQuotaSnapshot {
+    override suspend fun getDailyQuota(
+        uid: String,
+        epochDay: Long,
+        provider: AiProvider
+    ): DailyAiQuotaSnapshot {
         val safeUid = uid.ifBlank { "anon" }
         val prefs = context.aiDataStore.data.first()
-        val storedDay = prefs[dayKey(safeUid)]
+        val storedDay = prefs[dayKey(safeUid, provider)]
         return if (storedDay == epochDay) {
             DailyAiQuotaSnapshot(
                 epochDay = epochDay,
-                calls = prefs[callsKey(safeUid)] ?: 0,
-                estimatedTokens = prefs[tokensKey(safeUid)] ?: 0
+                calls = prefs[callsKey(safeUid, provider)] ?: 0,
+                estimatedTokens = prefs[tokensKey(safeUid, provider)] ?: 0
             )
         } else {
             DailyAiQuotaSnapshot(epochDay = epochDay, calls = 0, estimatedTokens = 0)
         }
     }
 
-    override suspend fun recordCloudUsage(uid: String, epochDay: Long, estimatedTokens: Int) {
+    override suspend fun recordCloudUsage(
+        uid: String,
+        epochDay: Long,
+        estimatedTokens: Int,
+        provider: AiProvider
+    ) {
         val safeUid = uid.ifBlank { "anon" }
         val deltaTokens = estimatedTokens.coerceAtLeast(0)
         context.aiDataStore.edit { prefs ->
-            val dKey = dayKey(safeUid)
-            val cKey = callsKey(safeUid)
-            val tKey = tokensKey(safeUid)
+            val dKey = dayKey(safeUid, provider)
+            val cKey = callsKey(safeUid, provider)
+            val tKey = tokensKey(safeUid, provider)
             if (prefs[dKey] == epochDay) {
                 prefs[cKey] = (prefs[cKey] ?: 0) + 1
                 prefs[tKey] = (prefs[tKey] ?: 0) + deltaTokens

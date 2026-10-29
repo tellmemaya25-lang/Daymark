@@ -71,7 +71,7 @@ class PrioritizeTasksUseCaseTest {
             Task(id = "real-3", title = "Send invoice", priority = Priority.HIGH)
         )
 
-        coEvery { service.prioritizeTasks(any(), any()) } returns Result.Success(
+        coEvery { service.prioritizeTasks(any(), any(), any()) } returns Result.Success(
             CloudPrioritizationDraft(
                 summaryHeadline = "**Focus** on the deck first https://evil.example/click",
                 items = listOf(
@@ -128,7 +128,7 @@ class PrioritizeTasksUseCaseTest {
         )
 
         var attempts = 0
-        coEvery { service.prioritizeTasks(any(), any()) } answers {
+        coEvery { service.prioritizeTasks(any(), any(), any()) } answers {
             attempts += 1
             if (attempts == 1) {
                 Result.Error(RuntimeException("503 Service Unavailable"))
@@ -166,7 +166,7 @@ class PrioritizeTasksUseCaseTest {
             Task(id = "b", title = "Someday book", priority = Priority.LOW)
         )
 
-        coEvery { service.prioritizeTasks(any(), any()) } returns
+        coEvery { service.prioritizeTasks(any(), any(), any()) } returns
             Result.Error(RuntimeException("429 RESOURCE_EXHAUSTED"))
 
         val fallback = useCase(uid = "u1", tasks = tasks, categories = emptyList())
@@ -174,7 +174,7 @@ class PrioritizeTasksUseCaseTest {
         assertEquals(AiSource.LOCAL_FALLBACK, fallback.source)
         assertTrue(quota.isCircuitOpen())
         assertEquals("a", fallback.recommendations.first().taskId)
-        coVerify(exactly = 1) { service.prioritizeTasks(any(), any()) }
+        coVerify(exactly = 1) { service.prioritizeTasks(any(), any(), any()) }
     }
 
     @Test

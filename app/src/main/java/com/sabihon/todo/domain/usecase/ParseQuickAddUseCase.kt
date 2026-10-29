@@ -120,7 +120,7 @@ class ParseQuickAddUseCase private constructor(
                 enforceCooldown = false
             ) {
                 withTimeoutOrNull(TIMEOUT_MS) {
-                    aiTaskService.parseQuickAdd(scrubbedInput, categories)
+                    aiTaskService.parseQuickAdd(scrubbedInput, categories, uid)
                 }
             }
             when (outcome) {
@@ -135,18 +135,17 @@ class ParseQuickAddUseCase private constructor(
                         // diagnosis. Without it every failure looked identical to the
                         // feature being switched off.
                         Log.w(TAG, "quick add: the model call failed", res.exception)
-                    }
-                    if (res is Result.Success) {
-                        gate.quotaGuard.recordSuccess(uid, estimatedTokens)
-                    } else {
-                        gate.quotaGuard.recordFailure((res as? Result.Error)?.exception)
+                        // The service records a successful call itself: it is the only
+                        // layer that knows which provider answered, and the budget is per
+                        // provider. Failures are the guard's business, not the chain's.
+                        gate.quotaGuard.recordFailure(res.exception)
                     }
                     res
                 }
             }
         } else {
             withTimeoutOrNull(TIMEOUT_MS) {
-                aiTaskService.parseQuickAdd(scrubbedInput, categories)
+                aiTaskService.parseQuickAdd(scrubbedInput, categories, uid)
             }
         }
 

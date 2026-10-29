@@ -126,7 +126,7 @@ class SuggestNextTasksUseCase private constructor(
                     estimatedTokens = estimatedTokens,
                     enforceCooldown = !forceInteractive
                 ) {
-                    withTimeoutOrNull(TIMEOUT_MS) { aiTaskService.suggestNextTasks(context) }
+                    withTimeoutOrNull(TIMEOUT_MS) { aiTaskService.suggestNextTasks(context, uid) }
                 }
             ) {
                 is AiQuotaGuard.ExecutionOutcome.Blocked -> {
@@ -142,11 +142,10 @@ class SuggestNextTasksUseCase private constructor(
 
                 is AiQuotaGuard.ExecutionOutcome.Executed -> {
                     val res = outcome.value
-                    if (res is Result.Success) {
-                        gate.quotaGuard.recordSuccess(uid, estimatedTokens)
-                    } else {
-                        Log.w(TAG, "next: the model call failed", (res as? Result.Error)?.exception)
-                        gate.quotaGuard.recordFailure((res as? Result.Error)?.exception)
+                    // The service counts the call against the provider that answered.
+                    if (res is Result.Error) {
+                        Log.w(TAG, "next: the model call failed", res.exception)
+                        gate.quotaGuard.recordFailure(res.exception)
                     }
                     telemetry.logCall(
                         FirebaseAiTelemetry.FEATURE_SUGGEST_NEXT,
@@ -158,7 +157,7 @@ class SuggestNextTasksUseCase private constructor(
                 }
             }
         } else {
-            withTimeoutOrNull(TIMEOUT_MS) { aiTaskService.suggestNextTasks(context) }
+            withTimeoutOrNull(TIMEOUT_MS) { aiTaskService.suggestNextTasks(context, uid) }
         }
 
         val raw = (cloudResult as? Result.Success<List<SuggestedTaskCandidate>>)?.data.orEmpty()

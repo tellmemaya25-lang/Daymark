@@ -139,7 +139,7 @@ class SuggestSubTasksUseCase private constructor(
                     enforceCooldown = false
                 ) {
                     withTimeoutOrNull(TIMEOUT_MS) {
-                        aiTaskService.suggestSubTasks(cleanTitle, description, existing)
+                        aiTaskService.suggestSubTasks(cleanTitle, description, existing, uid)
                     }
                 }
             ) {
@@ -167,18 +167,18 @@ class SuggestSubTasksUseCase private constructor(
 
                 is AiQuotaGuard.ExecutionOutcome.Executed -> {
                     val res = outcome.value
-                    if (res is Result.Success) {
-                        gate.quotaGuard.recordSuccess(uid, estimatedTokens)
-                    } else {
-                        Log.w(TAG, "steps: the model call failed", (res as? Result.Error)?.exception)
-                        gate.quotaGuard.recordFailure((res as? Result.Error)?.exception)
+                    // The service counts the call, because only it knows which provider
+                    // answered and the daily budget is per provider.
+                    if (res is Result.Error) {
+                        Log.w(TAG, "steps: the model call failed", res.exception)
+                        gate.quotaGuard.recordFailure(res.exception)
                     }
                     res
                 }
             }
         } else {
             withTimeoutOrNull(TIMEOUT_MS) {
-                aiTaskService.suggestSubTasks(cleanTitle, description, existing)
+                aiTaskService.suggestSubTasks(cleanTitle, description, existing, uid)
             }
         }
 
