@@ -2,6 +2,8 @@ package com.sabihon.todo.notifications
 
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -57,7 +59,14 @@ class NotificationHelper @Inject constructor(
             name = "Task alarms",
             description = "Full-screen alarms for tasks you asked to be reminded about",
             importance = NotificationManager.IMPORTANCE_HIGH,
-            vibrate = true
+            vibrate = true,
+            sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+            vibrationPattern = longArrayOf(0, 700, 350, 700, 350, 1000),
+            audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
         )
         val reminders = NotificationChannelSpec(
             id = ReminderAlertStyle.NOTIFICATION.channelId,
@@ -84,8 +93,10 @@ class NotificationHelper @Inject constructor(
             ).apply {
                 description = spec.description
                 enableVibration(spec.vibrate)
-                if (!spec.vibrate) {
-                    setSound(null, null)
+                spec.vibrationPattern?.let(::setVibrationPattern)
+                when {
+                    spec.sound != null -> setSound(spec.sound, spec.audioAttributes)
+                    !spec.vibrate -> setSound(null, null)
                 }
             }
             notificationManager.createNotificationChannel(channel)
@@ -167,6 +178,14 @@ class NotificationHelper @Inject constructor(
 
         when (style) {
             ReminderAlertStyle.ALARM -> {
+                // Pre-O devices have no notification channels, so configure the real alarm
+                // tone and vibration on the notification itself as well.
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                    val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                        ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                    builder.setSound(alarmSound)
+                    builder.setVibrate(longArrayOf(0, 700, 350, 700, 350, 1000))
+                }
                 builder.setPriority(NotificationCompat.PRIORITY_MAX)
                 builder.setCategory(NotificationCompat.CATEGORY_ALARM)
                 // The alarm screen, not just the app: an alarm that opens on the home feed has
@@ -241,6 +260,9 @@ class NotificationHelper @Inject constructor(
         val name: String,
         val description: String,
         val importance: Int,
-        val vibrate: Boolean
+        val vibrate: Boolean,
+        val sound: android.net.Uri? = null,
+        val vibrationPattern: LongArray? = null,
+        val audioAttributes: AudioAttributes? = null
     )
 }
