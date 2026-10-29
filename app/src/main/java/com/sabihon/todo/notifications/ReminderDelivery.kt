@@ -1,7 +1,6 @@
 package com.sabihon.todo.notifications
 
 import com.sabihon.todo.core.datastore.ReminderPreferences
-import com.sabihon.todo.domain.reminder.ReminderAlertStyle
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -44,24 +43,18 @@ class ReminderDelivery @Inject constructor(
         // switching to Silent must silence reminders that were already waiting.
         val style = settings.alertStyle
 
-        // An Alarm is a system alert, not a silent in-app dialog. Sending it through the
-        // alarm channel even while Daymark is open is what guarantees the configured tone and
-        // vibration are honoured. Notification/ Silent keep their quieter in-app treatment.
-        if (foreground.isForeground && style != ReminderAlertStyle.ALARM) {
+        // Foreground reminders use the in-app surface. Alarm style attaches an explicit
+        // looping tone and vibration to that surface; other styles retain their quieter popup.
+        if (foreground.isForeground) {
             events.emitDue(taskId = taskId, title = title, description = description, style = style)
             return
         }
 
-        val posted = notificationHelper.notifyReminder(
+        notificationHelper.notifyReminder(
             taskId = taskId,
             taskTitle = title,
             taskDescription = description,
             style = style
         )
-        // Keep the foreground popup as a last-resort notice if Android notification access is
-        // off. It cannot ring or vibrate, but it is better than silently dropping the reminder.
-        if (!posted && foreground.isForeground) {
-            events.emitDue(taskId = taskId, title = title, description = description, style = style)
-        }
     }
 }

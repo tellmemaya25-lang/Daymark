@@ -1,6 +1,7 @@
 package com.sabihon.todo.ui.settings
 
 import android.app.AlarmManager
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -449,21 +450,33 @@ private fun ReminderSettingsSection(
         mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
     }
     var exactAlarmsAllowed by remember { mutableStateOf(canScheduleExactAlarms(context)) }
+    var alarmChannelAlerting by remember {
+        mutableStateOf(isAlarmChannelAlerting(context, alertStyle))
+    }
     var openSheet by remember { mutableStateOf(ReminderSheet.NONE) }
+
+    LaunchedEffect(alertStyle) {
+        alarmChannelAlerting = isAlarmChannelAlerting(context, alertStyle)
+    }
 
     // Both answers live in Android, not in this app, so they can only change while the user is
     // away in system settings. Re-reading on resume removes a stale "Allow" after permission.
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, alertStyle) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationsAllowed =
                     NotificationManagerCompat.from(context).areNotificationsEnabled()
                 exactAlarmsAllowed = canScheduleExactAlarms(context)
+                alarmChannelAlerting = isAlarmChannelAlerting(context, alertStyle)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
+    val exactAlarmWarning = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !exactAlarmsAllowed
+    val alarmChannelWarning = alertStyle == ReminderAlertStyle.ALARM &&
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !alarmChannelAlerting
 
     Column {
         SectionLabel("REMINDERS")
@@ -482,7 +495,7 @@ private fun ReminderSettingsSection(
 
         // Outside the sheet on purpose: these are system blocks, not preferences. Hiding a fix
         // behind another tap is how a reminder stays broken.
-        if (!notificationsAllowed || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !exactAlarmsAllowed)) {
+        if (!notificationsAllowed || exactAlarmWarning || alarmChannelWarning) {
             Spacer(Modifier.height(10.dp))
             GroupedCard {
                 if (!notificationsAllowed) {
@@ -493,13 +506,22 @@ private fun ReminderSettingsSection(
                         onClick = { openNotificationSettings(context) }
                     )
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !exactAlarmsAllowed) {
+                if (exactAlarmWarning) {
                     if (!notificationsAllowed) GroupedDivider()
                     GroupedRow(
                         label = "Exact alarms not allowed",
                         supporting = "Reminders may arrive a few minutes late",
                         value = "Allow",
                         onClick = { requestExactAlarms(context) }
+                    )
+                }
+                if (alarmChannelWarning) {
+                    if (!notificationsAllowed || exactAlarmWarning) GroupedDivider()
+                    GroupedRow(
+                        label = "Alarm sound or vibration is off",
+                        supporting = "Android muted the Alarm notification channel",
+                        value = "Open",
+                        onClick = { openAlarmChannelSettings(context) }
                     )
                 }
             }
@@ -724,6 +746,33 @@ private fun ReminderOptionContent(
             }
         }
     }
+}
+
+/** True when the Alarm channel is configured to make both sound and vibration. */
+private fun isAlarmChannelAlerting(
+    context: Context,
+    style: ReminderAlertStyle
+): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || style != ReminderAlertStyle.ALARM) return true
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        ?: return false
+    val channel = manager.getNotificationChannel(style.channelId) ?: return false
+    return channel.importance > NotificationManager.IMPORTANCE_NONE &&
+        channel.sound != null && channel.shouldVibrate()
+}
+
+private fun openAlarmChannelSettings(context: Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        openNotificationSettings(context)
+        return
+    }
+    val intent = Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        putExtra(Settings.EXTRA_CHANNEL_ID, ReminderAlertStyle.ALARM.channelId)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching { context.startActivity(intent) }
+        .onFailure { openNotificationSettings(context) }
 }
 
 /** True when this app may fire an alarm at an exact minute. */

@@ -24,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,8 @@ import androidx.compose.ui.unit.sp
 import com.sabihon.todo.R
 import com.sabihon.todo.core.ui.theme.AccentBlue
 import com.sabihon.todo.core.ui.theme.LocalDaymarkSurfaces
+import com.sabihon.todo.domain.reminder.ReminderAlertStyle
+import com.sabihon.todo.notifications.AlarmSignalPlayer
 import com.sabihon.todo.notifications.DueReminder
 import com.sabihon.todo.notifications.ReminderActionReceiver
 import com.sabihon.todo.notifications.ReminderEvents
@@ -68,6 +71,12 @@ fun InAppReminderHost(
 
     val reminder = pending.firstOrNull() ?: return
     val surfaces = LocalDaymarkSurfaces.current
+    val alarmSignals = remember(context) { AlarmSignalPlayer(context) }
+
+    DisposableEffect(reminder.taskId, reminder.style) {
+        if (reminder.style == ReminderAlertStyle.ALARM) alarmSignals.start()
+        onDispose { alarmSignals.stop() }
+    }
 
     fun send(action: String) {
         context.sendBroadcast(
