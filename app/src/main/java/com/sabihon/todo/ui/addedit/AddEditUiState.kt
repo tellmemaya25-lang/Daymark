@@ -33,6 +33,8 @@ data class AddEditUiState(
     val isSaving: Boolean = false,
     val errorMessage: String? = null,
     val titleError: String? = null,
+    /** Voice command "done" completes the task as part of the next save. */
+    val voiceCompletionRequested: Boolean = false,
     val categories: List<Category> = emptyList(),
     val isEditMode: Boolean = false,
     val showDeleteConfirm: Boolean = false,

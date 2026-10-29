@@ -42,6 +42,8 @@ class ToggleCompleteUseCase @Inject constructor(
                     )
                 )
             }
+            // Completion retries after a slow acknowledgement must not advance a habit twice.
+            if (task?.isCompleted == true) return Result.Success(HabitAdvance())
         }
 
         val result = repository.toggleComplete(taskId, isCompleted)

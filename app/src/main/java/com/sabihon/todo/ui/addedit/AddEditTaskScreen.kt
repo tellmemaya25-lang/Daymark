@@ -82,6 +82,7 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sabihon.todo.core.dictation.DictationController
 import com.sabihon.todo.core.dictation.DictationTarget
+import com.sabihon.todo.core.dictation.VoiceTaskCommand
 import com.sabihon.todo.core.dictation.label
 import com.sabihon.todo.core.ui.components.AiConsentSheet
 import com.sabihon.todo.core.ui.components.ConfirmDialog
@@ -130,6 +131,7 @@ fun AddEditTaskScreen(
     // A start that is waiting on the permission dialog. Held here so the sentence is
     // not lost while the system prompt is on screen.
     var pendingDictation by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var voiceDoneCommandHandled by remember { mutableStateOf(false) }
 
     val microphonePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -290,11 +292,28 @@ fun AddEditTaskScreen(
                                 listening = isSpeaking(DictationTarget.Title),
                                 description = "Dictate title",
                                 onClick = {
+                                    val titleBeforeDictation = uiState.title
+                                    voiceDoneCommandHandled = false
                                     dictate(
                                         target = DictationTarget.Title,
-                                        baseText = uiState.title,
+                                        baseText = titleBeforeDictation,
                                         multiline = false,
-                                        onText = viewModel::onTitleChange
+                                        onText = { renderedTitle ->
+                                            if (!voiceDoneCommandHandled) {
+                                                val command = VoiceTaskCommand.parseMarkDone(
+                                                    baseTitle = titleBeforeDictation,
+                                                    renderedTitle = renderedTitle
+                                                )
+                                                if (command != null) {
+                                                    voiceDoneCommandHandled = true
+                                                    viewModel.onTitleChange(command.title)
+                                                    viewModel.requestVoiceCompletion()
+                                                    dictation.stop()
+                                                } else {
+                                                    viewModel.onTitleChange(renderedTitle)
+                                                }
+                                            }
+                                        }
                                     )
                                 }
                             )
@@ -358,6 +377,23 @@ fun AddEditTaskScreen(
                     cursorColor = AccentBlue
                 )
             )
+            if (uiState.voiceCompletionRequested) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Voice command detected — this task will be marked done when saved.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = viewModel::cancelVoiceCompletion) {
+                        Text("Undo", color = AccentBlue)
+                    }
+                }
+            }
+
             OutlinedTextField(
                 value = uiState.description,
                 onValueChange = viewModel::onDescriptionChange,
