@@ -135,13 +135,25 @@ class AuthViewModel @Inject constructor(
         }
     }
 
+    /**
+     * When the last reset request was accepted, for [PasswordResetPolicy.resendBlockedReason].
+     * Zero means "never", which is why the first send is never blocked.
+     */
+    private var lastResetSentAtMillis = 0L
+
     fun sendPasswordReset() {
-        // Trimmed once and reused for the request, the field and the confirmation, so the
-        // message can never quote a different string from the one Firebase was given.
+        // Trimmed once and reused for the request, the field and the panel, so the copy
+        // can never quote a different string from the one Firebase was given.
         val email = PasswordResetPolicy.normalize(_uiState.value.email)
         val problem = PasswordResetPolicy.validate(email)
         if (problem != null) {
             _uiState.update { it.copy(email = email, emailError = problem, isLoading = false) }
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        PasswordResetPolicy.resendBlockedReason(now, lastResetSentAtMillis)?.let { reason ->
+            _uiState.update { it.copy(isLoading = false, errorMessage = reason) }
             return
         }
 
@@ -151,18 +163,13 @@ class AuthViewModel @Inject constructor(
                     email = email,
                     isLoading = true,
                     emailError = null,
-                    errorMessage = null,
-                    successMessage = null
+                    errorMessage = null
                 )
             }
             when (val result = authRepository.sendPasswordReset(email)) {
                 is Result.Success -> {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            successMessage = PasswordResetPolicy.successMessage(email)
-                        )
-                    }
+                    lastResetSentAtMillis = now
+                    _uiState.update { it.copy(isLoading = false, resetSentTo = email) }
                 }
                 is Result.Error -> {
                     _uiState.update {
@@ -179,6 +186,11 @@ class AuthViewModel @Inject constructor(
         }
     }
 
+    /** Back from the "check your inbox" panel to the form, with the address kept. */
+    fun editResetEmail() {
+        _uiState.update { it.copy(resetSentTo = null, emailError = null, errorMessage = null) }
+    }
+
     fun signOut(onDone: () -> Unit) {
         viewModelScope.launch {
             authRepository.signOut()
@@ -191,6 +203,6 @@ class AuthViewModel @Inject constructor(
     }
 
     fun clearError() {
-        _uiState.update { it.copy(errorMessage = null, successMessage = null) }
+        _uiState.update { it.copy(errorMessage = null) }
     }
 }

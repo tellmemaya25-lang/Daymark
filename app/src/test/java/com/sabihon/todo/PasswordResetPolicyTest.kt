@@ -3,6 +3,7 @@ package com.sabihon.todo
 import com.sabihon.todo.ui.auth.PasswordResetPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -79,12 +80,71 @@ class PasswordResetPolicyTest {
         assertEquals("Maya.Angelou@Example.COM", PasswordResetPolicy.normalize(" Maya.Angelou@Example.COM "))
     }
 
-    /* ---------------------------- the message --------------------------- */
+    /* --------------------------- the sent copy -------------------------- */
+
+    /**
+     * Firebase resolves this call whether or not it queued any mail, so the panel must
+     * not claim delivery. It names the address it was attempted for and stops there.
+     */
+    @Test
+    fun `the sent copy is conditional, never a claim of delivery`() {
+        val detail = PasswordResetPolicy.sentDetail("maya@example.com")
+        assertEquals(
+            "If maya@example.com has a Daymark account with a password, the reset link " +
+                "is on its way. It usually arrives within a minute.",
+            detail
+        )
+    }
 
     @Test
-    fun `the confirmation quotes exactly what was sent`() {
-        val email = PasswordResetPolicy.normalize("  maya@example.com  ")
-        assertEquals("Reset link sent to maya@example.com", PasswordResetPolicy.successMessage(email))
+    fun `the sender address names the project, and degrades safely`() {
+        assertEquals(
+            "noreply@sabihon-todo.firebaseapp.com",
+            PasswordResetPolicy.senderAddress("sabihon-todo")
+        )
+        assertEquals("noreply@firebase.com", PasswordResetPolicy.senderAddress(null))
+        assertEquals("noreply@firebase.com", PasswordResetPolicy.senderAddress("   "))
+    }
+
+    @Test
+    fun `troubleshooting covers spam, the Google-only account, and one-use links`() {
+        val lines = PasswordResetPolicy.troubleshooting("sabihon-todo")
+        assertEquals(3, lines.size)
+        assertTrue("must name the sender", lines[0].contains("noreply@sabihon-todo.firebaseapp.com"))
+        assertTrue("must name the Google route", lines[1].contains("Continue with Google"))
+        assertTrue("must explain expiry", lines[2].contains("expires"))
+    }
+
+    /* ----------------------------- resending ---------------------------- */
+
+    @Test
+    fun `the first send is never blocked`() {
+        assertNull(PasswordResetPolicy.resendBlockedReason(nowMillis = 5_000L, lastSentAtMillis = 0L))
+    }
+
+    @Test
+    fun `a second send inside the minute is refused`() {
+        val sentAt = 1_000_000L
+        assertEquals(
+            PasswordResetPolicy.RESEND_TOO_SOON,
+            PasswordResetPolicy.resendBlockedReason(sentAt + 1, sentAt)
+        )
+        assertEquals(
+            PasswordResetPolicy.RESEND_TOO_SOON,
+            PasswordResetPolicy.resendBlockedReason(sentAt + 59_999, sentAt)
+        )
+    }
+
+    @Test
+    fun `a resend after the minute is allowed`() {
+        val sentAt = 1_000_000L
+        assertNull(PasswordResetPolicy.resendBlockedReason(sentAt + 60_000, sentAt))
+        assertNull(PasswordResetPolicy.resendBlockedReason(sentAt + 600_000, sentAt))
+    }
+
+    @Test
+    fun `a clock that jumped backwards does not lock the user out`() {
+        assertNull(PasswordResetPolicy.resendBlockedReason(nowMillis = 500L, lastSentAtMillis = 9_000L))
     }
 
     @Test
